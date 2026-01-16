@@ -1593,3 +1593,80 @@ NEXT PRIORITIES (dependencies satisfied):
 
 SESSION 16 COMPLETE - 3 features ✅
 =================================================================
+
+=================================================================
+BOB (Build Orchestration Bot) - Session 17 Progress Summary
+=================================================================
+Date: 2026-01-16
+Session: Coding Agent (Session 17)
+Agent Role: Core Feature Implementation
+Previous Session: Session 16 (F012, F016, F028)
+
+OVERALL PROGRESS:
+- Total features: 75
+- Passing: 23 (30.7% complete)
+- Failing: 52
+- Tests passing: 498
+
+SESSION 17 COMPLETED:
+- F013: FileSpecSource - Support Markdown format
+
+=================================================================
+
+✅ COMPLETED TASKS:
+
+F013: FileSpecSource - Support Markdown format (PASSING)
+   - Enhanced FileSpecSource to support Markdown format in addition to YAML/JSON
+   - Implementation in bob/spec_sources/file_source.py:
+     * Added .md and .markdown file extension detection
+     * Implemented _parse_markdown() method to parse Markdown content
+     * Parses ## headers as task sections with IDs (e.g., ## F001: Task Title)
+     * Extracts metadata from brackets in headers:
+       - [priority:high/medium/low/critical]
+       - [category:functional/infrastructure/etc]
+       - [depends:F001,F002] - comma-separated dependencies
+       - [labels:tag1,tag2] - comma-separated labels
+       - [deprecated:true/yes/1] - boolean flags
+       - [research_required:true/yes/1] - boolean flags
+     * Parses task content sections:
+       - Description: First paragraph after header
+       - ### Acceptance Criteria: Bulleted/numbered list
+       - ### Steps: Bulleted/numbered list (supports "Implementation Steps" title too)
+     * Supports both bulleted (- and *) and numbered (1. 2. 3.) lists
+     * Multiline descriptions with proper paragraph handling
+     * All task metadata stored with source_file and format fields
+
+   - Added 13 comprehensive tests in tests/test_file_source.py:
+     - test_init_markdown_file: .md extension detection
+     - test_init_markdown_extension: .markdown extension support
+     - test_fetch_tasks_markdown_basic: Complete task parsing
+     - test_markdown_metadata_extraction: Bracket metadata parsing
+     - test_markdown_boolean_metadata: Boolean value parsing
+     - test_markdown_bulleted_list: - and * bullets
+     - test_markdown_numbered_list: Numbered list parsing
+     - test_markdown_minimal_task: Tasks without criteria/steps
+     - test_markdown_multiple_sections: Various section title support
+     - test_markdown_no_tasks: Empty/no-task markdown files
+     - test_markdown_multiline_description: Multi-paragraph descriptions
+     - test_markdown_sync_detects_changes: File change detection
+     - test_markdown_metadata_format: Metadata storage verification
+
+   - All 498 tests passing (13 new Markdown tests added)
+   - Marked F013 as passing in feature_list.json
+
+ARCHITECTURAL SIGNIFICANCE:
+
+F013 completes the multi-format spec source support:
+- **Flexibility**: Users can choose YAML, JSON, or Markdown for specs
+- **Readability**: Markdown is more readable for human-authored specs
+- **Metadata Support**: Full parity with YAML/JSON via bracket notation
+- **Consistency**: Same TaskSpec output regardless of format
+- **Testing**: Comprehensive coverage of all format variations
+
+This enables flexible specification authoring:
+- Technical specs: Use YAML with full structure
+- Documentation-style specs: Use Markdown for readability
+- Machine-generated: Use JSON for programmatic creation
+- All formats support full task metadata and dependencies
+
+=================================================================

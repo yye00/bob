@@ -1,10 +1,11 @@
 """File-based spec source implementation.
 
-Supports YAML and JSON files containing task specifications.
+Supports YAML, JSON, and Markdown files containing task specifications.
 """
 
 import hashlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -20,11 +21,12 @@ from bob.spec_sources.base import (
 
 
 class FileSpecSource(SpecSource):
-    """Spec source that reads from local YAML or JSON files.
+    """Spec source that reads from local YAML, JSON, or Markdown files.
 
-    Supports both YAML and JSON formats. The file should contain a list
+    Supports YAML, JSON, and Markdown formats. The file should contain a list
     of task specifications with the following structure:
 
+    YAML format:
     ```yaml
     spec_version: 1
     tasks:
@@ -47,6 +49,21 @@ class FileSpecSource(SpecSource):
         research_required: false
         research_queries: []
         deprecated: false
+    ```
+
+    Markdown format:
+    ```markdown
+    ## F001: Feature Title [priority:high] [category:functional] [depends:F000] [labels:tag1,tag2]
+
+    Feature description here.
+
+    ### Acceptance Criteria
+    - Criterion 1
+    - Criterion 2
+
+    ### Steps
+    1. Step 1
+    2. Step 2
     ```
     """
 
@@ -82,9 +99,11 @@ class FileSpecSource(SpecSource):
             self.format = "yaml"
         elif suffix == ".json":
             self.format = "json"
+        elif suffix in (".md", ".markdown"):
+            self.format = "markdown"
         else:
             raise SpecSourceError(
-                f"Unsupported file format '{suffix}': use .yaml, .yml, or .json"
+                f"Unsupported file format '{suffix}': use .yaml, .yml, .json, .md, or .markdown"
             )
 
         # Cache for file hash (for change detection)
@@ -112,8 +131,11 @@ class FileSpecSource(SpecSource):
             with open(self.file_path, "r", encoding="utf-8") as f:
                 if self.format == "yaml":
                     data = yaml.safe_load(f)
-                else:  # json
+                elif self.format == "json":
                     data = json.load(f)
+                else:  # markdown
+                    content = f.read()
+                    data = self._parse_markdown(content)
 
             if not isinstance(data, dict):
                 raise SpecSourceError(
@@ -128,6 +150,188 @@ class FileSpecSource(SpecSource):
             raise SpecSourceError(f"JSON parsing error: {e}")
         except Exception as e:
             raise SpecSourceError(f"Error loading spec file: {e}")
+
+    def _parse_markdown(self, content: str) -> dict[str, Any]:
+        """Parse Markdown content into spec data.
+
+        Expected format:
+        ## F001: Task Title [priority:high] [category:functional] [depends:F000]
+
+        Task description here.
+
+        ### Acceptance Criteria
+        - Criterion 1
+        - Criterion 2
+
+        ### Steps
+        1. Step 1
+        2. Step 2
+
+        Args:
+            content: Markdown file content
+
+        Returns:
+            Dict with 'tasks' list and 'spec_version'
+        """
+        tasks = []
+        spec_version = 1
+
+        # Split content by ## headers (task sections)
+        # Match ## followed by task ID and title
+        task_pattern = re.compile(
+            r'^## ([A-Z]\d+):\s*(.+?)(?:\s*\[.*?\])*$',
+            re.MULTILINE
+        )
+
+        # Find all task headers
+        matches = list(task_pattern.finditer(content))
+
+        for i, match in enumerate(matches):
+            task_id = match.group(1)
+            title = match.group(2).strip()
+
+            # Get full header line to extract metadata
+            header_line = match.group(0)
+
+            # Extract metadata from brackets [key:value]
+            metadata = self._extract_markdown_metadata(header_line)
+
+            # Get task content (from this match to the next, or end of file)
+            start_pos = match.end()
+            end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+            task_content = content[start_pos:end_pos].strip()
+
+            # Parse task content sections
+            description, acceptance_criteria, steps = self._parse_markdown_task_content(
+                task_content
+            )
+
+            # Build task dict
+            task_data = {
+                "id": task_id,
+                "title": title,
+                "description": description,
+                "acceptance_criteria": acceptance_criteria,
+                "steps": steps,
+                "priority": metadata.get("priority", "medium"),
+                "category": metadata.get("category", "functional"),
+                "depends_on": metadata.get("depends_on", []),
+                "labels": metadata.get("labels", []),
+                "research_required": metadata.get("research_required", False),
+                "research_queries": metadata.get("research_queries", []),
+                "deprecated": metadata.get("deprecated", False),
+                "spec_version": metadata.get("spec_version", 1),
+            }
+
+            tasks.append(task_data)
+
+        return {
+            "spec_version": spec_version,
+            "tasks": tasks,
+        }
+
+    def _extract_markdown_metadata(self, header_line: str) -> dict[str, Any]:
+        """Extract metadata from markdown header brackets.
+
+        Supports:
+        - [priority:high]
+        - [category:functional]
+        - [depends:F001,F002]
+        - [labels:auth,mvp]
+        - [deprecated:true]
+        - [research_required:true]
+
+        Args:
+            header_line: Header line with metadata
+
+        Returns:
+            Dict of metadata
+        """
+        metadata: dict[str, Any] = {}
+
+        # Find all [key:value] patterns
+        bracket_pattern = re.compile(r'\[([a-z_]+):([^\]]+)\]')
+
+        for match in bracket_pattern.finditer(header_line):
+            key = match.group(1)
+            value = match.group(2).strip()
+
+            if key == "depends":
+                # Split comma-separated dependencies
+                metadata["depends_on"] = [dep.strip() for dep in value.split(",")]
+            elif key == "labels":
+                # Split comma-separated labels
+                metadata["labels"] = [label.strip() for label in value.split(",")]
+            elif key in ("deprecated", "research_required"):
+                # Boolean values
+                metadata[key] = value.lower() in ("true", "yes", "1")
+            elif key == "priority":
+                metadata["priority"] = value
+            elif key == "category":
+                metadata["category"] = value
+            elif key == "spec_version":
+                try:
+                    metadata["spec_version"] = int(value)
+                except ValueError:
+                    pass
+
+        return metadata
+
+    def _parse_markdown_task_content(
+        self, content: str
+    ) -> tuple[str, list[str], list[str]]:
+        """Parse the content section of a markdown task.
+
+        Args:
+            content: Task content after the header
+
+        Returns:
+            Tuple of (description, acceptance_criteria, steps)
+        """
+        # Split by ### headers
+        sections = re.split(r'^### (.+)$', content, flags=re.MULTILINE)
+
+        # First section (before any ###) is the description
+        description = sections[0].strip() if sections else ""
+
+        acceptance_criteria: list[str] = []
+        steps: list[str] = []
+
+        # Process remaining sections (pairs of title and content)
+        for i in range(1, len(sections), 2):
+            if i + 1 >= len(sections):
+                break
+
+            section_title = sections[i].strip().lower()
+            section_content = sections[i + 1].strip()
+
+            if "acceptance" in section_title or "criteria" in section_title:
+                acceptance_criteria = self._parse_markdown_list(section_content)
+            elif "step" in section_title or "implementation" in section_title:
+                steps = self._parse_markdown_list(section_content)
+
+        return description, acceptance_criteria, steps
+
+    def _parse_markdown_list(self, content: str) -> list[str]:
+        """Parse a markdown list (bulleted or numbered) into items.
+
+        Args:
+            content: List content
+
+        Returns:
+            List of items (without bullets/numbers)
+        """
+        items = []
+
+        # Match lines starting with -, *, or numbers followed by .
+        list_pattern = re.compile(r'^(?:\s*[-*]\s+|\s*\d+\.\s+)(.+)$', re.MULTILINE)
+
+        for match in list_pattern.finditer(content):
+            item = match.group(1).strip()
+            if item:
+                items.append(item)
+
+        return items
 
     def _parse_task(self, task_data: dict[str, Any]) -> TaskSpec:
         """Parse a task dict into a TaskSpec.

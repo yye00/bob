@@ -518,3 +518,307 @@ class TestFileSpecSourceMetadata:
         assert "source_file" in task.metadata
         assert task.metadata["source_file"] == str(spec_file)
         assert task.metadata["format"] == "yaml"
+
+
+class TestMarkdownFormat:
+    """Tests for Markdown format support."""
+
+    def test_init_markdown_file(self, tmp_path):
+        """Test initializing with a .md file."""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text("## F001: Test Task\n\nDescription here.")
+
+        source = FileSpecSource(f"file://{spec_file}")
+
+        assert source.file_path == spec_file
+        assert source.format == "markdown"
+
+    def test_init_markdown_extension(self, tmp_path):
+        """Test .markdown extension is recognized."""
+        spec_file = tmp_path / "spec.markdown"
+        spec_file.write_text("## F001: Test Task\n\nDescription here.")
+
+        source = FileSpecSource(f"file://{spec_file}")
+        assert source.format == "markdown"
+
+    @pytest.mark.asyncio
+    async def test_fetch_tasks_markdown_basic(self, tmp_path):
+        """Test fetching tasks from basic Markdown file."""
+        markdown_content = """
+## F001: First Task
+
+This is the task description.
+
+### Acceptance Criteria
+- Must work correctly
+- Must be tested
+
+### Steps
+1. Implement feature
+2. Write tests
+3. Deploy
+
+## F002: Second Task [priority:high] [category:backend]
+
+Another task description.
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        assert len(tasks) == 2
+
+        # Check first task
+        assert tasks[0].spec_id == "F001"
+        assert tasks[0].title == "First Task"
+        assert tasks[0].description == "This is the task description."
+        assert tasks[0].acceptance_criteria == ["Must work correctly", "Must be tested"]
+        assert tasks[0].steps == ["Implement feature", "Write tests", "Deploy"]
+        assert tasks[0].priority == "medium"  # Default
+        assert tasks[0].category == "functional"  # Default
+
+        # Check second task
+        assert tasks[1].spec_id == "F002"
+        assert tasks[1].title == "Second Task"
+        assert tasks[1].description == "Another task description."
+        assert tasks[1].priority == "high"
+        assert tasks[1].category == "backend"
+
+    @pytest.mark.asyncio
+    async def test_markdown_metadata_extraction(self, tmp_path):
+        """Test extraction of metadata from brackets."""
+        markdown_content = """
+## F001: Task Title [priority:critical] [category:infrastructure] [depends:F000,F002] [labels:mvp,auth]
+
+Task description.
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        task = tasks[0]
+        assert task.priority == "critical"
+        assert task.category == "infrastructure"
+        assert task.depends_on == ["F000", "F002"]
+        assert task.labels == ["mvp", "auth"]
+
+    @pytest.mark.asyncio
+    async def test_markdown_boolean_metadata(self, tmp_path):
+        """Test boolean metadata extraction."""
+        markdown_content = """
+## F001: Deprecated Task [deprecated:true]
+
+Task description.
+
+## F002: Research Task [research_required:yes]
+
+Another task.
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        assert tasks[0].deprecated is True
+        assert tasks[1].research_required is True
+
+    @pytest.mark.asyncio
+    async def test_markdown_bulleted_list(self, tmp_path):
+        """Test parsing bulleted lists (- and *)."""
+        markdown_content = """
+## F001: Test Task
+
+Description here.
+
+### Acceptance Criteria
+- Criterion with dash
+* Criterion with star
+- Another criterion
+
+### Steps
+* Step with star
+- Step with dash
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        task = tasks[0]
+        assert len(task.acceptance_criteria) == 3
+        assert task.acceptance_criteria[0] == "Criterion with dash"
+        assert task.acceptance_criteria[1] == "Criterion with star"
+        assert task.acceptance_criteria[2] == "Another criterion"
+
+        assert len(task.steps) == 2
+        assert task.steps[0] == "Step with star"
+        assert task.steps[1] == "Step with dash"
+
+    @pytest.mark.asyncio
+    async def test_markdown_numbered_list(self, tmp_path):
+        """Test parsing numbered lists."""
+        markdown_content = """
+## F001: Test Task
+
+Description here.
+
+### Steps
+1. First step
+2. Second step
+3. Third step
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        task = tasks[0]
+        assert len(task.steps) == 3
+        assert task.steps[0] == "First step"
+        assert task.steps[1] == "Second step"
+        assert task.steps[2] == "Third step"
+
+    @pytest.mark.asyncio
+    async def test_markdown_minimal_task(self, tmp_path):
+        """Test minimal markdown task (just header and description)."""
+        markdown_content = """
+## F001: Minimal Task
+
+Just a description, no criteria or steps.
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        task = tasks[0]
+        assert task.spec_id == "F001"
+        assert task.title == "Minimal Task"
+        assert task.description == "Just a description, no criteria or steps."
+        assert task.acceptance_criteria == []
+        assert task.steps == []
+        assert task.priority == "medium"
+        assert task.category == "functional"
+
+    @pytest.mark.asyncio
+    async def test_markdown_multiple_sections(self, tmp_path):
+        """Test tasks with various section titles."""
+        markdown_content = """
+## F001: Test Task
+
+Description here.
+
+### Acceptance Criteria
+- Criterion 1
+
+### Implementation Steps
+1. Step 1
+2. Step 2
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        task = tasks[0]
+        assert len(task.acceptance_criteria) == 1
+        assert len(task.steps) == 2
+
+    @pytest.mark.asyncio
+    async def test_markdown_no_tasks(self, tmp_path):
+        """Test markdown file with no tasks."""
+        markdown_content = """
+# Project Title
+
+This is a markdown file without task headers.
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        assert len(tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_markdown_multiline_description(self, tmp_path):
+        """Test task with multiline description."""
+        markdown_content = """
+## F001: Test Task
+
+This is a multiline description.
+It has multiple paragraphs.
+
+And more content here.
+
+### Steps
+1. Do something
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        task = tasks[0]
+        expected_desc = "This is a multiline description.\nIt has multiple paragraphs.\n\nAnd more content here."
+        assert task.description == expected_desc
+
+    @pytest.mark.asyncio
+    async def test_markdown_sync_detects_changes(self, tmp_path):
+        """Test sync with markdown file changes."""
+        markdown_content = """
+## F001: Task One
+
+Description.
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        await source.fetch_tasks()
+
+        # Modify file
+        new_content = """
+## F001: Task One
+
+Description.
+
+## F002: Task Two
+
+Another task.
+"""
+        spec_file.write_text(new_content)
+
+        result = await source.sync({"F001": 1})
+
+        assert result.has_changes is True
+        assert len(result.added) == 1
+        assert result.added[0].spec_id == "F002"
+
+    @pytest.mark.asyncio
+    async def test_markdown_metadata_format(self, tmp_path):
+        """Test metadata is stored correctly."""
+        markdown_content = """
+## F001: Test Task
+
+Description.
+"""
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(markdown_content)
+
+        source = FileSpecSource(f"file://{spec_file}")
+        tasks = await source.fetch_tasks()
+
+        task = tasks[0]
+        assert task.metadata["format"] == "markdown"
+        assert task.metadata["source_file"] == str(spec_file)
