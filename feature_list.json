@@ -2371,8 +2371,8 @@
       "Test 'bob --help' shows useful overview",
       "Test 'bob <command> --help' for all commands"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T23:51:06.238149+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
