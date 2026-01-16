@@ -554,8 +554,8 @@ class DatabaseManager:
                 INSERT INTO sessions (
                     id, project_id, task_id, agent_type, model,
                     started_at, ended_at, status, turns,
-                    tokens_input, tokens_output, cost
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, cost
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.id,
@@ -567,8 +567,10 @@ class DatabaseManager:
                     session.ended_at.isoformat() if session.ended_at else None,
                     session.status.value,
                     session.turns,
-                    session.tokens.get("input", 0),
-                    session.tokens.get("output", 0),
+                    session.input_tokens,
+                    session.output_tokens,
+                    session.cache_read_tokens,
+                    session.cache_write_tokens,
                     session.cost,
                 ),
             )
@@ -595,6 +597,8 @@ class DatabaseManager:
         project_id: Optional[str] = None,
         task_id: Optional[str] = None,
         status: Optional[SessionStatus] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[Session]:
@@ -604,6 +608,8 @@ class DatabaseManager:
             project_id: Filter by project ID (optional)
             task_id: Filter by task ID (optional)
             status: Filter by session status (optional)
+            start_date: Filter sessions after this date (inclusive, optional)
+            end_date: Filter sessions before this date (inclusive, optional)
             limit: Maximum number of results
             offset: Number of results to skip
 
@@ -622,6 +628,12 @@ class DatabaseManager:
         if status:
             conditions.append("status = ?")
             params.append(status.value)
+        if start_date:
+            conditions.append("started_at >= ?")
+            params.append(start_date.isoformat())
+        if end_date:
+            conditions.append("started_at <= ?")
+            params.append(end_date.isoformat())
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.extend([limit, offset])
@@ -645,6 +657,11 @@ class DatabaseManager:
         ended_at: Optional[datetime] = None,
         turns: Optional[int] = None,
         tokens: Optional[dict[str, int]] = None,
+        input_tokens: Optional[int] = None,
+        output_tokens: Optional[int] = None,
+        cache_read_tokens: Optional[int] = None,
+        cache_write_tokens: Optional[int] = None,
+        cost_usd: Optional[float] = None,
         cost: Optional[float] = None,
     ) -> bool:
         """Update session fields.
@@ -654,8 +671,13 @@ class DatabaseManager:
             status: New status (optional)
             ended_at: End timestamp (optional)
             turns: Turn count (optional)
-            tokens: Token usage (optional)
-            cost: Cost (optional)
+            tokens: Token usage dict (legacy, optional)
+            input_tokens: Input token count (optional)
+            output_tokens: Output token count (optional)
+            cache_read_tokens: Cache read token count (optional)
+            cache_write_tokens: Cache write token count (optional)
+            cost_usd: Cost in USD (optional, preferred)
+            cost: Cost (legacy, optional)
 
         Returns:
             True if session was updated, False if not found
@@ -672,12 +694,38 @@ class DatabaseManager:
         if turns is not None:
             updates.append("turns = ?")
             params.append(turns)
+
+        # Support both legacy tokens dict and new individual fields
         if tokens is not None:
             updates.append("tokens_input = ?")
             updates.append("tokens_output = ?")
             params.append(tokens.get("input", 0))
             params.append(tokens.get("output", 0))
-        if cost is not None:
+            if "cache_read" in tokens:
+                updates.append("tokens_cache_read = ?")
+                params.append(tokens.get("cache_read", 0))
+            if "cache_write" in tokens:
+                updates.append("tokens_cache_write = ?")
+                params.append(tokens.get("cache_write", 0))
+
+        if input_tokens is not None:
+            updates.append("tokens_input = ?")
+            params.append(input_tokens)
+        if output_tokens is not None:
+            updates.append("tokens_output = ?")
+            params.append(output_tokens)
+        if cache_read_tokens is not None:
+            updates.append("tokens_cache_read = ?")
+            params.append(cache_read_tokens)
+        if cache_write_tokens is not None:
+            updates.append("tokens_cache_write = ?")
+            params.append(cache_write_tokens)
+
+        # Support both cost_usd (new) and cost (legacy)
+        if cost_usd is not None:
+            updates.append("cost = ?")
+            params.append(cost_usd)
+        elif cost is not None:
             updates.append("cost = ?")
             params.append(cost)
 
@@ -771,6 +819,17 @@ class DatabaseManager:
         Returns:
             Session object
         """
+        # Handle optional cache token fields (added in schema v2)
+        try:
+            cache_read = row["tokens_cache_read"]
+        except (KeyError, IndexError):
+            cache_read = 0
+
+        try:
+            cache_write = row["tokens_cache_write"]
+        except (KeyError, IndexError):
+            cache_write = 0
+
         return Session(
             id=row["id"],
             project_id=row["project_id"],
@@ -781,6 +840,9 @@ class DatabaseManager:
             ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
             status=SessionStatus(row["status"]),
             turns=row["turns"],
-            tokens={"input": row["tokens_input"], "output": row["tokens_output"]},
+            input_tokens=row["tokens_input"],
+            output_tokens=row["tokens_output"],
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
             cost=row["cost"],
         )

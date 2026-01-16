@@ -207,7 +207,7 @@ class TestSession:
         assert isinstance(session.started_at, datetime)
         assert session.ended_at is None
         assert session.turns == 0
-        assert session.tokens == {"input": 0, "output": 0}
+        assert session.tokens == {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
         assert session.cost == 0.0
 
     def test_session_creation_with_stats(self):
@@ -222,7 +222,8 @@ class TestSession:
             started_at=now,
             status=SessionStatus.COMPLETED,
             turns=5,
-            tokens={"input": 1000, "output": 500},
+            input_tokens=1000,
+            output_tokens=500,
             cost=0.05,
         )
         assert session.task_id is None

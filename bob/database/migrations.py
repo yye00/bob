@@ -10,7 +10,7 @@ from typing import Optional
 
 
 # Current schema version
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -70,6 +70,28 @@ def apply_schema(conn: sqlite3.Connection, schema_path: Optional[Path] = None) -
     conn.commit()
 
 
+def apply_migration_2(conn: sqlite3.Connection) -> None:
+    """Add cache token tracking to sessions table.
+
+    Args:
+        conn: Database connection
+    """
+    # Add cache token columns to sessions table
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN tokens_cache_read INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN tokens_cache_write INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
+    conn.commit()
+
+
 def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> None:
     """Apply database migrations.
 
@@ -94,16 +116,19 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
         conn.commit()
         print(f"✓ Applied schema version {CURRENT_SCHEMA_VERSION}", file=sys.stderr)
     elif current_version < target_version:
-        # Future migrations would go here
-        # Example:
-        # if current_version < 2:
-        #     apply_migration_2(conn)
-        #     conn.execute(
-        #         "INSERT INTO schema_version (version, description) VALUES (?, ?)",
-        #         (2, "Add new indexes"),
-        #     )
-        #     conn.commit()
-        print(f"✓ Database already at version {current_version}", file=sys.stderr)
+        # Apply migrations incrementally
+        if current_version < 2:
+            apply_migration_2(conn)
+            conn.execute(
+                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                (2, "Add cache token tracking to sessions"),
+            )
+            conn.commit()
+            print(f"✓ Migrated to schema version 2", file=sys.stderr)
+            current_version = 2
+
+        if current_version < target_version:
+            print(f"✓ Database now at version {current_version}", file=sys.stderr)
     else:
         print(f"✓ Database already at version {current_version}", file=sys.stderr)
 

@@ -487,7 +487,8 @@ class TestSessionCRUD:
             agent_type=AgentType.CODING,
             model="claude-sonnet-4",
             turns=10,
-            tokens={"input": 5000, "output": 3000},
+            input_tokens=5000,
+            output_tokens=3000,
             cost=0.025,
         )
         db.create_session(session)
@@ -500,7 +501,9 @@ class TestSessionCRUD:
         assert retrieved.agent_type == AgentType.CODING
         assert retrieved.model == "claude-sonnet-4"
         assert retrieved.turns == 10
-        assert retrieved.tokens == {"input": 5000, "output": 3000}
+        assert retrieved.input_tokens == 5000
+        assert retrieved.output_tokens == 3000
+        assert retrieved.tokens == {"input": 5000, "output": 3000, "cache_read": 0, "cache_write": 0}
         assert retrieved.cost == 0.025
 
     def test_list_sessions(self, db):
@@ -590,7 +593,9 @@ class TestSessionCRUD:
         assert updated.status == SessionStatus.COMPLETED
         assert updated.ended_at is not None
         assert updated.turns == 15
-        assert updated.tokens == {"input": 8000, "output": 5000}
+        assert updated.input_tokens == 8000
+        assert updated.output_tokens == 5000
+        assert updated.tokens == {"input": 8000, "output": 5000, "cache_read": 0, "cache_write": 0}
         assert updated.cost == 0.035
 
     def test_delete_session(self, db):

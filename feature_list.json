@@ -1130,8 +1130,8 @@
       "Store cost data in sessions table",
       "Test cost calculations with various token counts"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T22:26:07.862545+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,

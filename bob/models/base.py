@@ -143,8 +143,28 @@ class Session:
     ended_at: Optional[datetime] = None
     status: SessionStatus = SessionStatus.RUNNING
     turns: int = 0
-    tokens: dict[str, int] = field(default_factory=lambda: {"input": 0, "output": 0})
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     cost: float = 0.0
+
+    # Legacy property for backward compatibility
+    @property
+    def tokens(self) -> dict[str, int]:
+        """Get tokens as a dict for backward compatibility."""
+        return {
+            "input": self.input_tokens,
+            "output": self.output_tokens,
+            "cache_read": self.cache_read_tokens,
+            "cache_write": self.cache_write_tokens,
+        }
+
+    # Convenience property
+    @property
+    def current_model(self) -> str:
+        """Alias for model field."""
+        return self.model
 
 
 @dataclass
