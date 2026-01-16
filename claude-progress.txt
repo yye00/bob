@@ -13,60 +13,56 @@ SESSION 3 ACHIEVEMENTS:
 
 1. ✅ F003: DatabaseManager class (PASSING)
    - Created bob/database/manager.py with DatabaseManager class (700+ lines)
-   - Implemented connection management:
-     * connect() - Context manager for connections with row_factory
-     * transaction() - Context manager with automatic commit/rollback
-     * Foreign keys enabled on all connections
-     * Database initialization on first use
-   - Implemented complete Project CRUD:
-     * create_project() - Create new projects
-     * get_project() - Retrieve by ID
-     * list_projects() - List with status filter and pagination
-     * update_project() - Partial updates supported
-     * delete_project() - Cascading delete
-   - Implemented complete Task CRUD:
-     * create_task() - Create new tasks
-     * get_task() - Retrieve by ID
-     * list_tasks() - List with filters (project_id, status, priority) and pagination
-     * update_task() - Update status, escalation, research fields
-     * delete_task() - Delete tasks
-     * Priority-based ordering (critical > high > medium > low)
-   - Implemented complete Session CRUD:
-     * create_session() - Create new sessions
-     * get_session() - Retrieve by ID
-     * list_sessions() - List with filters (project_id, task_id, status) and pagination
-     * update_session() - Update status, tokens, cost
-     * delete_session() - Delete sessions
-   - Helper methods for row-to-model conversion:
-     * _row_to_project() - Convert DB rows to Project objects
-     * _row_to_task() - Convert DB rows to Task objects with all JSON fields
-     * _row_to_session() - Convert DB rows to Session objects
-   - All JSON fields properly serialized/deserialized
-   - Created comprehensive tests in tests/test_database_manager.py (24 tests):
-     * TestDatabaseManagerInit: 2 tests (schema creation, foreign keys)
-     * TestProjectCRUD: 12 tests (create, get, list, update, delete, cascading)
-     * TestTaskCRUD: 5 tests (create, get, list, update, delete)
-     * TestSessionCRUD: 5 tests (create, get, list, update, delete)
-     * TestTransactions: 2 tests (commit, rollback)
-   - All tests passing (24 new + 33 existing = 57 total)
+   - Implemented connection management with context managers
+   - Implemented complete CRUD operations for projects, tasks, and sessions
+   - Added transaction support with automatic commit/rollback
+   - Filtering and pagination support on all list methods
+   - 24 comprehensive tests covering all CRUD operations and transactions
+
+2. ✅ F004: CLI framework setup (PASSING)
+   - Created bob/cli/main.py with complete CLI structure (400+ lines)
+   - Implemented main 'bob' command using Click framework
+   - Added global options (--verbose, --quiet, --json, --project, --db)
+   - Created 8 command groups:
+     * project - Manage projects
+     * task - View and manage tasks
+     * run - Run autonomous coding agent
+     * sync - Sync with spec source
+     * status - View project/task status
+     * logs - View session logs
+     * costs - View cost reports
+     * config - Manage configuration
+   - Implemented standalone commands (init, version, examples)
+   - GlobalContext class for passing context between commands
+   - Each command includes help text and usage examples
+   - Created comprehensive tests in tests/test_cli.py (34 tests):
+     * TestMainCommand: 4 tests (help, version, examples)
+     * TestGlobalOptions: 6 tests (all flags and options)
+     * TestCommandGroups: 8 tests (all command groups)
+     * TestInitCommand: 3 tests (init behavior)
+     * TestCommandChaining: 3 tests (complex invocations)
+     * TestErrorHandling: 3 tests (invalid commands/options)
+     * TestHelpMessages: 4 tests (help content verification)
+     * TestContextPassing: 3 tests (context object)
+   - All 91 tests passing (57 previous + 34 new)
 
 =================================================================
 TEST RESULTS:
 =================================================================
 
-Total Tests: 57 passing (up from 33)
+Total Tests: 91 passing (up from 57)
 
-New tests in test_database_manager.py (24 tests):
-- TestDatabaseManagerInit: Database initialization and configuration
-- TestProjectCRUD: Full project lifecycle with filtering and pagination
-- TestTaskCRUD: Full task lifecycle with priority ordering
-- TestSessionCRUD: Full session lifecycle with cost tracking
-- TestTransactions: Transaction commit and rollback behavior
+New tests in test_cli.py (34 tests):
+- Complete CLI framework testing
+- All command groups verified
+- Global options and context passing tested
+- Error handling and help messages verified
 
 All previous tests still passing:
 - tests/test_models.py: 19 tests
 - tests/test_database.py: 14 tests
 - tests/test_database_manager.py: 24 tests
+- tests/test_cli.py: 34 tests ✨ NEW
 
 All tests passing ✅
 
@@ -76,12 +72,13 @@ FEATURE STATUS UPDATE:
 
 Features Completed This Session:
 - F003: DatabaseManager class ✅ (passed_at: 2026-01-16T16:28:39Z)
+- F004: CLI framework setup ✅ (passed_at: 2026-01-16T16:32:23Z)
 
 Overall Progress:
 - Total features: 75
-- Passing: 3 (up from 2)
-- Failing: 72
-- Progress: 4.0% complete
+- Passing: 4 (up from 2)
+- Failing: 71
+- Progress: 5.3% complete
 
 =================================================================
 NEXT SESSION RECOMMENDATIONS:
@@ -89,27 +86,26 @@ NEXT SESSION RECOMMENDATIONS:
 
 The next agent should continue with Phase 1 (Core Foundation):
 
-Priority 1 - CLI Framework (enables user interaction):
-1. F004: CLI framework setup
-   - Set up Click command groups
-   - Main entry point (bob.cli.main:cli)
-   - Command structure (project, task, config, run)
-   - Common options and error handling
-   - Integration with DatabaseManager from F003
+Priority 1 - Project Commands (now ready - F003 ✅, F004 ✅):
+1. F005: 'bob project create' command
+2. F006: 'bob project list' command
+3. F007: 'bob project use' command
+4. F008: 'bob project status' command
 
-Priority 2 - Project Commands (first user-facing features):
-2. F005: 'bob project create' command
-3. F006: 'bob project list' command
-4. F007: 'bob project use' command
-5. F008: 'bob project status' command
-
-These commands depend on F003 ✅ and F004, so they'll be ready
-once F004 is complete.
+These commands depend on F003 ✅ (DatabaseManager) and F004 ✅ (CLI),
+so they're ready to implement.
 
 Alternative Priority - SpecSource Architecture:
-If CLI work is deferred, F010 (SpecSource abstract base class) is
-also ready and doesn't depend on anything. This is critical for
-the spec source plugin system.
+5. F010: SpecSource abstract base class (no dependencies)
+   - This is critical for the spec source plugin system
+   - Enables file-based, GitHub, and other spec sources
+
+With F001-F004 complete, we have a solid foundation:
+- Data models ✅
+- Database layer ✅
+- CLI framework ✅
+
+Next natural step: User-facing project commands (F005-F009)
 
 =================================================================
 TECHNICAL NOTES:
@@ -117,35 +113,36 @@ TECHNICAL NOTES:
 
 Dependencies Satisfied for Next Features:
 - F003 ✅ DatabaseManager complete
-- F004 depends on: none → READY TO IMPLEMENT
-- F005-F009 depend on: F003 ✅, F004 → Will be ready after F004
+- F004 ✅ CLI framework complete
+- F005-F009 depend on: F003 ✅, F004 ✅ → ALL READY TO IMPLEMENT
 - F010 depends on: none → READY TO IMPLEMENT
 
-DatabaseManager Design:
-- Context managers for safe resource management
-- Automatic transaction handling with rollback on error
-- All CRUD methods return appropriate types:
-  * create_*() returns ID string
-  * get_*() returns Optional[Model]
-  * list_*() returns list[Model]
-  * update_*() returns bool (success/failure)
-  * delete_*() returns bool (success/failure)
-- Filtering and pagination supported on all list methods
-- Row factory enables column access by name
-- All JSON fields automatically serialized/deserialized
+CLI Framework Design:
+- Using Click library (installed via requirements.txt)
+- GlobalContext object passed via Click's context system
+- Database path defaults to ~/.bob/bob.db
+- Support for --verbose, --quiet, --json output modes
+- Support for --project to override active project
+- All command groups are placeholders ready for implementation
+- Entry point configured in setup.py: bob=bob.cli.main:cli
 
-Testing Notes:
-- Using temporary databases via pytest fixtures
-- Each test gets an isolated database
-- Tests verify both success and failure cases
-- Tests verify cascading deletes work correctly
-- Transaction tests verify rollback on exceptions
+Command Group Structure:
+- Each group is a Click @cli.group() decorator
+- Subcommands will be added with @group.command()
+- Context is available via @pass_context decorator
+- Consistent help format across all commands
+
+Testing Strategy:
+- Using Click's CliRunner for testing
+- Tests verify command structure, options, help messages
+- Tests verify error handling and validation
+- Integration tests will be added when commands are implemented
 
 Code Quality:
 - Full type hints on all methods
-- Docstrings on all public methods
-- Consistent API across all CRUD operations
-- Defensive programming (check for None, validate types)
+- Comprehensive docstrings
+- Consistent API design
+- Rich help messages with examples
 
 =================================================================
 GIT COMMITS:
@@ -153,14 +150,18 @@ GIT COMMITS:
 
 Session 3 Commits:
 1. 3bb9ea3 - Implement F003: DatabaseManager with CRUD and transaction support - tests passing
+2. 0f18955 - Implement F004: CLI framework setup with Click - tests passing
+3. 0bfaf5a - Update progress notes for Session 3
 
 Changes:
 - bob/database/manager.py (new) - 700+ lines
-- bob/database/__init__.py (updated) - Added DatabaseManager export
+- bob/database/__init__.py (updated)
+- bob/cli/main.py (new) - 400+ lines
 - tests/test_database_manager.py (new) - 700+ lines, 24 tests
-- feature_list.json (updated) - F003 marked passing
+- tests/test_cli.py (new) - 250+ lines, 34 tests
+- feature_list.json (updated) - F003, F004 marked passing
 
-Lines of code added: ~1500 lines (implementation + tests)
+Lines of code added this session: ~2400 lines (implementation + tests)
 
 =================================================================
 ENVIRONMENT STATE:
@@ -173,7 +174,7 @@ Package: bob-framework 0.1.0 (installed in editable mode)
 
 Dependencies Installed:
 - anthropic>=0.40.0
-- click>=8.1.0
+- click>=8.1.0 ✅ (used for CLI)
 - pyyaml>=6.0
 - jinja2>=3.1.0
 - rich>=13.0.0
@@ -186,6 +187,8 @@ Dependencies Installed:
 Directory Structure:
 bob/
 ├── cli/
+│   ├── __init__.py
+│   └── main.py ✅ NEW
 ├── database/
 │   ├── __init__.py ✅
 │   ├── manager.py ✅ NEW
@@ -202,6 +205,7 @@ bob/
 └── spec_sources/
 
 tests/
+├── test_cli.py ✅ NEW
 ├── test_database.py ✅
 ├── test_database_manager.py ✅ NEW
 └── test_models.py ✅
@@ -210,14 +214,15 @@ tests/
 SESSION 3 COMPLETE
 =================================================================
 
-Summary: Successfully implemented F003 (DatabaseManager), providing
-a complete data access layer with CRUD operations, transaction support,
-and filtering/pagination. All 57 tests passing. Ready for F004 (CLI
-framework) or F010 (SpecSource architecture) in the next session.
+Summary: Successfully implemented F003 (DatabaseManager) and F004
+(CLI framework), providing complete data access and user interaction
+layers. All 91 tests passing. Ready for project commands (F005-F009)
+or SpecSource architecture (F010) in the next session.
 
-The data layer is now complete:
+Foundation layers complete:
 - F001 ✅ Models (dataclasses and enums)
 - F002 ✅ Schema (SQLite tables and indexes)
 - F003 ✅ Manager (CRUD operations and transactions)
+- F004 ✅ CLI (Click framework with command groups)
 
-Next phase: CLI and user interaction layer.
+Next phase: User-facing commands and spec source system.
