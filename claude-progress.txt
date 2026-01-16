@@ -1,13 +1,109 @@
 =================================================================
-BOB (Build Orchestration Bot) - Session 6 Progress Summary
+BOB (Build Orchestration Bot) - Session 15 Progress Summary
 =================================================================
 Date: 2026-01-16
-Session: Coding Agent (Session 6)
+Session: Coding Agent (Session 15)
 Agent Role: Core Feature Implementation
-Previous Session: Session 5 (F010, F011 - SpecSource architecture)
+Previous Session: Session 14 (F027 - ResearchController)
 =================================================================
 
 ✅ COMPLETED TASKS:
+
+SESSION 15 ACHIEVEMENTS:
+
+1. ✅ F007: Project use command - Implement 'bob project use' to set active project (PASSING)
+   - Created StateManager class in bob/state.py (148 lines)
+     * Manages persistent state in ~/.bob/state.json
+     * Stores active project ID (set_active_project, get_active_project, clear_active_project)
+     * Supports user preferences (get_preference, set_preference)
+     * Atomic file writes for safety (temp file + rename)
+     * Handles corrupted state gracefully (returns defaults)
+     * Default state directory: ~/.bob/
+     * State structure:
+       - active_project: Currently active project ID
+       - last_updated: Timestamp of last state update
+       - preferences: User preference dictionary
+     * 19 comprehensive tests in tests/test_state.py:
+       - test_init_creates_state_directory: State dir creation
+       - test_init_creates_state_file: State file initialization
+       - test_init_creates_default_state: Default state structure
+       - test_get_active_project_default: Default to None
+       - test_set_active_project: Set active project
+       - test_set_active_project_updates_file: File persistence
+       - test_set_active_project_persists: Cross-instance persistence
+       - test_clear_active_project: Clear active project
+       - test_get_preference_default: Default preference values
+       - test_set_preference: Set preference
+       - test_set_multiple_preferences: Multiple preferences
+       - test_preferences_persist: Preference persistence
+       - test_get_all_state: Get complete state
+       - test_clear_all_state: Reset to defaults
+       - test_atomic_write: Atomic write verification
+       - test_handles_corrupted_state_file: Graceful corruption handling
+       - test_default_state_dir: Default ~/.bob directory
+       - test_updates_timestamp_on_write: Timestamp updates
+       - test_preference_types: Different value types
+
+   - Implemented 'bob project use' command in cli/project.py (74 lines)
+     * Activate project by name or ID
+     * Validates project exists in database (try by ID first, then by name)
+     * Stores active project in state file via StateManager
+     * Shows helpful error messages with available projects
+     * Displays project info:
+       - Project name and ID
+       - Workspace directory
+       - Spec source URI
+     * Shows next steps:
+       - bob sync: Sync tasks
+       - bob task list: View tasks
+       - bob run: Run the agent
+     * 8 comprehensive tests in tests/test_cli_project.py:
+       - test_use_help: Help text validation
+       - test_use_by_name: Activate by name
+       - test_use_by_id: Activate by ID
+       - test_use_nonexistent_project: Error handling
+       - test_use_shows_available_projects_on_error: Helpful errors
+       - test_use_updates_state_file: State file updates
+       - test_use_displays_project_info: Project info display
+       - test_use_shows_next_steps: Next steps guidance
+
+   - Updated sync command to use StateManager
+     * Replaced old multiple-active-project logic
+     * Now reads active project from state file (get_active_project)
+     * Better error messages pointing to 'bob project use'
+     * Verifies project exists in database
+     * Falls back to --project flag if provided
+     * Updated test in tests/test_cli_sync.py:
+       - test_sync_multiple_active_projects_requires_project_flag
+       - Now tests state-based active project detection
+
+   - All 448 tests passing
+   - Marked F007 as passing in feature_list.json
+
+ARCHITECTURAL SIGNIFICANCE:
+
+F007 completes the project management workflow:
+- **User Experience**: Simple workflow: create → use → sync → run
+- **State Management**: Centralized state in ~/.bob/state.json
+- **Active Project Tracking**: No more ambiguity about which project is active
+- **Extensible Design**: StateManager supports future preferences and settings
+- **Production Ready**: Atomic writes, corruption handling, comprehensive tests
+
+This unlocks the complete project workflow:
+1. bob project create → Register project
+2. bob project use → Set as active
+3. bob sync → Import tasks from spec source
+4. bob task list → View tasks
+5. bob run → Execute tasks
+
+The StateManager architecture also provides a foundation for:
+- User preferences (theme, editor, auto-sync)
+- Session state (last used model, last executed task)
+- Configuration overrides
+- Per-user settings across all projects
+
+=================================================================
+PREVIOUS SESSION ACHIEVEMENTS:
 
 SESSION 6 ACHIEVEMENTS:
 
