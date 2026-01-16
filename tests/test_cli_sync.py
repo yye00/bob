@@ -500,7 +500,7 @@ class TestSyncMultipleProjects:
     """Test sync with multiple projects."""
 
     def test_sync_multiple_active_projects_requires_project_flag(self, runner, db_path, tmp_path):
-        """Test sync fails with multiple active projects if --project not specified."""
+        """Test sync fails when no active project is set and --project not specified."""
         db = DatabaseManager(db_path)
 
         # Create two active projects
@@ -523,10 +523,11 @@ class TestSyncMultipleProjects:
             )
             db.create_project(project)
 
-        # Try to sync without --project flag
-        result = runner.invoke(cli, ["--db", str(db_path), "sync"])
+        # Try to sync without --project flag and without active project set
+        result = runner.invoke(cli, ["--db", str(db_path), "sync"], env={"HOME": str(tmp_path)})
         assert result.exit_code == 1
-        assert "Multiple active projects found" in result.output
+        assert "No active project found" in result.output
+        assert "bob project use" in result.output
 
 
 class TestSyncEdgeCases:

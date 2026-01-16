@@ -14,6 +14,7 @@ import click
 from bob.database.manager import DatabaseManager
 from bob.models.base import Task, TaskStatus, AgentType, ModelTier
 from bob.spec_sources import get_registry
+from bob.state import StateManager
 
 
 def get_active_project(db: DatabaseManager, project_id: Optional[str]) -> Optional[str]:
@@ -34,26 +35,25 @@ def get_active_project(db: DatabaseManager, project_id: Optional[str]) -> Option
             return None
         return project_id
 
-    # Try to get active project from config
-    # TODO: Implement active project tracking in database
-    # For now, just get the first active project
-    projects = db.list_projects()
-    active_projects = [p for p in projects if p.status.value == "active"]
+    # Get active project from state file
+    state = StateManager()
+    active_project_id = state.get_active_project()
 
-    if not active_projects:
+    if not active_project_id:
         click.echo("✗ No active project found", err=True)
         click.echo("  Set a project with: bob project use <name>", err=True)
         click.echo("  Or specify with: bob sync --project <name>", err=True)
         return None
 
-    if len(active_projects) > 1:
-        click.echo("✗ Multiple active projects found. Please specify one:", err=True)
-        for p in active_projects:
-            click.echo(f"  {p.name} ({p.id})", err=True)
-        click.echo("  Use: bob sync --project <name>", err=True)
+    # Verify project exists in database
+    project = db.get_project(active_project_id)
+    if not project:
+        click.echo(f"✗ Active project not found in database: {active_project_id}", err=True)
+        click.echo("  The project may have been deleted.", err=True)
+        click.echo("  Set a new active project with: bob project use <name>", err=True)
         return None
 
-    return active_projects[0].id
+    return active_project_id
 
 
 @click.command()

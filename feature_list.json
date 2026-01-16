@@ -220,8 +220,8 @@
       "Display confirmation message",
       "Test switching between projects"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T23:26:47.207136+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,

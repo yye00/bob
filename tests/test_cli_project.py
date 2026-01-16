@@ -705,3 +705,215 @@ class TestProjectListCommand:
             assert "Tasks" in result.output
             assert "Cost" in result.output
             assert "Description" in result.output
+
+
+class TestProjectUseCommand:
+    """Test 'bob project use' command."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_use_help(self) -> None:
+        """Test that use command shows help."""
+        result = self.runner.invoke(cli, ["project", "use", "--help"])
+        assert result.exit_code == 0
+        assert "Set the active project" in result.output
+        assert "NAME" in result.output
+
+    def test_use_by_name(self, tmp_path: Path) -> None:
+        """Test activating a project by name."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+            state_dir = Path(".bob-state")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"]
+            )
+
+            # Use the project by name
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "use", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "✓ Activated project: test-app" in result.output
+            assert "Next steps:" in result.output
+
+            # Verify state file was created
+            state_file = tmp_path / ".bob" / "state.json"
+            assert state_file.exists()
+
+            # Verify state file contains the project ID
+            with open(state_file) as f:
+                state = json.load(f)
+                assert state["active_project"] is not None
+                assert state["active_project"].startswith("proj-")
+
+    def test_use_by_id(self, tmp_path: Path) -> None:
+        """Test activating a project by ID."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            create_result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"]
+            )
+
+            # Extract project ID from output
+            # Output format: "✓ Created project 'test-app' (proj-XXXXXXXX)"
+            import re
+            match = re.search(r"proj-[a-f0-9]{8}", create_result.output)
+            assert match
+            project_id = match.group(0)
+
+            # Use the project by ID
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "use", project_id],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert f"✓ Activated project: test-app ({project_id})" in result.output
+
+    def test_use_nonexistent_project(self, tmp_path: Path) -> None:
+        """Test using a project that doesn't exist."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+
+            # Try to use nonexistent project
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "use", "nonexistent"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 1
+            assert "✗ Project not found: nonexistent" in result.output
+            assert "Available projects:" in result.output
+
+    def test_use_shows_available_projects_on_error(self, tmp_path: Path) -> None:
+        """Test that use command shows available projects when project not found."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create two projects
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "app1", str(workspace / "app1"), "file://spec.yaml"]
+            )
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "app2", str(workspace / "app2"), "file://spec.yaml"]
+            )
+
+            # Try to use nonexistent project
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "use", "nonexistent"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 1
+            assert "app1" in result.output
+            assert "app2" in result.output
+
+    def test_use_updates_state_file(self, tmp_path: Path) -> None:
+        """Test that use command updates state file correctly."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create two projects
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "app1", str(workspace / "app1"), "file://spec.yaml"]
+            )
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "app2", str(workspace / "app2"), "file://spec.yaml"]
+            )
+
+            # Use first project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "use", "app1"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            # Verify state file
+            state_file = tmp_path / ".bob" / "state.json"
+            with open(state_file) as f:
+                state = json.load(f)
+                first_project_id = state["active_project"]
+
+            # Use second project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "use", "app2"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            # Verify state file was updated
+            with open(state_file) as f:
+                state = json.load(f)
+                second_project_id = state["active_project"]
+
+            assert first_project_id != second_project_id
+
+    def test_use_displays_project_info(self, tmp_path: Path) -> None:
+        """Test that use command displays project information."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"]
+            )
+
+            # Use the project
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "use", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Workspace:" in result.output
+            assert "Spec source: file://spec.yaml" in result.output
+
+    def test_use_shows_next_steps(self, tmp_path: Path) -> None:
+        """Test that use command shows next steps."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"]
+            )
+
+            # Use the project
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "use", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Next steps:" in result.output
+            assert "bob sync" in result.output
+            assert "bob task list" in result.output
+            assert "bob run" in result.output

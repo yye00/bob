@@ -16,6 +16,7 @@ import yaml
 
 from bob.database.manager import DatabaseManager
 from bob.models.base import Project, ProjectStatus, TaskStatus
+from bob.state import StateManager
 
 
 def validate_project_name(name: str) -> bool:
@@ -357,3 +358,76 @@ def list(
     click.echo("=" * 100)
     click.echo(f"Total: {len(projects)} project(s)")
     click.echo()
+
+
+@click.command()
+@click.argument("name")
+@click.pass_context
+def use(ctx: click.Context, name: str) -> None:
+    """Set the active project.
+
+    \b
+    Arguments:
+        NAME  Project name or ID to activate
+
+    \b
+    Examples:
+        bob project use my-app
+        bob project use proj-a1b2c3d4
+
+    The use command will:
+        1. Validate the project exists in the database
+        2. Store the project ID in ~/.bob/state.json
+        3. Display confirmation message
+
+    Once a project is active, commands like 'bob sync' and 'bob run'
+    will operate on that project by default.
+    """
+    # Get database path from context
+    db_path = ctx.obj.db_path
+
+    # Initialize database manager
+    db = DatabaseManager(db_path)
+
+    # Try to find project by name or ID
+    project = None
+
+    # First try by ID
+    if name.startswith("proj-"):
+        project = db.get_project(name)
+
+    # If not found, try by name
+    if not project:
+        projects = db.list_projects()
+        matching_projects = [p for p in projects if p.name == name]
+        if matching_projects:
+            project = matching_projects[0]
+
+    # If still not found, error
+    if not project:
+        click.echo(f"✗ Project not found: {name}", err=True)
+        click.echo()
+        click.echo("Available projects:", err=True)
+        projects = db.list_projects()
+        if projects:
+            for p in projects:
+                click.echo(f"  {p.name} ({p.id})", err=True)
+        else:
+            click.echo("  No projects found. Create one with: bob project create", err=True)
+        sys.exit(1)
+
+    # Initialize state manager
+    state = StateManager()
+
+    # Set active project
+    state.set_active_project(project.id)
+
+    # Display confirmation
+    click.echo(f"✓ Activated project: {project.name} ({project.id})")
+    click.echo(f"  Workspace: {project.workspace_dir}")
+    click.echo(f"  Spec source: {project.spec_source}")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo("  1. Sync tasks: bob sync")
+    click.echo("  2. View tasks: bob task list")
+    click.echo("  3. Run the agent: bob run")
