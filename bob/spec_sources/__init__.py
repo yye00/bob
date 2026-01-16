@@ -12,6 +12,11 @@ from bob.spec_sources.base import (
     TaskSpec,
     get_registry,
 )
+from bob.spec_sources.file_source import FileSpecSource
+
+# Auto-register file spec source
+_registry = get_registry()
+_registry.register("file", FileSpecSource)
 
 __all__ = [
     "SpecSource",
@@ -20,4 +25,5 @@ __all__ = [
     "SyncResult",
     "TaskSpec",
     "get_registry",
+    "FileSpecSource",
 ]
