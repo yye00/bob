@@ -1413,3 +1413,94 @@ Lines of code added: ~860 (implementation + tests)
 Test coverage maintained at 100% (421/421 passing)
 
 =================================================================
+
+=================================================================
+SESSION 16 - 2026-01-16 (F012, F016 Complete)
+=================================================================
+
+COMPLETED FEATURES:
+
+F012: FileSpecSource - Support JSON format (HIGH) ✅
+  - Discovered feature already implemented in file_source.py
+  - JSON format detection working (lines 80-88)
+  - JSON parsing using same schema as YAML (line 116)
+  - All test requirements verified:
+    1. JSON format detection ✅
+    2. JSON parsing with same schema ✅
+    3. Sample JSON spec file tested ✅
+    4. Research detection in JSON verified ✅
+    5. JSON schema matches YAML schema ✅
+  - Marked passing at 2026-01-16T23:34:26Z
+  - No new code required - feature was already complete
+
+F016: Task show command - Detailed task information (HIGH) ✅
+  - Implemented 'bob task show <task_id>' command
+  - Shows comprehensive task details:
+    * Title, description, status, priority, category
+    * Acceptance criteria (bulleted list)
+    * Implementation steps (numbered list)
+    * Dependencies (depends_on list)
+    * Blocks (tasks depending on this one)
+    * Progress (attempts, current model, assigned agent)
+  - Optional flags:
+    * --research: Shows research findings
+    * --escalation: Shows escalation state
+    * --json: Structured JSON output
+  - Supports lookup by spec_id (F001) or database ID (task-001)
+  - Session history table (last 10 sessions with stats)
+  - Created 11 comprehensive tests covering all scenarios
+  - Marked passing at 2026-01-16T23:37:02Z
+
+IMPLEMENTATION DETAILS:
+
+F016 Implementation:
+  - Added show() function to bob/cli/task.py (~290 lines)
+  - Added ModelTier import for escalation display
+  - Registered command in bob/cli/main.py
+  - Rich formatting with colored output
+  - Handles missing tasks gracefully
+  - Supports both spec_id and database ID lookup
+  - Reverse dependency lookup (shows what this blocks)
+
+TEST COVERAGE:
+  - Total: 470 tests passing (up from 459)
+  - New: 11 tests for task show command
+  - All previous tests still passing ✅
+
+Test classes added:
+  - TestTaskShowCommand (11 tests):
+    * test_show_help
+    * test_show_by_spec_id
+    * test_show_by_database_id
+    * test_show_nonexistent_task
+    * test_show_displays_full_details
+    * test_show_with_research_flag
+    * test_show_with_escalation_flag
+    * test_show_json_output
+    * test_show_displays_dependency_graph
+    * test_show_no_active_project
+    * test_show_global_json_flag
+
+PROGRESS SUMMARY:
+  - Features passing: 22/75 (29.3%, up from 20/75)
+  - New features completed: 2 (F012, F016)
+  - Tests added: 11 new tests
+  - Lines of code added: ~290 (implementation + tests)
+
+NEXT PRIORITY FEATURES (dependencies satisfied):
+  - F013: Markdown format support (HIGH) - requires parser implementation
+  - F028: Research command (HIGH) - depends on F027 ✅
+  - F031: Parallel execution (HIGH) - depends on F030 ✅
+  - F034: Costs command (HIGH) - depends on F033 ✅
+  - F038: Status command (HIGH) - depends on F008 ✅
+  - F042: Auto-sync on run (HIGH) - depends on F041 ✅
+
+NOTES:
+  - F012 was a pleasant surprise - already fully implemented
+  - F016 integrates well with existing database methods
+  - Rich console formatting makes output very readable
+  - Dependency graph display (blocks) is useful for planning
+  - Session history provides good debugging insight
+
+SESSION 16 COMPLETE ✅
+=================================================================
