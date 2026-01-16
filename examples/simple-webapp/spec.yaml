@@ -1,0 +1,208 @@
+# Example Spec: Simple Web Application
+# This is a minimal example to demonstrate BOB's capabilities
+
+name: Simple Todo Web App
+description: A basic todo list application with backend and frontend
+
+defaults:
+  priority: 3
+  category: functional
+
+tasks:
+  # Backend Setup
+  - id: backend-init
+    title: Initialize Node.js Backend
+    description: Set up Express.js backend with TypeScript
+    acceptance_criteria:
+      - package.json exists with required dependencies
+      - TypeScript configuration is valid
+      - Server starts successfully on port 3000
+      - Basic health check endpoint responds with 200 OK
+    steps:
+      - Run npm init to create package.json
+      - Install Express, TypeScript, and type definitions
+      - Create tsconfig.json with appropriate settings
+      - Create src/server.ts with Express app
+      - Add health check route at GET /health
+      - Add start script to package.json
+      - Test that server starts without errors
+    priority: 1
+    labels: [backend, setup, mvp]
+
+  # Database Setup
+  - id: database-setup
+    title: SQLite Database Setup
+    depends_on: [backend-init]
+    description: Configure SQLite database with schema
+    acceptance_criteria:
+      - SQLite database file is created
+      - Schema includes todos table with id, title, completed, created_at
+      - Database connection works from Express
+    steps:
+      - Install better-sqlite3 package
+      - Create database/schema.sql with todos table
+      - Create database/db.ts with connection setup
+      - Add initialization function to create tables
+      - Test database connection
+    priority: 1
+    labels: [backend, database, mvp]
+
+  # API Endpoints
+  - id: api-endpoints
+    title: Todo API Endpoints
+    depends_on: [database-setup]
+    description: Implement RESTful API for todo operations
+    acceptance_criteria:
+      - GET /api/todos returns all todos
+      - POST /api/todos creates a new todo
+      - PUT /api/todos/:id updates a todo
+      - DELETE /api/todos/:id deletes a todo
+      - All endpoints return proper HTTP status codes
+    steps:
+      - Create src/routes/todos.ts
+      - Implement GET /api/todos (list all)
+      - Implement POST /api/todos (create)
+      - Implement PUT /api/todos/:id (update)
+      - Implement DELETE /api/todos/:id (delete)
+      - Add error handling middleware
+      - Test all endpoints with curl or Postman
+    priority: 1
+    labels: [backend, api, mvp]
+
+  # Frontend Setup
+  - id: frontend-init
+    title: Initialize React Frontend
+    depends_on: [backend-init]
+    description: Set up React frontend with Vite
+    acceptance_criteria:
+      - React app created with Vite
+      - Development server runs on port 5173
+      - Basic component structure exists
+      - App renders without errors
+    steps:
+      - Run npm create vite@latest client -- --template react-ts
+      - Install dependencies
+      - Create basic component structure
+      - Configure proxy to backend in vite.config.ts
+      - Test that dev server runs
+    priority: 2
+    labels: [frontend, setup, mvp]
+
+  # UI Components
+  - id: ui-components
+    title: Todo UI Components
+    depends_on: [frontend-init, api-endpoints]
+    description: Build React components for todo list UI
+    acceptance_criteria:
+      - TodoList component displays all todos
+      - TodoItem component shows individual todo with checkbox
+      - AddTodo component has input and submit button
+      - Todos can be added, completed, and deleted through UI
+    steps:
+      - Create TodoList.tsx component
+      - Create TodoItem.tsx component
+      - Create AddTodo.tsx component
+      - Implement state management with useState
+      - Connect components to backend API
+      - Add loading and error states
+      - Test all CRUD operations work
+    priority: 2
+    labels: [frontend, ui, mvp]
+
+  # Styling
+  - id: basic-styling
+    title: Basic CSS Styling
+    depends_on: [ui-components]
+    description: Add clean, minimal styling to the application
+    acceptance_criteria:
+      - App has centered layout
+      - Todos have clear visual separation
+      - Completed todos are visually distinguished (strikethrough)
+      - Add button is prominent
+      - Responsive design works on mobile
+    steps:
+      - Create App.css with basic styles
+      - Style TodoList container
+      - Style TodoItem with hover effects
+      - Style AddTodo form
+      - Add strikethrough for completed todos
+      - Test responsive layout on different screen sizes
+    priority: 3
+    category: style
+    labels: [frontend, styling]
+
+  # Error Handling
+  - id: error-handling
+    title: Comprehensive Error Handling
+    depends_on: [ui-components]
+    description: Add proper error handling throughout the app
+    acceptance_criteria:
+      - API errors are caught and displayed to user
+      - Network failures show friendly error messages
+      - Invalid inputs are validated
+      - Error messages auto-dismiss after 3 seconds
+    steps:
+      - Create ErrorMessage.tsx component
+      - Add try-catch blocks to all API calls
+      - Implement input validation
+      - Add error state to React components
+      - Test error scenarios (network failure, invalid data)
+    priority: 2
+    labels: [backend, frontend, polish]
+
+  # Testing
+  - id: backend-tests
+    title: Backend Unit Tests
+    depends_on: [api-endpoints]
+    description: Write tests for API endpoints
+    acceptance_criteria:
+      - All API endpoints have tests
+      - Test coverage is above 70%
+      - Tests pass in CI
+    steps:
+      - Install Jest and Supertest
+      - Create tests/api.test.ts
+      - Write tests for each endpoint (GET, POST, PUT, DELETE)
+      - Test error cases
+      - Run tests and verify they pass
+    priority: 3
+    category: test
+    labels: [backend, testing]
+
+  # Documentation
+  - id: documentation
+    title: Project Documentation
+    depends_on: [ui-components, api-endpoints]
+    description: Create comprehensive README and API docs
+    acceptance_criteria:
+      - README.md has setup instructions
+      - API endpoints are documented
+      - Architecture diagram is included
+      - Contributing guidelines exist
+    steps:
+      - Write README.md with project overview
+      - Document installation steps
+      - Document API endpoints with examples
+      - Create simple architecture diagram
+      - Add CONTRIBUTING.md
+    priority: 4
+    category: docs
+    labels: [documentation]
+
+  # Docker Setup
+  - id: docker-setup
+    title: Docker Containerization
+    depends_on: [api-endpoints, ui-components]
+    description: Create Docker setup for easy deployment
+    acceptance_criteria:
+      - Dockerfile builds successfully
+      - docker-compose.yml runs the app
+      - App accessible at http://localhost:3000
+    steps:
+      - Create Dockerfile for backend
+      - Create Dockerfile for frontend
+      - Create docker-compose.yml
+      - Add .dockerignore
+      - Test build and run with docker-compose up
+    priority: 4
+    labels: [devops, deployment]
