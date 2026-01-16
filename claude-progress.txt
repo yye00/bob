@@ -44,36 +44,86 @@ SESSION 5 ACHIEVEMENTS:
    - All tests use MockSpecSource for interface validation
    - Full async support with pytest-asyncio
 
+2. ✅ F011: FileSpecSource - File-based spec source (PASSING)
+   - Created bob/spec_sources/file_source.py (350+ lines)
+   - Implemented FileSpecSource(SpecSource) for YAML/JSON files:
+     * YAML and JSON format support (.yaml, .yml, .json)
+     * Complete task parsing with all fields:
+       - Required: id, title, description
+       - Optional: acceptance_criteria, steps, depends_on, priority,
+         category, labels, research_required, research_queries, etc.
+       - Default values for missing fields
+     * File change detection via SHA256 hash comparison:
+       - Avoids re-parsing unchanged files
+       - Tracks last file hash and spec version
+     * Automatic research requirement detection:
+       - Keywords: "investigate", "explore", "research needed",
+         "find out", "look into", "determine how to"
+       - Scans title, description, and steps
+       - Case-insensitive matching
+       - Respects explicit research_required flag
+     * Sync implementation:
+       - Detects added tasks (in file but not in known)
+       - Detects removed tasks (in known but not in file)
+       - Detects modified tasks (version changed)
+       - Returns SyncResult with changes
+     * Error handling:
+       - YAML/JSON parsing errors
+       - Missing required fields
+       - Invalid file format
+       - File not found
+     * Source metadata in tasks:
+       - source_file: Path to spec file
+       - format: yaml or json
+   - Auto-registration with global registry on import
+   - Added 30 comprehensive tests:
+     * TestFileSpecSourceInit: 6 tests (formats, validation, errors)
+     * TestFileSpecSourceFetch: 9 tests (YAML, JSON, defaults, errors)
+     * TestResearchDetection: 5 tests (keyword detection in various fields)
+     * TestFileSpecSourceSync: 6 tests (added, removed, modified, no changes)
+     * TestFileSpecSourceMarkCompleted: 1 test (not supported)
+     * TestFileSpecSourceRegistry: 2 tests (auto-registration works)
+     * TestFileSpecSourceMetadata: 1 test (source tracking)
+   - Full async support throughout
+
 ARCHITECTURAL SIGNIFICANCE:
 
-F010 is a foundational feature that enables BOB's core value proposition:
-- **Pluggable Spec Sources**: Can pull tasks from any source (files, GitHub,
-  Jira, Linear, custom systems)
-- **Change Detection**: Intelligent sync detects what's been added, modified,
-  or removed since last sync
-- **Bidirectional**: Can optionally report completion back to source
+F010 + F011 together provide:
+- **Complete Spec Source System**: Abstract interface + concrete implementation
+- **File-Based Specs**: Most common use case (YAML/JSON files)
+- **Change Detection**: Intelligent sync without re-processing
+- **Research Integration**: Auto-detects when tasks need research
+- **Extensibility**: Clear pattern for GitHub, Jira, Linear sources
 - **Type Safety**: Full type hints and dataclass validation
-- **Extensibility**: Plugin architecture with simple registration
+- **Production Ready**: Comprehensive error handling and testing
 
 This unlocks:
-- F011: FileSpecSource (YAML/JSON files) - NOW READY
-- F012: GitHub Issues source (depends on F011)
-- F013: Jira source (depends on F011)
-- F014: Linear source (depends on F010)
+- F012: Enhanced JSON format support (depends on F011)
+- F013: Markdown format support (depends on F011)
+- F041: Sync command to import/update tasks (depends on F011)
 
 =================================================================
 TEST RESULTS:
 =================================================================
 
-Total Tests: 156 passing (up from 128)
+Total Tests: 186 passing (up from 128)
 
-New tests added (28 tests):
-- tests/test_spec_sources.py: 28 tests
+New tests added in this session (58 tests):
+- tests/test_spec_sources.py: 28 tests (F010)
   * TestTaskSpec: 2 tests
   * TestSyncResult: 3 tests
   * TestSpecSource: 9 tests
   * TestSpecSourceRegistry: 13 tests
   * TestGlobalRegistry: 2 tests
+
+- tests/test_file_source.py: 30 tests (F011)
+  * TestFileSpecSourceInit: 6 tests
+  * TestFileSpecSourceFetch: 9 tests
+  * TestResearchDetection: 5 tests
+  * TestFileSpecSourceSync: 6 tests
+  * TestFileSpecSourceMarkCompleted: 1 test
+  * TestFileSpecSourceRegistry: 2 tests
+  * TestFileSpecSourceMetadata: 1 test
 
 All previous tests still passing:
 - tests/test_models.py: 19 tests
@@ -82,7 +132,7 @@ All previous tests still passing:
 - tests/test_cli.py: 34 tests
 - tests/test_cli_project.py: 37 tests
 
-All 156 tests passing ✅
+All 186 tests passing ✅
 
 =================================================================
 FEATURE STATUS UPDATE:
@@ -90,60 +140,57 @@ FEATURE STATUS UPDATE:
 
 Features Completed This Session:
 - F010: SpecSource abstract base class ✅ (passed_at: 2026-01-16T21:49:51Z)
+- F011: FileSpecSource ✅ (passed_at: 2026-01-16T21:54:21Z)
 
 Overall Progress:
 - Total features: 75
-- Passing: 7 (up from 6)
-- Failing: 68
-- Progress: 9.3% complete
+- Passing: 8 (up from 6)
+- Failing: 67
+- Progress: 10.7% complete
 
 Dependency Chain Progress:
 ✅ F001 → ✅ F002 → ✅ F003 → ✅ F004 → ✅ F005 → ✅ F006
-✅ F010 (new branch, no dependencies)
+✅ F010 → ✅ F011
 
 This unlocks:
-- F011: FileSpecSource (depends on F010) - NOW READY
+- F012: Enhanced JSON format (depends on F011) - NOW READY
+- F013: Markdown format (depends on F011) - NOW READY
 - F014: LinearSource (depends on F010) - NOW READY
-
-Still awaiting:
-- F012: GitHub source (depends on F011)
-- F013: Jira source (depends on F011)
+- F041: Sync command (depends on F011) - NOW READY
 
 =================================================================
 NEXT SESSION RECOMMENDATIONS:
 =================================================================
 
-Priority 1 - Implement FileSpecSource (F011):
-F011 is now unblocked and is CRITICAL priority. It's the most important
-spec source implementation because:
-- Most users will start with file-based specs
-- Foundation for other spec sources to learn from
-- Needed for task import/sync functionality
-- Relatively straightforward to implement
+Priority 1 - Sync Command (F041):
+F041 is CRITICAL and now unblocked. It's the command that actually imports
+tasks from spec sources into the database. Essential for core workflow:
+- 'bob sync' command
+- Import tasks from spec source
+- Update existing tasks
+- Handle dependencies
+- Update task status
 
-Implementation plan for F011:
-1. Create bob/spec_sources/file.py
-2. Implement FileSpecSource(SpecSource) class
-3. Support YAML and JSON formats
-4. Parse task specifications with full metadata
-5. Detect file changes (mtime, hash)
-6. Handle validation and error cases
-7. Register with global registry
-8. Write comprehensive tests
-
-Priority 2 - Continue Project Commands (F007-F009):
-These are HIGH priority and build on F005:
-- F007: 'bob project use' command
-- F008: 'bob project status' command
-- F009: 'bob project delete' command
+Priority 2 - Project Commands (F007-F009):
+Continue the project management suite:
+- F007: 'bob project use' (set active project)
+- F008: 'bob project status' (detailed status)
+- F009: 'bob project delete' (with workspace cleanup)
 
 Priority 3 - Task Commands (F015):
 F015: 'bob task list' is CRITICAL and has no dependencies
-- Can be implemented in parallel with F011
+- List tasks with filtering
+- Show status and progress
+- Display dependencies
+
+Priority 4 - Additional Spec Formats (F012, F013):
+Enhance FileSpecSource with more formats:
+- F012: Enhanced JSON with schema validation
+- F013: Markdown format for human-friendly specs
 
 Recommended approach:
-Implement F011 (FileSpecSource) next as it's critical and newly unblocked.
-This will enable the full spec source plugin system to be tested end-to-end.
+Implement F041 (sync command) next as it's critical for the core workflow
+and brings together the spec source system with the database layer.
 
 =================================================================
 TECHNICAL NOTES:
@@ -157,16 +204,17 @@ SpecSource Architecture Design:
    - Base class provides common infrastructure (last_sync, version tracking)
 
 2. **TaskSpec vs Task Model**:
-   - TaskSpec: Lightweight spec-level representation
+   - TaskSpec: Lightweight spec-level representation (immutable from source)
    - Task (from models.py): Database model with execution state
    - Conversion happens during import/sync
-   - TaskSpec is immutable from source, Task tracks progress
+   - TaskSpec includes spec_version for change detection
 
 3. **Registry Pattern**:
    - Scheme-based registration (file://, github://, jira://)
    - Factory method creates instances from URIs
    - Global singleton for convenience
    - Type-safe validation on registration
+   - Auto-registration on import
 
 4. **Async-First Design**:
    - All SpecSource methods are async
@@ -178,80 +226,130 @@ SpecSource Architecture Design:
    - Compares with current state
    - Returns SyncResult with changes
    - Caller decides how to handle changes
+   - File hash optimization avoids re-parsing
+
+FileSpecSource Implementation:
+
+1. **Format Support**:
+   - YAML via PyYAML (safe_load)
+   - JSON via json module
+   - Extension-based detection (.yaml, .yml, .json)
+
+2. **Task Parsing**:
+   - Required fields: id, title, description
+   - Optional fields with sensible defaults
+   - Validates data types
+   - Clear error messages
+
+3. **Research Detection**:
+   - 8 keyword patterns
+   - Case-insensitive
+   - Scans title, description, steps
+   - Auto-sets research_required flag
+   - Respects explicit flag if set
+
+4. **Hash-Based Change Detection**:
+   - SHA256 of file contents
+   - Caches last hash
+   - Avoids re-parsing if unchanged
+   - Still checks task versions for modifications
+
+5. **Error Handling**:
+   - Specific exceptions for each error type
+   - Wraps in SpecSourceError
+   - sync() returns errors in result
+   - Doesn't crash on partial failures
 
 Testing Approach:
 - MockSpecSource for interface validation
+- tmp_path fixture for file operations
 - Comprehensive edge case coverage
 - Async test support
 - Registry isolation between tests
 
 Code Quality:
 - Full type hints on all classes and methods
-- Comprehensive docstrings
+- Comprehensive docstrings with examples
 - Properties for computed values
 - Clear separation of concerns
+- No function over 50 lines
 
 Files Modified This Session:
 - bob/spec_sources/base.py (new) - 300 lines
-- bob/spec_sources/__init__.py (updated) - exports
+- bob/spec_sources/file_source.py (new) - 350 lines
+- bob/spec_sources/__init__.py (updated) - exports + registration
 - tests/test_spec_sources.py (new) - 630 lines, 28 tests
-- feature_list.json (updated) - F010 marked passing
+- tests/test_file_source.py (new) - 700 lines, 30 tests
+- feature_list.json (updated) - F010, F011 marked passing
 - temp_scripts/check_features.py (new) - feature status helper
 - temp_scripts/update_f010.py (new) - update helper
+- temp_scripts/update_f011.py (new) - update helper
 
 =================================================================
 USAGE EXAMPLES:
 =================================================================
 
-Using the SpecSource interface:
+Using FileSpecSource:
 
 ```python
-from bob.spec_sources import get_registry, SpecSource
+from bob.spec_sources import FileSpecSource, get_registry
 
-# Get global registry
+# Method 1: Direct instantiation
+source = FileSpecSource("file://./spec.yaml")
+
+# Method 2: Via registry
 registry = get_registry()
-
-# Register a spec source (done by plugin at import time)
-from bob.spec_sources.file import FileSpecSource
-registry.register("file", FileSpecSource)
-
-# Create a spec source from URI
-source = registry.create("file://spec.yaml")
+source = registry.create("file://./spec.yaml")
 
 # Fetch all tasks
 tasks = await source.fetch_tasks()
+print(f"Loaded {len(tasks)} tasks")
 
 # Sync with known tasks
 known = {"F001": 1, "F002": 2}  # spec_id -> version
 result = await source.sync(known)
 
-print(f"Added: {len(result.added)}")
-print(f"Modified: {len(result.modified)}")
-print(f"Removed: {len(result.removed)}")
-
-# Mark task complete (if supported)
-success = await source.mark_completed("F001", {"pr": "https://..."})
+if result.has_changes:
+    print(f"Added: {len(result.added)}")
+    print(f"Modified: {len(result.modified)}")
+    print(f"Removed: {len(result.removed)}")
+else:
+    print("No changes detected")
 ```
 
-Implementing a new spec source:
+Example YAML spec file:
 
-```python
-from bob.spec_sources import SpecSource, TaskSpec, SyncResult
+```yaml
+spec_version: 1
+tasks:
+  - id: F001
+    title: Implement feature X
+    description: Add feature X to the system
+    acceptance_criteria:
+      - Feature works as expected
+      - Tests pass
+    steps:
+      - Step 1
+      - Step 2
+    depends_on: []
+    priority: high
+    category: functional
+    labels:
+      - backend
+      - api
+    research_required: false
+    deprecated: false
+    spec_version: 1
 
-class MySource(SpecSource):
-    async def fetch_tasks(self) -> list[TaskSpec]:
-        # Fetch from your source
-        return [TaskSpec(...), TaskSpec(...)]
-
-    async def sync(self, known_tasks: dict[str, int]) -> SyncResult:
-        # Detect changes
-        result = SyncResult()
-        # ... populate result.added, modified, removed
-        return result
-
-    async def mark_completed(self, spec_id: str, metadata: dict | None) -> bool:
-        # Optional: report completion
-        return False  # Not supported
+  - id: F002
+    title: Investigate best approach
+    description: Research the best way to implement Y
+    steps:
+      - Look into existing solutions
+      - Compare options
+    depends_on: [F001]
+    priority: medium
+    # research_required will be auto-detected as true
 ```
 
 =================================================================
@@ -260,8 +358,10 @@ GIT COMMITS:
 
 Session 5 Commits:
 1. a5ca918 - Implement F010: SpecSource abstract base class - tests passing
+2. a529310 - Update progress notes for Session 5 (F010 complete)
+3. e3595ab - Implement F011: FileSpecSource for YAML/JSON specs - tests passing
 
-Lines of code added this session: ~930 lines (implementation + tests)
+Lines of code added this session: ~1,980 lines (implementation + tests)
 
 =================================================================
 ENVIRONMENT STATE:
@@ -275,7 +375,7 @@ Package: bob-framework 0.1.0 (editable mode)
 Dependencies:
 - anthropic>=0.40.0
 - click>=8.1.0 ✅
-- pyyaml>=6.0 ✅
+- pyyaml>=6.0 ✅ (used by FileSpecSource)
 - jinja2>=3.1.0
 - rich>=13.0.0
 - aiosqlite>=0.19.0
@@ -300,7 +400,8 @@ bob/
 │   └── base.py ✅
 ├── spec_sources/
 │   ├── __init__.py ✅ (updated)
-│   └── base.py ✅ NEW
+│   ├── base.py ✅ NEW
+│   └── file_source.py ✅ NEW
 └── [other modules...]
 
 tests/
@@ -308,6 +409,7 @@ tests/
 ├── test_cli_project.py ✅
 ├── test_database.py ✅
 ├── test_database_manager.py ✅
+├── test_file_source.py ✅ NEW
 ├── test_models.py ✅
 └── test_spec_sources.py ✅ NEW
 
@@ -315,10 +417,10 @@ tests/
 SESSION 5 COMPLETE
 =================================================================
 
-Summary: Successfully implemented F010 (SpecSource abstract base class),
-establishing the pluggable architecture for pulling task specifications
-from various sources. All 156 tests passing. This is a foundational
-feature that unlocks file, GitHub, Jira, and Linear spec sources.
+Summary: Successfully implemented F010 (SpecSource abstract base class) and
+F011 (FileSpecSource for YAML/JSON files), establishing the complete pluggable
+spec source system. All 186 tests passing. This is a major milestone that
+enables BOB to import task specifications from external sources.
 
 Foundation Progress:
 - F001 ✅ Models
@@ -328,6 +430,10 @@ Foundation Progress:
 - F005 ✅ Project create
 - F006 ✅ Project list
 - F010 ✅ SpecSource architecture
+- F011 ✅ FileSpecSource
 
-Next: Implement F011 (FileSpecSource) to enable file-based spec import,
-or continue with F007-F009 (project use/status/delete commands).
+Next Priority: Implement F041 (sync command) to enable importing tasks from
+spec sources into the database, or continue with F007-F009 (project commands).
+
+This session completed 2 critical features and added 58 new tests, maintaining
+100% test pass rate. The spec source system is now production-ready.
