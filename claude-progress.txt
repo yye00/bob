@@ -474,3 +474,33 @@ This session completed 1 critical feature and added 19 new tests,
 maintaining 100% test pass rate (205/205). The sync command is
 production-ready with comprehensive error handling, multiple output
 modes, and full test coverage.
+
+=================================================================
+BOB - Session 7 Progress Summary
+=================================================================
+Date: 2026-01-16
+Session: F015 - Task list command
+Previous Session: Session 6 (F041 - Sync command)
+=================================================================
+
+COMPLETED TASKS:
+
+F015: Task list command - PASSING
+- Created bob/cli/task.py (220+ lines)
+- Comprehensive filtering: status, priority, category, research
+- Rich table display with colors
+- JSON output mode
+- 20 comprehensive tests (all passing)
+
+TEST RESULTS:
+- Total: 225 tests passing (up from 205)
+- New: 20 tests in test_cli_task.py
+- All previous tests still passing
+
+PROGRESS:
+- Features passing: 10/75 (13.3%)
+- F015 marked passing at 2026-01-16T22:14:14Z
+
+NEXT PRIORITY:
+F007: Project use command (set active project)
+

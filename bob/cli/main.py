@@ -12,6 +12,7 @@ import click
 # Import project commands
 from bob.cli import project as project_commands
 from bob.cli import sync as sync_commands
+from bob.cli import task as task_commands
 
 # Version info
 __version__ = "0.1.0"
@@ -171,6 +172,10 @@ def task() -> None:
       bob task update F001 --status completed
     """
     pass
+
+
+# Add task subcommands
+task.add_command(task_commands.list)
 
 
 @cli.group()
