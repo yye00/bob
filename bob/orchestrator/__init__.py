@@ -33,6 +33,7 @@ from .research_agent import (
     parse_research_response,
     create_research_session_prompt,
 )
+from .research_controller import ResearchController
 from .task_queue import TaskQueue
 
 __all__ = [
@@ -63,4 +64,5 @@ __all__ = [
     "generate_research_queries_from_error",
     "parse_research_response",
     "create_research_session_prompt",
+    "ResearchController",
 ]
