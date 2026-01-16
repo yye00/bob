@@ -113,8 +113,8 @@
       "Add help command with examples",
       "Test CLI parsing with various command combinations"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T16:32:23.200226Z",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
