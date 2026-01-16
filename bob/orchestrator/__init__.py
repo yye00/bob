@@ -12,6 +12,15 @@ from .failure_classifier import (
     classify_failure,
     generate_diagnosis_prompt,
 )
+from .task_decomposer import (
+    TaskDecomposer,
+    SubTask,
+    DecompositionResult,
+    generate_decomposition_prompt,
+    analyze_task_for_decomposition,
+    validate_decomposition,
+    suggest_decomposition,
+)
 from .task_queue import TaskQueue
 
 __all__ = [
@@ -25,4 +34,11 @@ __all__ = [
     "classify_by_patterns",
     "classify_failure",
     "generate_diagnosis_prompt",
+    "TaskDecomposer",
+    "SubTask",
+    "DecompositionResult",
+    "generate_decomposition_prompt",
+    "analyze_task_for_decomposition",
+    "validate_decomposition",
+    "suggest_decomposition",
 ]
