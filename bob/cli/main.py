@@ -152,6 +152,7 @@ def project() -> None:
 project.add_command(project_commands.create)
 project.add_command(project_commands.list)
 project.add_command(project_commands.use)
+project.add_command(project_commands.status)
 
 # Add sync command directly (not a subcommand group, just a command)
 cli.add_command(sync_commands.sync)

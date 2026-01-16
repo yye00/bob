@@ -917,3 +917,345 @@ class TestProjectUseCommand:
             assert "bob sync" in result.output
             assert "bob task list" in result.output
             assert "bob run" in result.output
+
+
+class TestProjectStatusCommand:
+    """Test 'bob project status' command."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_status_help(self) -> None:
+        """Test that status command shows help."""
+        result = self.runner.invoke(cli, ["project", "status", "--help"])
+        assert result.exit_code == 0
+        assert "Show detailed project status" in result.output
+        assert "NAME" in result.output
+
+    def test_status_no_active_project(self, tmp_path: Path) -> None:
+        """Test status command with no active project."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 1
+            assert "No active project found" in result.output
+            assert "bob project use" in result.output
+
+    def test_status_by_name(self, tmp_path: Path) -> None:
+        """Test status command for project by name."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml", "-d", "Test application"]
+            )
+
+            # Get status by name
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Project: test-app" in result.output
+            assert "Test application" in result.output
+            assert "Details:" in result.output
+            assert "Tasks:" in result.output
+            assert "Costs:" in result.output
+
+    def test_status_active_project(self, tmp_path: Path) -> None:
+        """Test status command uses active project."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create and activate a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"]
+            )
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "use", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            # Get status without specifying project
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Project: test-app" in result.output
+
+    def test_status_displays_project_details(self, tmp_path: Path) -> None:
+        """Test that status displays all project details."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml", "-d", "My description"]
+            )
+
+            # Get status
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Status: active" in result.output
+            assert "Description: My description" in result.output
+            assert f"Workspace: {workspace.resolve()}" in result.output
+            assert "Spec source: file://spec.yaml" in result.output
+            assert "Created:" in result.output
+
+    def test_status_displays_task_breakdown(self, tmp_path: Path) -> None:
+        """Test that status displays task breakdown."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            db = DatabaseManager(db_path)
+            workspace = Path("workspace")
+
+            # Create a project
+            workspace.mkdir()
+            project = Project(
+                id="proj-test",
+                name="test-app",
+                description="",
+                workspace_dir=str(workspace),
+                spec_source="file://spec.yaml",
+                config={},
+                created_at=datetime.now(),
+                status=ProjectStatus.ACTIVE,
+            )
+            db.create_project(project)
+
+            # Add tasks with different statuses
+            for i, status in enumerate([TaskStatus.PENDING, TaskStatus.IN_PROGRESS, TaskStatus.COMPLETED, TaskStatus.FAILED]):
+                task = Task(
+                    id=f"task-{i}",
+                    project_id=project.id,
+                    spec_id=f"T{i}",
+                    title=f"Task {i}",
+                    description="",
+                    status=status,
+                    priority="medium",
+                )
+                db.create_task(task)
+
+            # Get status
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Total: 4" in result.output
+            assert "Pending: 1" in result.output
+            assert "In progress: 1" in result.output
+            assert "Completed: 1" in result.output
+            assert "Failed: 1" in result.output
+
+    def test_status_displays_cost_summary(self, tmp_path: Path) -> None:
+        """Test that status displays cost summary."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            db = DatabaseManager(db_path)
+            workspace = Path("workspace")
+
+            # Create a project
+            workspace.mkdir()
+            project = Project(
+                id="proj-test",
+                name="test-app",
+                description="",
+                workspace_dir=str(workspace),
+                spec_source="file://spec.yaml",
+                config={},
+                created_at=datetime.now(),
+                status=ProjectStatus.ACTIVE,
+            )
+            db.create_project(project)
+
+            # Add sessions with costs
+            sessions = [
+                Session(
+                    id="sess-1",
+                    project_id=project.id,
+                    task_id=None,
+                    agent_type=AgentType.CODING,
+                    model="claude-sonnet-4",
+                    started_at=datetime.now(),
+                    status=SessionStatus.COMPLETED,
+                    cost=1.50,
+                ),
+                Session(
+                    id="sess-2",
+                    project_id=project.id,
+                    task_id=None,
+                    agent_type=AgentType.RESEARCH,
+                    model="claude-sonnet-4",
+                    started_at=datetime.now(),
+                    status=SessionStatus.COMPLETED,
+                    cost=0.75,
+                ),
+            ]
+            for session in sessions:
+                db.create_session(session)
+
+            # Get status
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Total: $2.25" in result.output
+            assert "By model:" in result.output
+            assert "claude-sonnet-4: $2.25" in result.output
+            assert "By agent:" in result.output
+            assert "coding: $1.50" in result.output
+            assert "research: $0.75" in result.output
+
+    def test_status_displays_recent_activity(self, tmp_path: Path) -> None:
+        """Test that status displays recent activity."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            db = DatabaseManager(db_path)
+            workspace = Path("workspace")
+
+            # Create a project
+            workspace.mkdir()
+            project = Project(
+                id="proj-test",
+                name="test-app",
+                description="",
+                workspace_dir=str(workspace),
+                spec_source="file://spec.yaml",
+                config={},
+                created_at=datetime.now(),
+                status=ProjectStatus.ACTIVE,
+            )
+            db.create_project(project)
+
+            # Add a session
+            session = Session(
+                id="sess-test",
+                project_id=project.id,
+                task_id=None,
+                agent_type=AgentType.CODING,
+                model="claude-sonnet-4",
+                started_at=datetime.now(),
+                status=SessionStatus.COMPLETED,
+                cost=1.50,
+            )
+            db.create_session(session)
+
+            # Get status
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Recent activity:" in result.output
+            assert "sess-test" in result.output
+            assert "coding" in result.output
+            assert "$1.50" in result.output
+
+    def test_status_json_output(self, tmp_path: Path) -> None:
+        """Test status command with JSON output."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml", "-d", "Test app"]
+            )
+
+            # Get status with JSON output
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status", "test-app", "--json-output"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+
+            # Parse JSON (extract JSON from mixed output with database messages)
+            import re
+            json_match = re.search(r'\{[\s\S]*\}', result.output)
+            assert json_match, f"No JSON found in output: {result.output}"
+            output = json.loads(json_match.group())
+
+            # Verify structure
+            assert "project" in output
+            assert output["project"]["name"] == "test-app"
+            assert output["project"]["description"] == "Test app"
+            assert "tasks" in output
+            assert "total" in output["tasks"]
+            assert "breakdown" in output["tasks"]
+            assert "costs" in output
+            assert "total" in output["costs"]
+            assert "recent_sessions" in output
+
+    def test_status_no_tasks_or_sessions(self, tmp_path: Path) -> None:
+        """Test status with project that has no tasks or sessions."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"]
+            )
+
+            # Get status
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status", "test-app"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Total: 0" in result.output
+            assert "Total: $0.00" in result.output
+            assert "No sessions yet" in result.output
+
+    def test_status_nonexistent_project(self, tmp_path: Path) -> None:
+        """Test status for nonexistent project."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "status", "nonexistent"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 1
+            assert "Project not found: nonexistent" in result.output

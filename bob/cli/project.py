@@ -431,3 +431,195 @@ def use(ctx: click.Context, name: str) -> None:
     click.echo("  1. Sync tasks: bob sync")
     click.echo("  2. View tasks: bob task list")
     click.echo("  3. Run the agent: bob run")
+
+
+@click.command()
+@click.argument("name", required=False)
+@click.option(
+    "--json-output",
+    "json_output",
+    is_flag=True,
+    help="Output in JSON format",
+)
+@click.pass_context
+def status(ctx: click.Context, name: Optional[str], json_output: bool) -> None:
+    """Show detailed project status.
+
+    \b
+    Arguments:
+        NAME  Project name or ID (optional, uses active project if not specified)
+
+    \b
+    Examples:
+        bob project status              # Show active project status
+        bob project status my-app       # Show specific project status
+        bob project status --json       # JSON output
+
+    Displays:
+        - Project information (name, description, workspace, spec source)
+        - Task breakdown by status (pending, in_progress, completed, failed, blocked)
+        - Cost summary (total, by model, by agent type)
+        - Recent activity (last 5 sessions)
+    """
+    # Get database path from context
+    db_path = ctx.obj.db_path
+
+    # Initialize database manager
+    db = DatabaseManager(db_path)
+
+    # Determine which project to show status for
+    project = None
+    if name:
+        # Try to find by ID first
+        if name.startswith("proj-"):
+            project = db.get_project(name)
+
+        # If not found, try by name
+        if not project:
+            projects = db.list_projects()
+            matching_projects = [p for p in projects if p.name == name]
+            if matching_projects:
+                project = matching_projects[0]
+    else:
+        # Use active project
+        state = StateManager()
+        active_project_id = state.get_active_project()
+        if active_project_id:
+            project = db.get_project(active_project_id)
+
+    # If still not found, error
+    if not project:
+        if name:
+            click.echo(f"✗ Project not found: {name}", err=True)
+        else:
+            click.echo("✗ No active project found", err=True)
+            click.echo("  Set a project with: bob project use <name>", err=True)
+            click.echo("  Or specify with: bob project status <name>", err=True)
+        sys.exit(1)
+
+    # Get all tasks for this project
+    tasks = db.list_tasks(project_id=project.id)
+
+    # Get all sessions for this project
+    sessions = db.list_sessions(project_id=project.id)
+
+    # Calculate task breakdown by status
+    task_breakdown = {
+        "pending": 0,
+        "in_progress": 0,
+        "completed": 0,
+        "failed": 0,
+        "blocked": 0,
+    }
+    for task in tasks:
+        status_key = task.status.value
+        if status_key in task_breakdown:
+            task_breakdown[status_key] += 1
+
+    # Calculate cost summary
+    total_cost = sum(s.cost for s in sessions)
+    cost_by_model = {}
+    cost_by_agent = {}
+    for session in sessions:
+        # Cost by model
+        model = session.model or "unknown"
+        cost_by_model[model] = cost_by_model.get(model, 0) + session.cost
+
+        # Cost by agent type
+        agent = session.agent_type.value if session.agent_type else "unknown"
+        cost_by_agent[agent] = cost_by_agent.get(agent, 0) + session.cost
+
+    # Get recent sessions (last 5)
+    recent_sessions = sorted(sessions, key=lambda s: s.started_at, reverse=True)[:5]
+
+    # JSON output
+    if json_output:
+        output = {
+            "project": {
+                "id": project.id,
+                "name": project.name,
+                "description": project.description,
+                "status": project.status.value,
+                "workspace_dir": project.workspace_dir,
+                "spec_source": project.spec_source,
+                "created_at": project.created_at.isoformat(),
+            },
+            "tasks": {
+                "total": len(tasks),
+                "breakdown": task_breakdown,
+            },
+            "costs": {
+                "total": round(total_cost, 2),
+                "by_model": {k: round(v, 2) for k, v in cost_by_model.items()},
+                "by_agent": {k: round(v, 2) for k, v in cost_by_agent.items()},
+            },
+            "recent_sessions": [
+                {
+                    "id": s.id,
+                    "status": s.status.value,
+                    "started_at": s.started_at.isoformat(),
+                    "agent_type": s.agent_type.value if s.agent_type else None,
+                    "model": s.model,
+                    "cost": round(s.cost, 2),
+                }
+                for s in recent_sessions
+            ],
+        }
+        click.echo(json.dumps(output, indent=2))
+        return
+
+    # Human-readable output
+    click.echo()
+    click.echo("=" * 80)
+    click.echo(f"Project: {project.name} ({project.id})")
+    click.echo("=" * 80)
+    click.echo()
+
+    # Project details
+    click.echo("Details:")
+    click.echo(f"  Status: {project.status.value}")
+    if project.description:
+        click.echo(f"  Description: {project.description}")
+    click.echo(f"  Workspace: {project.workspace_dir}")
+    click.echo(f"  Spec source: {project.spec_source}")
+    click.echo(f"  Created: {project.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+    click.echo()
+
+    # Task breakdown
+    click.echo("Tasks:")
+    click.echo(f"  Total: {len(tasks)}")
+    if tasks:
+        click.echo(f"  Pending: {task_breakdown['pending']}")
+        click.echo(f"  In progress: {task_breakdown['in_progress']}")
+        click.echo(f"  Completed: {click.style(str(task_breakdown['completed']), fg='green')}")
+        click.echo(f"  Failed: {click.style(str(task_breakdown['failed']), fg='red')}")
+        click.echo(f"  Blocked: {click.style(str(task_breakdown['blocked']), fg='yellow')}")
+    click.echo()
+
+    # Cost summary
+    click.echo("Costs:")
+    click.echo(f"  Total: ${total_cost:.2f}")
+    if cost_by_model:
+        click.echo("  By model:")
+        for model, cost in sorted(cost_by_model.items(), key=lambda x: x[1], reverse=True):
+            click.echo(f"    {model}: ${cost:.2f}")
+    if cost_by_agent:
+        click.echo("  By agent:")
+        for agent, cost in sorted(cost_by_agent.items(), key=lambda x: x[1], reverse=True):
+            click.echo(f"    {agent}: ${cost:.2f}")
+    click.echo()
+
+    # Recent activity
+    if recent_sessions:
+        click.echo("Recent activity:")
+        for session in recent_sessions:
+            status_color = "green" if session.status.value == "completed" else "yellow"
+            status_str = click.style(session.status.value, fg=status_color)
+            agent_str = session.agent_type.value if session.agent_type else "unknown"
+            time_str = session.started_at.strftime("%Y-%m-%d %H:%M")
+            click.echo(f"  {session.id}: {status_str} | {agent_str} | {time_str} | ${session.cost:.2f}")
+    else:
+        click.echo("Recent activity: No sessions yet")
+
+    click.echo()
+    click.echo("=" * 80)
