@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from bob.database.manager import DatabaseManager
-from bob.models.base import ProjectStatus, TaskStatus
+from bob.models.base import ModelTier, ProjectStatus, TaskStatus
 
 
 # ============================================================================
@@ -229,3 +229,298 @@ def list(
         console.print("Status summary:")
         for status_name, count in sorted(status_counts.items()):
             console.print(f"  • {status_name}: {count}")
+
+
+# ============================================================================
+# Task Show Command
+# ============================================================================
+
+
+@click.command("show")
+@click.argument("task_id")
+@click.option(
+    "--research",
+    is_flag=True,
+    help="Show research findings",
+)
+@click.option(
+    "--escalation",
+    is_flag=True,
+    help="Show escalation state details",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output in JSON format",
+)
+@click.pass_context
+def show(
+    ctx: click.Context,
+    task_id: str,
+    research: bool,
+    escalation: bool,
+    json_output: bool,
+) -> None:
+    """Show detailed information about a specific task.
+
+    \b
+    Display comprehensive task details including title, description,
+    acceptance criteria, implementation steps, dependencies, status,
+    and error history.
+
+    \b
+    Examples:
+      bob task show F001
+      bob task show F001 --research
+      bob task show F001 --escalation
+      bob task show F001 --json
+    """
+    # Get global context
+    global_ctx = ctx.obj
+
+    # Override with global JSON flag if set
+    if global_ctx.json_output:
+        json_output = True
+
+    # Get database manager
+    db = DatabaseManager(global_ctx.db_path)
+
+    # Determine project ID
+    project_id = global_ctx.project_id
+    if not project_id:
+        # Try to get active project
+        projects = db.list_projects(status=ProjectStatus.ACTIVE, limit=1)
+        if not projects:
+            if json_output:
+                click.echo(json.dumps({"error": "No active project found"}))
+            else:
+                click.echo("✗ No active project found")
+                click.echo()
+                click.echo("Please specify a project with --project or create one:")
+                click.echo("  bob project create <name> <workspace> <spec-source>")
+            raise click.Abort()
+        project_id = projects[0].id
+
+    # Get task by spec_id or database ID
+    task = None
+
+    # Try as database ID first
+    task = db.get_task(task_id)
+
+    # If not found, try as spec_id
+    if not task:
+        tasks = db.list_tasks(project_id=project_id, limit=1000)
+        for t in tasks:
+            if t.spec_id == task_id:
+                task = t
+                break
+
+    if not task:
+        if json_output:
+            click.echo(json.dumps({"error": f"Task '{task_id}' not found"}))
+        else:
+            click.echo(f"✗ Task '{task_id}' not found")
+        raise click.Abort()
+
+    # Get task sessions for error history
+    sessions = db.list_sessions(
+        project_id=project_id,
+        task_id=task.id,
+        limit=100
+    )
+
+    # Output in JSON format
+    if json_output:
+        task_data = {
+            "id": task.id,
+            "spec_id": task.spec_id,
+            "title": task.title,
+            "description": task.description,
+            "acceptance_criteria": task.acceptance_criteria,
+            "steps": task.steps,
+            "depends_on": task.depends_on,
+            "priority": task.priority,
+            "category": task.category,
+            "labels": task.labels,
+            "status": task.status.value,
+            "assigned_agent": task.assigned_agent.value if task.assigned_agent else None,
+            "current_model": task.current_model,
+            "attempts": task.attempts,
+            "escalation_tier": task.escalation_tier.value,
+            "failure_type": task.failure_type.value if task.failure_type else None,
+            "research_required": task.research_required,
+            "research_complete": task.research_complete,
+            "research_queries": task.research_queries,
+        }
+
+        if research and task.research_findings:
+            task_data["research_findings"] = task.research_findings
+
+        if escalation:
+            task_data["escalation_details"] = {
+                "tier": task.escalation_tier.value,
+                "model": task.current_model,
+                "attempts": task.attempts,
+                "failure_type": task.failure_type.value if task.failure_type else None,
+            }
+
+        # Add sessions
+        task_data["sessions"] = [
+            {
+                "id": s.id,
+                "agent_type": s.agent_type.value,
+                "model": s.model,
+                "status": s.status.value,
+                "started_at": s.started_at.isoformat(),
+                "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+                "turns": s.turns,
+                "input_tokens": s.input_tokens,
+                "output_tokens": s.output_tokens,
+                "cost": s.cost,
+            }
+            for s in sessions
+        ]
+
+        click.echo(json.dumps(task_data, indent=2))
+        return
+
+    # Display in Rich format
+    console = Console()
+
+    # Header
+    console.print()
+    console.print(f"[bold cyan]{task.spec_id}: {task.title}[/bold cyan]")
+    console.print()
+
+    # Status and metadata
+    status_color = {
+        TaskStatus.PENDING.value: "yellow",
+        TaskStatus.IN_PROGRESS.value: "blue",
+        TaskStatus.COMPLETED.value: "green",
+        TaskStatus.FAILED.value: "red",
+        TaskStatus.BLOCKED.value: "red",
+        TaskStatus.RESEARCH_NEEDED.value: "cyan",
+        TaskStatus.RESEARCH_COMPLETE.value: "cyan",
+        TaskStatus.SKIPPED.value: "dim",
+        TaskStatus.DEPRECATED.value: "dim",
+    }.get(task.status.value, "white")
+
+    priority_color = {
+        "critical": "red bold",
+        "high": "red",
+        "medium": "yellow",
+        "low": "dim",
+    }.get(task.priority, "white")
+
+    console.print(f"[bold]Status:[/bold] [{status_color}]{task.status.value}[/{status_color}]")
+    console.print(f"[bold]Priority:[/bold] [{priority_color}]{task.priority}[/{priority_color}]")
+    console.print(f"[bold]Category:[/bold] {task.category}")
+    if task.labels:
+        console.print(f"[bold]Labels:[/bold] {', '.join(task.labels)}")
+    console.print()
+
+    # Description
+    console.print("[bold]Description:[/bold]")
+    console.print(f"  {task.description}")
+    console.print()
+
+    # Acceptance criteria
+    if task.acceptance_criteria:
+        console.print("[bold]Acceptance Criteria:[/bold]")
+        for criterion in task.acceptance_criteria:
+            console.print(f"  • {criterion}")
+        console.print()
+
+    # Implementation steps
+    if task.steps:
+        console.print("[bold]Implementation Steps:[/bold]")
+        for i, step in enumerate(task.steps, 1):
+            console.print(f"  {i}. {step}")
+        console.print()
+
+    # Dependencies
+    if task.depends_on:
+        console.print("[bold]Dependencies:[/bold]")
+        console.print(f"  Depends on: {', '.join(task.depends_on)}")
+        console.print()
+
+    # Find tasks that depend on this one (blockers)
+    all_tasks = db.list_tasks(project_id=project_id, limit=1000)
+    blockers = [t for t in all_tasks if task.spec_id in t.depends_on]
+    if blockers:
+        console.print("[bold]Blocks:[/bold]")
+        console.print(f"  Blocks: {', '.join(t.spec_id for t in blockers)}")
+        console.print()
+
+    # Progress and attempts
+    console.print("[bold]Progress:[/bold]")
+    console.print(f"  Attempts: {task.attempts}")
+    console.print(f"  Current Model: {task.current_model}")
+    if task.assigned_agent:
+        console.print(f"  Assigned Agent: {task.assigned_agent.value}")
+    console.print()
+
+    # Escalation details
+    if escalation or task.escalation_tier != ModelTier.TIER1:
+        console.print("[bold]Escalation State:[/bold]")
+        console.print(f"  Tier: {task.escalation_tier.value}")
+        if task.failure_type:
+            console.print(f"  Failure Type: {task.failure_type.value}")
+        console.print()
+
+    # Research details
+    if task.research_required:
+        console.print("[bold]Research:[/bold]")
+        console.print(f"  Required: Yes")
+        console.print(f"  Complete: {'Yes' if task.research_complete else 'No'}")
+
+        if task.research_queries:
+            console.print(f"  Queries:")
+            for query in task.research_queries:
+                console.print(f"    • {query}")
+
+        if research and task.research_findings:
+            console.print(f"  Findings:")
+            for key, value in task.research_findings.items():
+                console.print(f"    • {key}: {value}")
+        console.print()
+
+    # Session history
+    if sessions:
+        console.print("[bold]Session History:[/bold]")
+
+        # Create sessions table
+        sessions_table = Table(show_header=True)
+        sessions_table.add_column("Agent", style="cyan")
+        sessions_table.add_column("Model", style="green")
+        sessions_table.add_column("Status", style="yellow")
+        sessions_table.add_column("Turns", justify="right")
+        sessions_table.add_column("Tokens", justify="right")
+        sessions_table.add_column("Cost", justify="right")
+
+        for session in sessions[-10:]:  # Show last 10 sessions
+            session_status_color = {
+                "completed": "green",
+                "failed": "red",
+                "running": "blue",
+                "cancelled": "yellow",
+            }.get(session.status.value, "white")
+
+            total_tokens = session.input_tokens + session.output_tokens
+
+            sessions_table.add_row(
+                session.agent_type.value,
+                session.model.split("/")[-1] if "/" in session.model else session.model,
+                f"[{session_status_color}]{session.status.value}[/{session_status_color}]",
+                str(session.turns),
+                f"{total_tokens:,}",
+                f"${session.cost:.4f}",
+            )
+
+        console.print(sessions_table)
+        console.print()
+
+        if len(sessions) > 10:
+            console.print(f"[dim]Showing last 10 of {len(sessions)} sessions[/dim]")
+            console.print()

@@ -393,8 +393,8 @@
       "Verify research detection works in JSON",
       "Validate JSON schema matches YAML schema"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T23:34:26.746990+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
@@ -538,8 +538,8 @@
       "Add --json flag for structured output",
       "Test with tasks in various states"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T23:37:02.595817+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,

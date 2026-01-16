@@ -680,3 +680,307 @@ class TestTaskListEdgeCases:
         )
         assert result.exit_code == 0
         assert "Total tasks: 3" in result.output
+
+
+# ============================================================================
+# Task Show Command Tests
+# ============================================================================
+
+
+class TestTaskShowCommand:
+    """Tests for 'bob task show' command."""
+
+    def test_show_help(self):
+        """Test show command help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["task", "show", "--help"])
+        assert result.exit_code == 0
+        assert "Show detailed information about a specific task" in result.output
+
+    def test_show_by_spec_id(self, sample_project):
+        """Test showing task by spec ID."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--db", str(sample_project["db_path"]), "task", "show", "F001"]
+        )
+        assert result.exit_code == 0
+        assert "F001" in result.output
+        assert "Implement authentication" in result.output
+        assert "Add user authentication system" in result.output
+        assert "Status:" in result.output
+        assert "Priority:" in result.output
+
+    def test_show_by_database_id(self, sample_project):
+        """Test showing task by database ID."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--db", str(sample_project["db_path"]), "task", "show", "task-001"]
+        )
+        assert result.exit_code == 0
+        assert "F001" in result.output
+        assert "Implement authentication" in result.output
+
+    def test_show_nonexistent_task(self, sample_project):
+        """Test showing nonexistent task."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--db", str(sample_project["db_path"]), "task", "show", "F999"]
+        )
+        assert result.exit_code != 0
+        assert "not found" in result.output
+
+    def test_show_displays_full_details(self, tmp_path):
+        """Test that show displays all task details."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create task with comprehensive details
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Test Feature",
+            description="Detailed description of the feature",
+            acceptance_criteria=["Criterion 1", "Criterion 2"],
+            steps=["Step 1", "Step 2", "Step 3"],
+            depends_on=["F000"],
+            priority="high",
+            category="functional",
+            labels=["auth", "mvp"],
+            status=TaskStatus.IN_PROGRESS,
+            attempts=2,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--db", str(db_path), "task", "show", "F001"])
+        assert result.exit_code == 0
+
+        # Check all sections are displayed
+        assert "Description:" in result.output
+        assert "Detailed description" in result.output
+        assert "Acceptance Criteria:" in result.output
+        assert "Criterion 1" in result.output
+        assert "Implementation Steps:" in result.output
+        assert "Step 1" in result.output
+        assert "Dependencies:" in result.output
+        assert "F000" in result.output
+        assert "Labels:" in result.output
+        assert "auth" in result.output
+        assert "mvp" in result.output
+        assert "Progress:" in result.output
+        assert "Attempts: 2" in result.output
+
+    def test_show_with_research_flag(self, tmp_path):
+        """Test showing task with research flag."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Research Task",
+            description="Task requiring research",
+            status=TaskStatus.RESEARCH_NEEDED,
+            research_required=True,
+            research_queries=["query 1", "query 2"],
+            research_findings={"finding1": "result1", "finding2": "result2"},
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--db", str(db_path), "task", "show", "F001", "--research"]
+        )
+        assert result.exit_code == 0
+        assert "Research:" in result.output
+        assert "Required: Yes" in result.output
+        assert "query 1" in result.output
+        assert "Findings:" in result.output
+        assert "finding1" in result.output
+
+    def test_show_with_escalation_flag(self, tmp_path):
+        """Test showing task with escalation flag."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        from bob.models.base import ModelTier, FailureType
+
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Escalated Task",
+            description="Task with escalation",
+            status=TaskStatus.FAILED,
+            escalation_tier=ModelTier.TIER2,
+            failure_type=FailureType.TIMEOUT,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--db", str(db_path), "task", "show", "F001", "--escalation"]
+        )
+        assert result.exit_code == 0
+        assert "Escalation State:" in result.output
+        assert "tier2" in result.output.lower()
+
+    def test_show_json_output(self, sample_project):
+        """Test show with JSON output."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--db", str(sample_project["db_path"]), "task", "show", "F001", "--json"]
+        )
+        assert result.exit_code == 0
+
+        # Parse JSON output (handle migration messages)
+        lines = result.output.strip().split("\n")
+        json_lines = []
+        in_json = False
+        brace_count = 0
+
+        for line in lines:
+            if line.strip().startswith("{"):
+                in_json = True
+                brace_count += line.count("{") - line.count("}")
+                json_lines.append(line)
+            elif in_json:
+                brace_count += line.count("{") - line.count("}")
+                json_lines.append(line)
+                if brace_count == 0:
+                    break
+
+        json_str = "\n".join(json_lines)
+        data = json.loads(json_str)
+
+        assert data["spec_id"] == "F001"
+        assert data["title"] == "Implement authentication"
+        assert "description" in data
+        assert "status" in data
+        assert "priority" in data
+        assert "sessions" in data
+
+    def test_show_displays_dependency_graph(self, tmp_path):
+        """Test that show displays tasks that this task blocks."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create task F001
+        task1 = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Base Task",
+            description="Task that others depend on",
+            status=TaskStatus.COMPLETED,
+        )
+        db.create_task(task1)
+
+        # Create task F002 that depends on F001
+        task2 = Task(
+            id="task-002",
+            project_id=project.id,
+            spec_id="F002",
+            title="Dependent Task",
+            description="Task that depends on F001",
+            depends_on=["F001"],
+            status=TaskStatus.PENDING,
+        )
+        db.create_task(task2)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--db", str(db_path), "task", "show", "F001"])
+        assert result.exit_code == 0
+
+        # Should show that F001 blocks F002
+        assert "Blocks:" in result.output
+        assert "F002" in result.output
+
+    def test_show_no_active_project(self, tmp_path):
+        """Test show when no active project exists."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--db", str(db_path), "task", "show", "F001"])
+        assert result.exit_code != 0
+        assert "No active project found" in result.output
+
+    def test_show_global_json_flag(self, sample_project):
+        """Test global --json flag with show command."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--json", "--db", str(sample_project["db_path"]), "task", "show", "F001"]
+        )
+        assert result.exit_code == 0
+
+        # Should output JSON
+        lines = result.output.strip().split("\n")
+        json_lines = []
+        in_json = False
+        brace_count = 0
+
+        for line in lines:
+            if line.strip().startswith("{"):
+                in_json = True
+                brace_count += line.count("{") - line.count("}")
+                json_lines.append(line)
+            elif in_json:
+                brace_count += line.count("{") - line.count("}")
+                json_lines.append(line)
+                if brace_count == 0:
+                    break
+
+        json_str = "\n".join(json_lines)
+        data = json.loads(json_str)
+        assert data["spec_id"] == "F001"
