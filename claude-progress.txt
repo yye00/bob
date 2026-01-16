@@ -11,6 +11,72 @@ Previous Session: Session 14 (F027 - ResearchController)
 
 SESSION 15 ACHIEVEMENTS:
 
+2. ✅ F008: Project status command - Implement 'bob project status' command (PASSING)
+   - Implemented 'bob project status' command in cli/project.py (192 lines)
+     * Show detailed project status
+     * Accepts project name, ID, or uses active project from state
+     * Displays comprehensive project details:
+       - Name, ID, status, description
+       - Workspace directory path
+       - Spec source URI
+       - Created timestamp
+     * Task breakdown by status:
+       - Counts for: pending, in progress, completed, failed, blocked
+       - Color-coded output (green for completed, red for failed, yellow for blocked)
+       - Shows total task count
+     * Cost summary with detailed breakdowns:
+       - Total cost across all sessions
+       - Cost by model (sorted by cost, highest first)
+       - Cost by agent type (sorted by cost, highest first)
+       - All costs formatted to 2 decimal places
+     * Recent activity (last 5 sessions):
+       - Session ID, status, agent type
+       - Timestamp, formatted cost
+       - Color-coded status (green for completed, yellow for others)
+     * JSON output support (--json-output flag):
+       - Structured data for scripting
+       - Project info, task breakdown, costs, recent sessions
+       - ISO format timestamps
+     * Helpful error messages:
+       - No active project found → suggests 'bob project use'
+       - Project not found → lists available projects
+     * Works with projects in all states (active, paused, completed, archived)
+
+   - Added 11 comprehensive tests in tests/test_cli_project.py:
+     - test_status_help: Help text validation
+     - test_status_no_active_project: Error when no active project
+     - test_status_by_name: Get status by project name
+     - test_status_active_project: Uses active project from state
+     - test_status_displays_project_details: All project fields shown
+     - test_status_displays_task_breakdown: Task statistics by status
+     - test_status_displays_cost_summary: Cost breakdowns (total, by model, by agent)
+     - test_status_displays_recent_activity: Last 5 sessions
+     - test_status_json_output: JSON format with regex extraction
+     - test_status_no_tasks_or_sessions: Empty project display
+     - test_status_nonexistent_project: Error handling
+
+   - All 459 tests passing
+   - Marked F008 as passing in feature_list.json
+
+ARCHITECTURAL SIGNIFICANCE:
+
+F008 completes the project monitoring workflow:
+- **Visibility**: Comprehensive project health dashboard
+- **At-a-glance Status**: Task progress, costs, recent activity
+- **Decision Support**: Cost breakdowns help identify expensive operations
+- **Automation-friendly**: JSON output for scripts and integrations
+- **User Experience**: Works seamlessly with active project system
+
+This enables effective project monitoring:
+- Quick status checks: `bob project status`
+- Cost tracking: See spending by model and agent type
+- Progress monitoring: Task completion percentages
+- Activity history: What's been happening recently
+
+=================================================================
+PREVIOUS ACHIEVEMENTS IN SESSION 15:
+
+
 1. ✅ F007: Project use command - Implement 'bob project use' to set active project (PASSING)
    - Created StateManager class in bob/state.py (148 lines)
      * Manages persistent state in ~/.bob/state.json
