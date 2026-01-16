@@ -11,6 +11,7 @@ import click
 
 # Import project commands
 from bob.cli import project as project_commands
+from bob.cli import research as research_commands
 from bob.cli import sync as sync_commands
 from bob.cli import task as task_commands
 
@@ -199,6 +200,9 @@ def run() -> None:
     """
     pass
 
+
+# Add research command
+cli.add_command(research_commands.research)
 
 # Sync command is added directly from sync_commands module
 
