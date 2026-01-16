@@ -3,6 +3,7 @@
 This module implements all 'bob project' subcommands for managing projects.
 """
 
+import json
 import re
 import sys
 import uuid
@@ -14,7 +15,7 @@ import click
 import yaml
 
 from bob.database.manager import DatabaseManager
-from bob.models.base import Project, ProjectStatus
+from bob.models.base import Project, ProjectStatus, TaskStatus
 
 
 def validate_project_name(name: str) -> bool:
@@ -209,3 +210,150 @@ def create(
     click.echo(f"  2. Activate the project: bob project use {name}")
     click.echo(f"  3. Sync with spec source: bob sync")
     click.echo(f"  4. Run the agent: bob run")
+
+
+@click.command()
+@click.option(
+    "--status",
+    "-s",
+    type=click.Choice(["active", "paused", "completed", "archived"]),
+    help="Filter by project status",
+)
+@click.option(
+    "--json-output",
+    "json_output",
+    is_flag=True,
+    help="Output in JSON format",
+)
+@click.pass_context
+def list(
+    ctx: click.Context,
+    status: Optional[str],
+    json_output: bool,
+) -> None:
+    """List all projects.
+
+    \b
+    Displays a table of all projects with:
+      - Project ID and name
+      - Current status
+      - Task completion (completed/total)
+      - Total cost (USD)
+
+    \b
+    Examples:
+        bob project list
+        bob project list --status active
+        bob project list --json
+
+    \b
+    Filter by status:
+        active      Projects currently active
+        paused      Projects temporarily paused
+        completed   Projects marked as complete
+        archived    Projects archived for reference
+    """
+    # Get database path from context
+    db_path = ctx.obj.db_path
+
+    # Initialize database manager
+    db = DatabaseManager(db_path)
+
+    # Query projects with optional status filter
+    if status:
+        project_status = ProjectStatus(status)
+        projects = db.list_projects(status=project_status)
+    else:
+        projects = db.list_projects()
+
+    # If no projects found
+    if not projects:
+        if json_output:
+            click.echo(json.dumps({"projects": []}))
+        else:
+            if status:
+                click.echo(f"No projects found with status: {status}")
+            else:
+                click.echo("No projects found. Create one with: bob project create")
+        return
+
+    # For JSON output
+    if json_output:
+        projects_data = []
+        for project in projects:
+            # Get task statistics
+            tasks = db.list_tasks(project_id=project.id)
+            completed_tasks = sum(1 for t in tasks if t.status == TaskStatus.COMPLETED)
+            total_tasks = len(tasks)
+
+            # Get cost statistics
+            sessions = db.list_sessions(project_id=project.id)
+            total_cost = sum(s.cost for s in sessions)
+
+            projects_data.append({
+                "id": project.id,
+                "name": project.name,
+                "description": project.description,
+                "status": project.status.value,
+                "workspace_dir": project.workspace_dir,
+                "spec_source": project.spec_source,
+                "created_at": project.created_at.isoformat(),
+                "tasks": {
+                    "completed": completed_tasks,
+                    "total": total_tasks,
+                },
+                "cost": round(total_cost, 2),
+            })
+
+        click.echo(json.dumps({"projects": projects_data}, indent=2))
+        return
+
+    # Table output
+    click.echo()
+    click.echo("Projects:")
+    click.echo("=" * 100)
+    click.echo(
+        f"{'ID':<15} {'Name':<20} {'Status':<12} {'Tasks':<15} {'Cost':<10} {'Description':<25}"
+    )
+    click.echo("-" * 100)
+
+    for project in projects:
+        # Get task statistics
+        tasks = db.list_tasks(project_id=project.id)
+        completed_tasks = sum(1 for t in tasks if t.status == TaskStatus.COMPLETED)
+        total_tasks = len(tasks)
+
+        # Get cost statistics
+        sessions = db.list_sessions(project_id=project.id)
+        total_cost = sum(s.cost for s in sessions)
+
+        # Format task completion
+        if total_tasks > 0:
+            task_str = f"{completed_tasks}/{total_tasks}"
+        else:
+            task_str = "-"
+
+        # Format cost
+        cost_str = f"${total_cost:.2f}"
+
+        # Truncate description
+        description = project.description[:25] if project.description else "-"
+
+        # Status formatting with color
+        status_str = project.status.value
+        if project.status == ProjectStatus.ACTIVE:
+            status_str = click.style(status_str, fg="green")
+        elif project.status == ProjectStatus.PAUSED:
+            status_str = click.style(status_str, fg="yellow")
+        elif project.status == ProjectStatus.COMPLETED:
+            status_str = click.style(status_str, fg="blue")
+        else:
+            status_str = click.style(status_str, fg="bright_black")
+
+        click.echo(
+            f"{project.id:<15} {project.name:<20} {status_str:<20} {task_str:<15} {cost_str:<10} {description:<25}"
+        )
+
+    click.echo("=" * 100)
+    click.echo(f"Total: {len(projects)} project(s)")
+    click.echo()

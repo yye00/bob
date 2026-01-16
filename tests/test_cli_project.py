@@ -1,5 +1,6 @@
 """Tests for bob.cli.project module (project management commands)."""
 
+import json
 import tempfile
 from pathlib import Path
 
@@ -10,7 +11,8 @@ from click.testing import CliRunner
 from bob.cli.main import cli
 from bob.cli.project import validate_project_name, create_workspace_structure
 from bob.database.manager import DatabaseManager
-from bob.models.base import ProjectStatus
+from bob.models.base import Project, ProjectStatus, Task, TaskStatus, Session, SessionStatus, AgentType
+from datetime import datetime
 
 
 class TestProjectNameValidation:
@@ -377,3 +379,329 @@ class TestProjectCreateCommand:
             # Should show config path
             assert "Config:" in result.output
             assert "project.yaml" in result.output
+
+
+class TestProjectListCommand:
+    """Test 'bob project list' command."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_list_help(self) -> None:
+        """Test project list help text."""
+        result = self.runner.invoke(cli, ["project", "list", "--help"])
+        assert result.exit_code == 0
+        assert "List all projects" in result.output
+
+    def test_list_no_projects(self, tmp_path: Path) -> None:
+        """Test listing when no projects exist."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+
+            result = self.runner.invoke(cli, ["--db", str(db_path), "project", "list"])
+
+            assert result.exit_code == 0
+            assert "No projects found" in result.output
+
+    def test_list_single_project(self, tmp_path: Path) -> None:
+        """Test listing with a single project."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"]
+            )
+
+            # List projects
+            result = self.runner.invoke(cli, ["--db", str(db_path), "project", "list"])
+
+            assert result.exit_code == 0
+            assert "test-app" in result.output
+            assert "proj-" in result.output
+            assert "Total: 1 project(s)" in result.output
+
+    def test_list_multiple_projects(self, tmp_path: Path) -> None:
+        """Test listing with multiple projects."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+
+            # Create multiple projects
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "app1", "workspace1", "file://spec1.yaml"]
+            )
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "app2", "workspace2", "file://spec2.yaml"]
+            )
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "app3", "workspace3", "file://spec3.yaml"]
+            )
+
+            # List projects
+            result = self.runner.invoke(cli, ["--db", str(db_path), "project", "list"])
+
+            assert result.exit_code == 0
+            assert "app1" in result.output
+            assert "app2" in result.output
+            assert "app3" in result.output
+            assert "Total: 3 project(s)" in result.output
+
+    def test_list_with_status_filter(self, tmp_path: Path) -> None:
+        """Test listing with status filter."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            db = DatabaseManager(db_path)
+
+            # Create projects with different statuses
+            project1 = Project(
+                id="proj-1",
+                name="active-app",
+                description="",
+                workspace_dir=str(tmp_path / "w1"),
+                spec_source="file://spec.yaml",
+                status=ProjectStatus.ACTIVE,
+            )
+            project2 = Project(
+                id="proj-2",
+                name="paused-app",
+                description="",
+                workspace_dir=str(tmp_path / "w2"),
+                spec_source="file://spec.yaml",
+                status=ProjectStatus.PAUSED,
+            )
+            project3 = Project(
+                id="proj-3",
+                name="completed-app",
+                description="",
+                workspace_dir=str(tmp_path / "w3"),
+                spec_source="file://spec.yaml",
+                status=ProjectStatus.COMPLETED,
+            )
+
+            db.create_project(project1)
+            db.create_project(project2)
+            db.create_project(project3)
+
+            # List only active projects
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "list", "--status", "active"]
+            )
+
+            assert result.exit_code == 0
+            assert "active-app" in result.output
+            assert "paused-app" not in result.output
+            assert "completed-app" not in result.output
+
+    def test_list_json_output(self, tmp_path: Path) -> None:
+        """Test JSON output format."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml", "-d", "Test project"]
+            )
+
+            # List with JSON output
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "list", "--json-output"],
+            )
+
+            assert result.exit_code == 0
+
+            # Extract JSON from output (filter out non-JSON lines like migration messages)
+            # The JSON starts with { and we need to track braces to find the end
+            json_lines = []
+            brace_count = 0
+            in_json = False
+
+            for line in result.output.split('\n'):
+                if not in_json and line.strip().startswith('{'):
+                    in_json = True
+
+                if in_json:
+                    json_lines.append(line)
+                    brace_count += line.count('{') - line.count('}')
+
+                    # When brace count returns to 0, JSON is complete
+                    if brace_count == 0:
+                        break
+
+            json_output = '\n'.join(json_lines)
+            data = json.loads(json_output)
+            assert "projects" in data
+            assert len(data["projects"]) == 1
+
+            project = data["projects"][0]
+            assert project["name"] == "test-app"
+            assert project["description"] == "Test project"
+            assert project["status"] == "active"
+            assert "id" in project
+            assert "workspace_dir" in project
+            assert "spec_source" in project
+            assert "tasks" in project
+            assert "cost" in project
+
+    def test_list_json_output_no_projects(self, tmp_path: Path) -> None:
+        """Test JSON output with no projects."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "list", "--json-output"],
+            )
+
+            assert result.exit_code == 0
+
+            # Extract JSON from output (filter out non-JSON lines like migration messages)
+            # The JSON starts with { and we need to track braces to find the end
+            json_lines = []
+            brace_count = 0
+            in_json = False
+
+            for line in result.output.split('\n'):
+                if not in_json and line.strip().startswith('{'):
+                    in_json = True
+
+                if in_json:
+                    json_lines.append(line)
+                    brace_count += line.count('{') - line.count('}')
+
+                    # When brace count returns to 0, JSON is complete
+                    if brace_count == 0:
+                        break
+
+            json_output = '\n'.join(json_lines)
+            data = json.loads(json_output)
+            assert data == {"projects": []}
+
+    def test_list_with_task_statistics(self, tmp_path: Path) -> None:
+        """Test that task statistics are displayed."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            db = DatabaseManager(db_path)
+
+            # Create a project
+            project = Project(
+                id="proj-1",
+                name="test-app",
+                description="",
+                workspace_dir=str(tmp_path / "workspace"),
+                spec_source="file://spec.yaml",
+            )
+            db.create_project(project)
+
+            # Create tasks
+            task1 = Task(
+                id="task-1",
+                project_id="proj-1",
+                spec_id="F001",
+                title="Task 1",
+                description="Test task 1",
+                status=TaskStatus.COMPLETED,
+            )
+            task2 = Task(
+                id="task-2",
+                project_id="proj-1",
+                spec_id="F002",
+                title="Task 2",
+                description="Test task 2",
+                status=TaskStatus.PENDING,
+            )
+            task3 = Task(
+                id="task-3",
+                project_id="proj-1",
+                spec_id="F003",
+                title="Task 3",
+                description="Test task 3",
+                status=TaskStatus.COMPLETED,
+            )
+
+            db.create_task(task1)
+            db.create_task(task2)
+            db.create_task(task3)
+
+            # List projects
+            result = self.runner.invoke(cli, ["--db", str(db_path), "project", "list"])
+
+            assert result.exit_code == 0
+            assert "2/3" in result.output  # 2 completed out of 3 total
+
+    def test_list_with_cost_statistics(self, tmp_path: Path) -> None:
+        """Test that cost statistics are displayed."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            db = DatabaseManager(db_path)
+
+            # Create a project
+            project = Project(
+                id="proj-1",
+                name="test-app",
+                description="",
+                workspace_dir=str(tmp_path / "workspace"),
+                spec_source="file://spec.yaml",
+            )
+            db.create_project(project)
+
+            # Create sessions with costs
+            session1 = Session(
+                id="sess-1",
+                project_id="proj-1",
+                task_id=None,
+                agent_type=AgentType.CODING,
+                model="claude-sonnet-4",
+                status=SessionStatus.COMPLETED,
+                cost=1.50,
+            )
+            session2 = Session(
+                id="sess-2",
+                project_id="proj-1",
+                task_id=None,
+                agent_type=AgentType.CODING,
+                model="claude-sonnet-4",
+                status=SessionStatus.COMPLETED,
+                cost=2.75,
+            )
+
+            db.create_session(session1)
+            db.create_session(session2)
+
+            # List projects
+            result = self.runner.invoke(cli, ["--db", str(db_path), "project", "list"])
+
+            assert result.exit_code == 0
+            assert "$4.25" in result.output  # Total cost
+
+    def test_list_table_headers(self, tmp_path: Path) -> None:
+        """Test that table headers are displayed."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"]
+            )
+
+            # List projects
+            result = self.runner.invoke(cli, ["--db", str(db_path), "project", "list"])
+
+            assert result.exit_code == 0
+            assert "ID" in result.output
+            assert "Name" in result.output
+            assert "Status" in result.output
+            assert "Tasks" in result.output
+            assert "Cost" in result.output
+            assert "Description" in result.output

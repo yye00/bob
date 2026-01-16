@@ -4,6 +4,7 @@ This module tracks schema versions and applies migrations.
 """
 
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -91,7 +92,7 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
             (CURRENT_SCHEMA_VERSION, "Initial schema"),
         )
         conn.commit()
-        print(f"✓ Applied schema version {CURRENT_SCHEMA_VERSION}")
+        print(f"✓ Applied schema version {CURRENT_SCHEMA_VERSION}", file=sys.stderr)
     elif current_version < target_version:
         # Future migrations would go here
         # Example:
@@ -102,9 +103,9 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
         #         (2, "Add new indexes"),
         #     )
         #     conn.commit()
-        print(f"✓ Database already at version {current_version}")
+        print(f"✓ Database already at version {current_version}", file=sys.stderr)
     else:
-        print(f"✓ Database already at version {current_version}")
+        print(f"✓ Database already at version {current_version}", file=sys.stderr)
 
 
 def verify_schema(conn: sqlite3.Connection) -> bool:
@@ -132,14 +133,14 @@ def verify_schema(conn: sqlite3.Connection) -> bool:
 
     missing_tables = set(required_tables) - existing_tables
     if missing_tables:
-        print(f"✗ Missing tables: {missing_tables}")
+        print(f"✗ Missing tables: {missing_tables}", file=sys.stderr)
         return False
 
     # Verify foreign key constraints are enabled
     cursor = conn.execute("PRAGMA foreign_keys")
     fk_enabled = cursor.fetchone()[0]
     if not fk_enabled:
-        print("✗ Foreign key constraints are not enabled")
+        print("✗ Foreign key constraints are not enabled", file=sys.stderr)
         return False
 
     return True

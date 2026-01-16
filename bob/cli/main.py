@@ -148,6 +148,7 @@ def project() -> None:
 
 # Add project subcommands
 project.add_command(project_commands.create)
+project.add_command(project_commands.list)
 
 
 @cli.group()
