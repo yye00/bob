@@ -53,30 +53,67 @@ class AgentType(str, Enum):
 
 
 class ModelTier(str, Enum):
-    """Model tier for escalation system."""
-    TIER1 = "tier1"  # Sonnet (default)
-    TIER2 = "tier2"  # Opus (escalated)
+    """Model tier for escalation system.
+
+    Matches the autonomous-coding escalation system:
+    - TIER1/SONNET: Default model for initial attempts
+    - TIER2/OPUS: Escalated model after repeated failures
+
+    The enum values are "tier1" and "tier2" for database compatibility,
+    while the actual model names are stored in current_model field.
+    """
+    TIER1 = "tier1"  # Sonnet - claude-sonnet-4-5-20250929
+    TIER2 = "tier2"  # Opus - claude-opus-4-5-20251101
+
+    # Aliases for semantic clarity
+    SONNET = "tier1"
+    OPUS = "tier2"
 
 
 class FailureType(str, Enum):
-    """Type of failure detected by failure_classifier."""
-    KNOWLEDGE_GAP = "knowledge_gap"
-    COMPLEXITY = "complexity"
-    AMBIGUITY = "ambiguity"
-    ENVIRONMENT = "environment"
-    DEPENDENCY = "dependency"
-    TIMEOUT = "timeout"
+    """Type of failure detected by diagnosis.
+
+    Matches the autonomous-coding escalation system failure classification.
+    Each failure type triggers a different recovery action.
+    """
     UNKNOWN = "unknown"
+    TOO_BIG = "too_big"  # Feature is too complex, needs decomposition
+    MISSING_INFO = "missing_info"  # Missing information, needs research
+    WRONG_INFRA = "wrong_infra"  # Missing packages/tools, needs user
+    BAD_ASSUMPTIONS = "bad_assumptions"  # Wrong approach, needs restructure
+    NEEDS_RESEARCH = "needs_research"  # Specific research needed
+    DEPS_NOT_MET = "deps_not_met"  # Dependencies not satisfied yet
+
+    # Legacy aliases for backward compatibility
+    KNOWLEDGE_GAP = "missing_info"
+    COMPLEXITY = "too_big"
+    AMBIGUITY = "bad_assumptions"
+    ENVIRONMENT = "wrong_infra"
+    DEPENDENCY = "deps_not_met"
+    TIMEOUT = "unknown"
 
 
 class EscalationAction(str, Enum):
-    """Action to take on escalation."""
-    RETRY_SAME_MODEL = "retry_same_model"
-    ESCALATE_TO_OPUS = "escalate_to_opus"
-    REQUEST_RESEARCH = "request_research"
-    DECOMPOSE_TASK = "decompose_task"
-    REQUEST_USER_INPUT = "request_user_input"
-    SKIP_TASK = "skip_task"
+    """Action to take based on escalation state.
+
+    Matches the autonomous-coding escalation system actions.
+    """
+    CONTINUE = "continue"  # Keep trying with current model
+    ESCALATE_MODEL = "escalate_model"  # Switch to better model
+    DIAGNOSE = "diagnose"  # Run root cause analysis
+    DECOMPOSE = "decompose"  # Break feature into sub-features
+    RESEARCH = "research"  # Research mode (web search, experimentation)
+    REQUEST_USER = "request_user"  # Stop and ask user for help
+    RESTRUCTURE = "restructure"  # Research and restructure feature
+    SKIP = "skip"  # Skip feature (deps not met)
+
+    # Legacy aliases for backward compatibility
+    RETRY_SAME_MODEL = "continue"
+    ESCALATE_TO_OPUS = "escalate_model"
+    REQUEST_RESEARCH = "research"
+    DECOMPOSE_TASK = "decompose"
+    REQUEST_USER_INPUT = "request_user"
+    SKIP_TASK = "skip"
 
 
 # Data Models

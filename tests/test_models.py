@@ -62,22 +62,42 @@ class TestEnums:
 
     def test_failure_type_values(self):
         """Test FailureType enum has all expected values."""
-        assert FailureType.KNOWLEDGE_GAP == "knowledge_gap"
-        assert FailureType.COMPLEXITY == "complexity"
-        assert FailureType.AMBIGUITY == "ambiguity"
-        assert FailureType.ENVIRONMENT == "environment"
-        assert FailureType.DEPENDENCY == "dependency"
-        assert FailureType.TIMEOUT == "timeout"
+        # Primary values from autonomous-coding
         assert FailureType.UNKNOWN == "unknown"
+        assert FailureType.TOO_BIG == "too_big"
+        assert FailureType.MISSING_INFO == "missing_info"
+        assert FailureType.WRONG_INFRA == "wrong_infra"
+        assert FailureType.BAD_ASSUMPTIONS == "bad_assumptions"
+        assert FailureType.NEEDS_RESEARCH == "needs_research"
+        assert FailureType.DEPS_NOT_MET == "deps_not_met"
+
+        # Legacy aliases for backward compatibility
+        assert FailureType.KNOWLEDGE_GAP == FailureType.MISSING_INFO
+        assert FailureType.COMPLEXITY == FailureType.TOO_BIG
+        assert FailureType.AMBIGUITY == FailureType.BAD_ASSUMPTIONS
+        assert FailureType.ENVIRONMENT == FailureType.WRONG_INFRA
+        assert FailureType.DEPENDENCY == FailureType.DEPS_NOT_MET
+        assert FailureType.TIMEOUT == FailureType.UNKNOWN
 
     def test_escalation_action_values(self):
         """Test EscalationAction enum has all expected values."""
-        assert EscalationAction.RETRY_SAME_MODEL == "retry_same_model"
-        assert EscalationAction.ESCALATE_TO_OPUS == "escalate_to_opus"
-        assert EscalationAction.REQUEST_RESEARCH == "request_research"
-        assert EscalationAction.DECOMPOSE_TASK == "decompose_task"
-        assert EscalationAction.REQUEST_USER_INPUT == "request_user_input"
-        assert EscalationAction.SKIP_TASK == "skip_task"
+        # Primary values from autonomous-coding
+        assert EscalationAction.CONTINUE == "continue"
+        assert EscalationAction.ESCALATE_MODEL == "escalate_model"
+        assert EscalationAction.DIAGNOSE == "diagnose"
+        assert EscalationAction.DECOMPOSE == "decompose"
+        assert EscalationAction.RESEARCH == "research"
+        assert EscalationAction.REQUEST_USER == "request_user"
+        assert EscalationAction.RESTRUCTURE == "restructure"
+        assert EscalationAction.SKIP == "skip"
+
+        # Legacy aliases for backward compatibility
+        assert EscalationAction.RETRY_SAME_MODEL == EscalationAction.CONTINUE
+        assert EscalationAction.ESCALATE_TO_OPUS == EscalationAction.ESCALATE_MODEL
+        assert EscalationAction.REQUEST_RESEARCH == EscalationAction.RESEARCH
+        assert EscalationAction.DECOMPOSE_TASK == EscalationAction.DECOMPOSE
+        assert EscalationAction.REQUEST_USER_INPUT == EscalationAction.REQUEST_USER
+        assert EscalationAction.SKIP_TASK == EscalationAction.SKIP
 
 
 class TestProject:
