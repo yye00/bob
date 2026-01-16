@@ -18,7 +18,11 @@
       "mcp__puppeteer__puppeteer_fill",
       "mcp__puppeteer__puppeteer_select",
       "mcp__puppeteer__puppeteer_hover",
-      "mcp__puppeteer__puppeteer_evaluate"
+      "mcp__puppeteer__puppeteer_evaluate",
+      "mcp__plugin_perplexity_perplexity__perplexity_ask",
+      "mcp__plugin_perplexity_perplexity__perplexity_search",
+      "mcp__plugin_perplexity_perplexity__perplexity_research",
+      "mcp__plugin_perplexity_perplexity__perplexity_reason"
     ]
   }
 }

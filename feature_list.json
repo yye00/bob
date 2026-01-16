@@ -14,8 +14,8 @@
       "Create enums for ProjectStatus, TaskStatus, SessionStatus, AgentType, ModelTier, FailureType, EscalationAction",
       "Verify all models have proper type hints and defaults"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T16:30:00Z",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
@@ -45,8 +45,8 @@
       "Test schema creation on fresh SQLite database",
       "Verify all foreign key constraints work correctly"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T16:30:00Z",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
@@ -67,7 +67,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F002"],
+    "depends_on": [
+      "F002"
+    ],
     "description": "Database manager - Create DatabaseManager class for SQLite operations with transactions",
     "steps": [
       "Create database/manager.py with DatabaseManager class",
@@ -133,7 +135,10 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F003", "F004"],
+    "depends_on": [
+      "F003",
+      "F004"
+    ],
     "description": "Project create command - Implement 'bob project create' command",
     "steps": [
       "Create cli/project.py with create command",
@@ -168,7 +173,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F005"],
+    "depends_on": [
+      "F005"
+    ],
     "description": "Project list command - Implement 'bob project list' command",
     "steps": [
       "Create list command in cli/project.py",
@@ -201,7 +208,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F005"],
+    "depends_on": [
+      "F005"
+    ],
     "description": "Project use command - Implement 'bob project use' to set active project",
     "steps": [
       "Create use command in cli/project.py",
@@ -233,7 +242,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F005"],
+    "depends_on": [
+      "F005"
+    ],
     "description": "Project status command - Implement 'bob project status' command",
     "steps": [
       "Create status command in cli/project.py",
@@ -267,7 +278,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F005"],
+    "depends_on": [
+      "F005"
+    ],
     "description": "Project delete command - Implement 'bob project delete' with confirmation",
     "steps": [
       "Create delete command in cli/project.py",
@@ -332,7 +345,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F010"],
+    "depends_on": [
+      "F010"
+    ],
     "description": "FileSpecSource - Implement file-based spec source (YAML format)",
     "steps": [
       "Create spec_sources/file_source.py with FileSpecSource class",
@@ -367,7 +382,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F011"],
+    "depends_on": [
+      "F011"
+    ],
     "description": "FileSpecSource - Support JSON format",
     "steps": [
       "Add JSON format detection to FileSpecSource",
@@ -398,7 +415,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F011"],
+    "depends_on": [
+      "F011"
+    ],
     "description": "FileSpecSource - Support Markdown format",
     "steps": [
       "Add Markdown format detection to FileSpecSource",
@@ -431,7 +450,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F010"],
+    "depends_on": [
+      "F010"
+    ],
     "description": "GitHubIssuesSource - Implement GitHub issues as spec source",
     "steps": [
       "Create spec_sources/github_source.py with GitHubIssuesSource class",
@@ -465,7 +486,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F003"],
+    "depends_on": [
+      "F003"
+    ],
     "description": "Task list command - Implement 'bob task list' command",
     "steps": [
       "Create cli/task.py with list command",
@@ -500,7 +523,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F015"],
+    "depends_on": [
+      "F015"
+    ],
     "description": "Task show command - Implement 'bob task show' for detailed task info",
     "steps": [
       "Create show command in cli/task.py",
@@ -535,7 +560,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F015"],
+    "depends_on": [
+      "F015"
+    ],
     "description": "Task retry command - Implement 'bob task retry' to retry failed tasks",
     "steps": [
       "Create retry command in cli/task.py",
@@ -567,7 +594,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F015"],
+    "depends_on": [
+      "F015"
+    ],
     "description": "Task skip command - Implement 'bob task skip' to skip tasks",
     "steps": [
       "Create skip command in cli/task.py",
@@ -599,7 +628,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "low",
-    "depends_on": ["F015"],
+    "depends_on": [
+      "F015"
+    ],
     "description": "Task add command - Implement 'bob task add' to manually add tasks",
     "steps": [
       "Create add command in cli/task.py",
@@ -665,7 +696,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F020"],
+    "depends_on": [
+      "F020"
+    ],
     "description": "Port failure_classifier.py - Copy failure classification logic",
     "steps": [
       "Copy failure_classifier.py from autonomous-coding",
@@ -696,7 +729,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F020"],
+    "depends_on": [
+      "F020"
+    ],
     "description": "Port feature_decomposer.py as task_decomposer.py - Copy task decomposition logic",
     "steps": [
       "Copy feature_decomposer.py from autonomous-coding",
@@ -728,7 +763,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F020"],
+    "depends_on": [
+      "F020"
+    ],
     "description": "Port research_agent.py - Copy research agent implementation",
     "steps": [
       "Copy research_agent.py from autonomous-coding",
@@ -824,7 +861,13 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F020", "F021", "F022", "F023", "F025"],
+    "depends_on": [
+      "F020",
+      "F021",
+      "F022",
+      "F023",
+      "F025"
+    ],
     "description": "Create Orchestrator - Main orchestration engine for task execution",
     "steps": [
       "Create orchestrator/engine.py with Orchestrator class",
@@ -859,7 +902,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F023"],
+    "depends_on": [
+      "F023"
+    ],
     "description": "ResearchController - Implement research-first workflow controller",
     "steps": [
       "Create research/controller.py with ResearchController class",
@@ -895,7 +940,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F027"],
+    "depends_on": [
+      "F027"
+    ],
     "description": "Research command - Implement 'bob research' command",
     "steps": [
       "Create cli/research.py with research command",
@@ -928,7 +975,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F026"],
+    "depends_on": [
+      "F026"
+    ],
     "description": "Run command - Implement 'bob run' to execute agent on project tasks",
     "steps": [
       "Create cli/run.py with run command",
@@ -962,7 +1011,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F003"],
+    "depends_on": [
+      "F003"
+    ],
     "description": "TaskQueue - Implement dependency-aware task queue",
     "steps": [
       "Create orchestrator/task_queue.py with TaskQueue class",
@@ -996,7 +1047,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F030"],
+    "depends_on": [
+      "F030"
+    ],
     "description": "Parallel execution - Implement run_parallel() for concurrent task execution",
     "steps": [
       "Add run_parallel() method to TaskQueue",
@@ -1029,7 +1082,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F031"],
+    "depends_on": [
+      "F031"
+    ],
     "description": "Run command with parallel execution - Add --parallel flag to 'bob run'",
     "steps": [
       "Add --parallel option to run command",
@@ -1061,7 +1116,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F003"],
+    "depends_on": [
+      "F003"
+    ],
     "description": "CostTracker - Implement token and cost tracking",
     "steps": [
       "Create observability/cost_tracker.py with CostTracker class",
@@ -1095,7 +1152,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F033"],
+    "depends_on": [
+      "F033"
+    ],
     "description": "Costs command - Implement 'bob costs' to show cost breakdown",
     "steps": [
       "Create cli/costs.py with costs command",
@@ -1130,7 +1189,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F033"],
+    "depends_on": [
+      "F033"
+    ],
     "description": "Cost limits - Implement budget enforcement",
     "steps": [
       "Add cost limit checking to Orchestrator",
@@ -1163,7 +1224,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F026"],
+    "depends_on": [
+      "F026"
+    ],
     "description": "Structured logging - Implement JSON structured logging",
     "steps": [
       "Create observability/logger.py with StructuredLogger class",
@@ -1196,7 +1259,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F036"],
+    "depends_on": [
+      "F036"
+    ],
     "description": "Logs command - Implement 'bob logs' to view structured logs",
     "steps": [
       "Create cli/logs.py with logs command",
@@ -1231,7 +1296,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F008"],
+    "depends_on": [
+      "F008"
+    ],
     "description": "Status command - Implement global 'bob status' for all projects",
     "steps": [
       "Create cli/status.py with status command",
@@ -1265,7 +1332,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F026"],
+    "depends_on": [
+      "F026"
+    ],
     "description": "CheckpointManager - Implement session checkpointing for resume",
     "steps": [
       "Create orchestrator/checkpoint.py with CheckpointManager class",
@@ -1299,7 +1368,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F039"],
+    "depends_on": [
+      "F039"
+    ],
     "description": "Resume from checkpoint - Add resume capability to 'bob run'",
     "steps": [
       "Add --resume flag to run command with checkpoint ID",
@@ -1330,7 +1401,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "critical",
-    "depends_on": ["F011"],
+    "depends_on": [
+      "F011"
+    ],
     "description": "Sync command - Implement 'bob sync' to sync with spec source",
     "steps": [
       "Create cli/sync.py with sync command",
@@ -1365,7 +1438,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F041"],
+    "depends_on": [
+      "F041"
+    ],
     "description": "Auto-sync on run - Add automatic spec sync check before 'bob run'",
     "steps": [
       "Add sync check to run command start",
@@ -1427,7 +1502,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F043"],
+    "depends_on": [
+      "F043"
+    ],
     "description": "Config set command - Implement 'bob config set' to update configuration",
     "steps": [
       "Create set command in cli/config.py",
@@ -1459,7 +1536,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "low",
-    "depends_on": ["F043"],
+    "depends_on": [
+      "F043"
+    ],
     "description": "Config edit command - Implement 'bob config edit' to open editor",
     "steps": [
       "Create edit command in cli/config.py",
@@ -1490,7 +1569,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F026"],
+    "depends_on": [
+      "F026"
+    ],
     "description": "Prompt templates - Create template engine for prompts with project variables",
     "steps": [
       "Create prompts/template_engine.py with TemplateEngine class",
@@ -1523,7 +1604,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F046"],
+    "depends_on": [
+      "F046"
+    ],
     "description": "Custom prompts per project - Allow project-specific prompt overrides",
     "steps": [
       "Add prompts section to project.yaml config",
@@ -1586,7 +1669,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "low",
-    "depends_on": ["F048"],
+    "depends_on": [
+      "F048"
+    ],
     "description": "Plugin commands - Implement 'bob plugin list/install/uninstall' commands",
     "steps": [
       "Create cli/plugin.py with plugin command group",
@@ -1617,7 +1702,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F004"],
+    "depends_on": [
+      "F004"
+    ],
     "description": "Init command - Implement 'bob init' to initialize BOB environment",
     "steps": [
       "Create cli/init.py with init command",
@@ -1651,7 +1738,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F026"],
+    "depends_on": [
+      "F026"
+    ],
     "description": "Integration test - End-to-end test with simple project",
     "steps": [
       "Create test project with simple spec (3-5 tasks)",
@@ -1687,7 +1776,10 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F026", "F027"],
+    "depends_on": [
+      "F026",
+      "F027"
+    ],
     "description": "Research-first integration test - Test research workflow end-to-end",
     "steps": [
       "Create test project with task that has research_required: true",
@@ -1721,7 +1813,10 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F020", "F026"],
+    "depends_on": [
+      "F020",
+      "F026"
+    ],
     "description": "Escalation integration test - Test full escalation flow",
     "steps": [
       "Create test project with intentionally difficult task",
@@ -1755,7 +1850,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F031"],
+    "depends_on": [
+      "F031"
+    ],
     "description": "Parallel execution integration test - Test concurrent task execution",
     "steps": [
       "Create test project with 5+ independent tasks (no dependencies)",
@@ -1788,7 +1885,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F041"],
+    "depends_on": [
+      "F041"
+    ],
     "description": "Spec sync integration test - Test spec synchronization",
     "steps": [
       "Create test project from initial spec with 5 tasks",
@@ -1823,7 +1922,10 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F039", "F040"],
+    "depends_on": [
+      "F039",
+      "F040"
+    ],
     "description": "Checkpoint resume integration test - Test session checkpointing and resume",
     "steps": [
       "Create test project with long-running task",
@@ -1857,7 +1959,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "low",
-    "depends_on": ["F014"],
+    "depends_on": [
+      "F014"
+    ],
     "description": "GitHub issues integration test - Test GitHub as spec source",
     "steps": [
       "Create test GitHub repository with issues",
@@ -1891,7 +1995,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F030"],
+    "depends_on": [
+      "F030"
+    ],
     "description": "Dependency graph validation - Test complex DAG handling",
     "steps": [
       "Create test spec with complex dependency graph (10+ tasks, multiple levels)",
@@ -1925,7 +2031,10 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "high",
-    "depends_on": ["F033", "F035"],
+    "depends_on": [
+      "F033",
+      "F035"
+    ],
     "description": "Cost tracking accuracy test - Verify cost calculations are accurate",
     "steps": [
       "Create test that tracks known token usage",
@@ -1958,7 +2067,10 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F036", "F037"],
+    "depends_on": [
+      "F036",
+      "F037"
+    ],
     "description": "Structured logging test - Verify JSON logging works correctly",
     "steps": [
       "Create test project",
@@ -1992,7 +2104,11 @@
     "spec_version_added": 1,
     "category": "test",
     "priority": "high",
-    "depends_on": ["F001", "F002", "F003"],
+    "depends_on": [
+      "F001",
+      "F002",
+      "F003"
+    ],
     "description": "Unit tests for models and database - Test data layer thoroughly",
     "steps": [
       "Create tests/test_models.py",
@@ -2026,7 +2142,11 @@
     "spec_version_added": 1,
     "category": "test",
     "priority": "high",
-    "depends_on": ["F011", "F012", "F013"],
+    "depends_on": [
+      "F011",
+      "F012",
+      "F013"
+    ],
     "description": "Unit tests for spec sources - Test all spec source parsers",
     "steps": [
       "Create tests/test_spec_sources.py",
@@ -2060,7 +2180,11 @@
     "spec_version_added": 1,
     "category": "test",
     "priority": "high",
-    "depends_on": ["F020", "F021", "F022"],
+    "depends_on": [
+      "F020",
+      "F021",
+      "F022"
+    ],
     "description": "Unit tests for escalation system - Test escalation logic",
     "steps": [
       "Create tests/test_escalation.py",
@@ -2094,7 +2218,9 @@
     "spec_version_added": 1,
     "category": "test",
     "priority": "medium",
-    "depends_on": ["F030"],
+    "depends_on": [
+      "F030"
+    ],
     "description": "Unit tests for TaskQueue - Test dependency resolution",
     "steps": [
       "Create tests/test_task_queue.py",
@@ -2128,7 +2254,9 @@
     "spec_version_added": 1,
     "category": "test",
     "priority": "medium",
-    "depends_on": ["F033"],
+    "depends_on": [
+      "F033"
+    ],
     "description": "Unit tests for CostTracker - Test cost calculations",
     "steps": [
       "Create tests/test_cost_tracker.py",
@@ -2161,7 +2289,9 @@
     "spec_version_added": 1,
     "category": "test",
     "priority": "medium",
-    "depends_on": ["F027"],
+    "depends_on": [
+      "F027"
+    ],
     "description": "Unit tests for ResearchController - Test research workflow",
     "steps": [
       "Create tests/test_research.py",
@@ -2194,7 +2324,9 @@
     "spec_version_added": 1,
     "category": "test",
     "priority": "low",
-    "depends_on": ["F004"],
+    "depends_on": [
+      "F004"
+    ],
     "description": "CLI tests - Test command parsing and output",
     "steps": [
       "Create tests/test_cli.py",
@@ -2227,7 +2359,9 @@
     "spec_version_added": 1,
     "category": "style",
     "priority": "high",
-    "depends_on": ["F004"],
+    "depends_on": [
+      "F004"
+    ],
     "description": "CLI help text and documentation - Ensure all commands have clear help",
     "steps": [
       "Review all CLI commands for help text completeness",
@@ -2259,7 +2393,9 @@
     "spec_version_added": 1,
     "category": "style",
     "priority": "medium",
-    "depends_on": ["F004"],
+    "depends_on": [
+      "F004"
+    ],
     "description": "CLI output formatting - Ensure consistent and readable output",
     "steps": [
       "Use rich library for formatted terminal output",
@@ -2326,7 +2462,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F070"],
+    "depends_on": [
+      "F070"
+    ],
     "description": "Documentation - Create docs/ directory with detailed guides",
     "steps": [
       "Create docs/getting-started.md",
@@ -2392,7 +2530,9 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "medium",
-    "depends_on": ["F072"],
+    "depends_on": [
+      "F072"
+    ],
     "description": "Package distribution - Prepare for PyPI publication",
     "steps": [
       "Create setup.py with package metadata",
@@ -2457,7 +2597,10 @@
     "spec_version_added": 1,
     "category": "functional",
     "priority": "low",
-    "depends_on": ["F070", "F071"],
+    "depends_on": [
+      "F070",
+      "F071"
+    ],
     "description": "Example projects - Create example spec files",
     "steps": [
       "Create examples/simple-webapp/spec.yaml (basic web app)",
