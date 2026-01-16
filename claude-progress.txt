@@ -755,3 +755,257 @@ F023: Port research_agent.py (HIGH)
 
 SESSION 12 COMPLETE ✅
 =================================================================
+
+=================================================================
+BOB - Session 13 Progress Summary
+=================================================================
+Date: 2026-01-16
+Session: F023 - Research Agent
+Previous Session: Session 12 (F022 - Task Decomposer)
+=================================================================
+
+✅ COMPLETED TASKS:
+
+F023: Port research_agent.py - PASSING ✅
+- Ported research agent from autonomous-coding
+- All 398 tests passing (up from 366, +32 new tests)
+- Adapted to BOB's Task model and database architecture
+
+FILES CREATED/MODIFIED:
+- bob/orchestrator/research_agent.py: ResearchAgent (550+ lines)
+- bob/orchestrator/__init__.py: Export research components
+- tests/test_research_agent.py: 32 comprehensive tests (700+ lines)
+- feature_list.json: Marked F023 as passing
+
+IMPLEMENTATION DETAILS:
+
+1. Research Agent Module (bob/orchestrator/research_agent.py - 550 lines)
+
+   Core Components:
+
+   A. ResearchResult Dataclass:
+      - query: Research query string
+      - findings: Research results text
+      - sources: List of URLs found
+      - suggestions: Bullet points extracted
+      - code_examples: Code blocks extracted
+      - timestamp: ISO timestamp
+      - success: bool flag
+      - error: Optional error message
+      - to_dict(): Convert to dict for serialization
+
+   B. ExperimentResult Dataclass:
+      - command: Command that was run
+      - output: Command output
+      - success: bool flag
+      - rollback_needed: bool flag
+      - rollback_command: Optional rollback command
+      - timestamp: ISO timestamp
+      - to_dict(): Convert to dict for serialization
+
+   C. ResearchContext Class:
+      - Manages research history for a task
+      - Persists to workspace_dir/harness_logs/research/task_{id}.json
+      - Methods:
+        * __init__(workspace_dir, task_id): Initialize context
+        * _load(): Load from JSON file
+        * _save(): Save to JSON file
+        * add_research(result): Add research result
+        * add_experiment(result): Add experiment result
+        * get_research_summary(): Get summary string
+      - Tracks:
+        * research_history: List[ResearchResult]
+        * experiment_history: List[ExperimentResult]
+
+   D. ResearchTracker Class:
+      - Tracks research attempts across all tasks
+      - Prevents duplicate/redundant queries
+      - Persists to workspace_dir/harness_logs/research_tracker.json
+      - Methods:
+        * __init__(workspace_dir): Initialize tracker
+        * _load(): Load from JSON file
+        * _save(): Save to JSON file
+        * was_query_tried(task_id, query): Check if tried
+        * record_query(task_id, query): Record attempt
+        * get_untried_queries(task_id, queries): Filter to new queries
+        * reset_task(task_id): Clear history for task
+      - Data structure:
+        * queries_tried: Dict[task_id, List[query]]
+
+   E. Perplexity Integration:
+      - PERPLEXITY_TOOLS: List of MCP tool names
+        * mcp__perplexity__perplexity_ask
+        * mcp__perplexity__perplexity_search
+        * mcp__perplexity__perplexity_research
+        * mcp__perplexity__perplexity_reason
+      - get_perplexity_mcp_config(): Get MCP server config
+        * Returns config for npx @perplexity-ai/mcp-server
+
+   F. Research Prompt Generation:
+      - generate_research_prompt(task, queries, error_context, research_type):
+        * research_type: "quick", "deep", or "experimental"
+        * quick: Fast lookup (perplexity_search/ask)
+        * deep: Comprehensive investigation (perplexity_research)
+        * experimental: Try approaches with rollback safety
+        * Returns formatted prompt with instructions
+
+   G. Query Generation:
+      - generate_research_queries_from_error(error_msg, context):
+        * Extracts error type (ImportError, AttributeError, etc.)
+        * Extracts module names from import errors
+        * Extracts function names from signature errors
+        * Extracts attribute names from AttributeError
+        * Adds context prefix if provided
+        * Returns up to 3 queries
+
+   H. Response Parsing:
+      - parse_research_response(response):
+        * Extracts URLs with regex: https?://[^\s\)\]]+
+        * Extracts code blocks: ```language\ncode```
+        * Extracts suggestions: lines starting with - or *
+        * Returns ResearchResult with parsed data
+        * Truncates findings to 2000 chars
+        * Limits sources to 5, code examples to 3, suggestions to 5
+
+   I. Session Prompt Creation:
+      - create_research_session_prompt(task, classification_result, previous_research):
+        * Comprehensive research session prompt
+        * Includes task details and failure type
+        * Lists research queries to investigate
+        * Shows previous research to avoid repetition
+        * Describes available Perplexity tools
+        * Provides structured workflow:
+          1. Research Phase: Use Perplexity tools
+          2. Analysis Phase: Compare approaches
+          3. Documentation Phase: Create research_notes.md
+          4. Application Phase: Apply findings to fix task
+
+2. Test Suite (tests/test_research_agent.py - 32 tests)
+
+   Test Classes:
+   - TestResearchResult: 2 tests
+     * test_research_result_creation
+     * test_research_result_to_dict
+
+   - TestExperimentResult: 2 tests
+     * test_experiment_result_creation
+     * test_experiment_result_to_dict
+
+   - TestResearchContext: 5 tests
+     * test_init
+     * test_add_research
+     * test_add_experiment
+     * test_get_research_summary_empty
+     * test_get_research_summary_with_data
+
+   - TestResearchTracker: 5 tests
+     * test_init
+     * test_record_query
+     * test_was_query_tried
+     * test_get_untried_queries
+     * test_reset_task
+
+   - TestPerplexityTools: 2 tests
+     * test_perplexity_tools_list
+     * test_get_perplexity_mcp_config
+
+   - TestGenerateResearchPrompt: 3 tests
+     * test_quick_research_prompt
+     * test_deep_research_prompt
+     * test_experimental_research_prompt
+
+   - TestGenerateResearchQueries: 6 tests
+     * test_generate_from_import_error
+     * test_generate_from_attribute_error
+     * test_generate_from_function_error
+     * test_generate_with_context
+     * test_generate_from_generic_error
+     * test_limit_to_three_queries
+
+   - TestParseResearchResponse: 4 tests
+     * test_parse_with_sources
+     * test_parse_with_code_blocks
+     * test_parse_with_suggestions
+     * test_parse_truncates_long_response
+
+   - TestCreateResearchSessionPrompt: 2 tests
+     * test_create_prompt_without_previous_research
+     * test_create_prompt_with_previous_research
+
+   - TestIntegration: 1 test
+     * test_full_research_workflow
+
+ARCHITECTURAL SIGNIFICANCE:
+
+F023 completes the research system enabling BOB to:
+1. Automatically research unknown errors and missing information
+2. Track research attempts to prevent duplicate queries
+3. Persist research history for later reference
+4. Generate targeted research prompts based on failure type
+5. Parse and structure research findings
+6. Integrate with Perplexity MCP for web search capabilities
+
+Research Workflow:
+1. Task fails with unknown error
+2. FailureClassifier generates research queries
+3. ResearchTracker filters to untried queries
+4. Research agent uses Perplexity tools to investigate
+5. ResearchContext persists findings
+6. Task implementation updated based on research
+
+Integration Points:
+- Task model: research_required, research_complete, research_queries, research_findings
+- FailureClassifier: Generates research queries from errors
+- EscalationController: Triggers research when needed
+- Agent prompts: Uses research_agent functions to generate prompts
+
+TEST RESULTS:
+- Total: 398 tests passing (up from 366)
+- New: 32 tests in test_research_agent.py
+- All previous tests still passing ✅
+
+PROGRESS:
+- Features passing: 16/75 (21.3%)
+- F023 marked passing at 2026-01-16T18:16:14Z
+
+NEXT PRIORITY:
+F031: Parallel execution - Implement run_parallel() for concurrent task execution (HIGH)
+  - Depends on: F030 (TaskQueue) ✅
+  - Ready to implement
+
+ALTERNATIVE PRIORITIES:
+- F007: Project use command (set active project) - HIGH, no dependencies
+- F008: Project status command (detailed status) - HIGH, no dependencies
+- F012: Enhanced JSON format - HIGH, depends on F011 ✅
+- F013: Markdown format - HIGH, depends on F011 ✅
+- F016: Task show command - HIGH, no dependencies
+- F034: Costs command - HIGH, no dependencies
+
+SESSION 13 COMPLETE ✅
+=================================================================
+
+Summary: Successfully ported research_agent.py from autonomous-coding,
+adapted to BOB's architecture, and added 32 comprehensive tests. All
+398 tests passing. Research system is production-ready for web search
+and experimentation during task failures.
+
+The research agent provides:
+- Perplexity MCP integration for web search
+- Query generation from error messages
+- Research history tracking per task
+- Duplicate query prevention
+- Response parsing and structuring
+- Multiple research modes (quick, deep, experimental)
+
+This enables BOB to automatically research solutions when encountering
+unknown errors or missing information, a critical capability for
+autonomous operation.
+
+Next session should implement F031 (parallel execution) to enable
+concurrent task processing, or continue with CLI commands (F007, F008,
+F016, F034) to improve user experience.
+
+Lines of code added: ~1250 (implementation + tests)
+Test coverage maintained at 100% (398/398 passing)
+
+=================================================================
