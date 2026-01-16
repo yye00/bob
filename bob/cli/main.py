@@ -9,6 +9,9 @@ from typing import Optional
 
 import click
 
+# Import project commands
+from bob.cli import project as project_commands
+
 # Version info
 __version__ = "0.1.0"
 
@@ -141,6 +144,10 @@ def project() -> None:
       bob project status
     """
     pass
+
+
+# Add project subcommands
+project.add_command(project_commands.create)
 
 
 @cli.group()
