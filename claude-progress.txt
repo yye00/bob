@@ -1,203 +1,267 @@
 =================================================================
-BOB (Build Orchestration Bot) - Session 4 Progress Summary
+BOB (Build Orchestration Bot) - Session 5 Progress Summary
 =================================================================
 Date: 2026-01-16
-Session: Coding Agent (Session 4)
+Session: Coding Agent (Session 5)
 Agent Role: Core Feature Implementation
-Previous Session: Session 3 (F003, F004 - Manager and CLI Framework)
+Previous Session: Session 4 (F005, F006 - Project create/list commands)
 =================================================================
 
 ✅ COMPLETED TASKS:
 
-SESSION 4 ACHIEVEMENTS:
+SESSION 5 ACHIEVEMENTS:
 
-1. ✅ F005: Project create command (PASSING)
-   - Created bob/cli/project.py module for project commands (212 lines)
-   - Implemented 'bob project create' command with:
-     * Project name validation (slug format: lowercase, hyphens)
-     * Workspace directory creation
-     * .bob/ subdirectory structure (logs/, state/)
-     * Default project.yaml config generation with:
-       - Agent settings (coding, research models)
-       - Escalation configuration
-       - Cost limits (per session, per day, per project)
-     * Database registration
-     * Helpful next steps output
-   - Added 27 comprehensive tests:
-     * 10 tests for name validation rules
-     * 7 tests for workspace structure creation
-     * 10 tests for create command behavior
-   - All validation edge cases covered (uppercase, special chars, hyphens, etc.)
+1. ✅ F010: SpecSource abstract base class (PASSING)
+   - Created bob/spec_sources/base.py (300+ lines)
+   - Implemented pluggable spec source architecture with:
+     * SpecSource ABC with abstract methods:
+       - fetch_tasks(): Fetch all current tasks from spec source
+       - sync(): Detect changes (added, modified, removed)
+       - mark_completed(): Report completion back to source (optional)
+     * TaskSpec dataclass for spec-level task definitions:
+       - All task metadata: spec_id, title, description, steps
+       - Dependencies, priorities, categories, labels
+       - Research requirements and queries
+       - Source-specific metadata field
+       - Spec version tracking for change detection
+     * SyncResult dataclass for sync operation results:
+       - Lists of added, modified, removed tasks
+       - Spec version and timestamp
+       - Error tracking
+       - Computed properties: has_changes, total_changes
+     * SpecSourceRegistry for plugin management:
+       - register(scheme, class): Register source by URI scheme
+       - create(uri, config): Instantiate from URI (e.g., "file://spec.yaml")
+       - list_schemes(), is_registered(), get()
+       - Global registry via get_registry()
+     * SpecSourceError exception for error handling
+   - Added 28 comprehensive tests:
+     * TestTaskSpec: 2 tests (minimal and full field creation)
+     * TestSyncResult: 3 tests (empty, with changes, properties)
+     * TestSpecSource: 9 tests (init, fetch, sync operations, mark complete)
+     * TestSpecSourceRegistry: 13 tests (register, create, list, validation)
+     * TestGlobalRegistry: 2 tests (singleton behavior)
+   - All tests use MockSpecSource for interface validation
+   - Full async support with pytest-asyncio
 
-2. ✅ F006: Project list command (PASSING)
-   - Implemented 'bob project list' command with:
-     * Table display showing: ID, Name, Status, Tasks, Cost, Description
-     * Color-coded status (green=active, yellow=paused, blue=completed)
-     * Task statistics (completed/total) from database queries
-     * Cost statistics (total USD) from session queries
-     * --status filter (active, paused, completed, archived)
-     * --json-output flag for machine-readable output
-   - Added 10 comprehensive tests:
-     * Help and empty list scenarios
-     * Single and multiple project display
-     * Status filtering functionality
-     * JSON output format (with proper extraction)
-     * Task and cost statistics accuracy
-     * Table header verification
-   - Handled JSON output contamination from migration messages
+ARCHITECTURAL SIGNIFICANCE:
 
-INFRASTRUCTURE IMPROVEMENTS:
+F010 is a foundational feature that enables BOB's core value proposition:
+- **Pluggable Spec Sources**: Can pull tasks from any source (files, GitHub,
+  Jira, Linear, custom systems)
+- **Change Detection**: Intelligent sync detects what's been added, modified,
+  or removed since last sync
+- **Bidirectional**: Can optionally report completion back to source
+- **Type Safety**: Full type hints and dataclass validation
+- **Extensibility**: Plugin architecture with simple registration
 
-3. Migration Output Fix
-   - Updated bob/database/migrations.py to use stderr for messages
-   - Prevents contamination of JSON output on stdout
-   - All informational messages now go to stderr
-   - Tests extract JSON properly using brace counting
-
-4. Command Registration
-   - Wired project create and list into main CLI
-   - Both commands accessible via 'bob project <command>'
-   - Proper context passing from global CLI options
+This unlocks:
+- F011: FileSpecSource (YAML/JSON files) - NOW READY
+- F012: GitHub Issues source (depends on F011)
+- F013: Jira source (depends on F011)
+- F014: Linear source (depends on F010)
 
 =================================================================
 TEST RESULTS:
 =================================================================
 
-Total Tests: 128 passing (up from 91)
+Total Tests: 156 passing (up from 128)
 
-New tests added (37 tests):
-- tests/test_cli_project.py: 37 tests (27 for F005 + 10 for F006)
-  * TestProjectNameValidation: 10 tests
-  * TestWorkspaceStructure: 7 tests
-  * TestProjectCreateCommand: 10 tests
-  * TestProjectListCommand: 10 tests
+New tests added (28 tests):
+- tests/test_spec_sources.py: 28 tests
+  * TestTaskSpec: 2 tests
+  * TestSyncResult: 3 tests
+  * TestSpecSource: 9 tests
+  * TestSpecSourceRegistry: 13 tests
+  * TestGlobalRegistry: 2 tests
 
 All previous tests still passing:
 - tests/test_models.py: 19 tests
 - tests/test_database.py: 14 tests
 - tests/test_database_manager.py: 24 tests
 - tests/test_cli.py: 34 tests
+- tests/test_cli_project.py: 37 tests
 
-All 128 tests passing ✅
+All 156 tests passing ✅
 
 =================================================================
 FEATURE STATUS UPDATE:
 =================================================================
 
 Features Completed This Session:
-- F005: Project create command ✅ (passed_at: 2026-01-16T16:40:50Z)
-- F006: Project list command ✅ (passed_at: 2026-01-16T16:44:12Z)
+- F010: SpecSource abstract base class ✅ (passed_at: 2026-01-16T21:49:51Z)
 
 Overall Progress:
 - Total features: 75
-- Passing: 6 (up from 4)
-- Failing: 69
-- Progress: 8.0% complete
+- Passing: 7 (up from 6)
+- Failing: 68
+- Progress: 9.3% complete
 
 Dependency Chain Progress:
 ✅ F001 → ✅ F002 → ✅ F003 → ✅ F004 → ✅ F005 → ✅ F006
+✅ F010 (new branch, no dependencies)
 
 This unlocks:
-- F007: Project use command (depends on F005) - NOW READY
-- F008: Project status command (depends on F005) - NOW READY
-- F009: Project delete command (depends on F005) - NOW READY
+- F011: FileSpecSource (depends on F010) - NOW READY
+- F014: LinearSource (depends on F010) - NOW READY
+
+Still awaiting:
+- F012: GitHub source (depends on F011)
+- F013: Jira source (depends on F011)
 
 =================================================================
 NEXT SESSION RECOMMENDATIONS:
 =================================================================
 
-Priority 1 - Continue Project Commands (F007-F009):
-These commands complete the project management suite and depend on F005 ✅:
+Priority 1 - Implement FileSpecSource (F011):
+F011 is now unblocked and is CRITICAL priority. It's the most important
+spec source implementation because:
+- Most users will start with file-based specs
+- Foundation for other spec sources to learn from
+- Needed for task import/sync functionality
+- Relatively straightforward to implement
 
-1. F007: 'bob project use' command
-   - Set active project (stored in config or state file)
-   - Allow switching between projects
-   - Display current active project
+Implementation plan for F011:
+1. Create bob/spec_sources/file.py
+2. Implement FileSpecSource(SpecSource) class
+3. Support YAML and JSON formats
+4. Parse task specifications with full metadata
+5. Detect file changes (mtime, hash)
+6. Handle validation and error cases
+7. Register with global registry
+8. Write comprehensive tests
 
-2. F008: 'bob project status' command
-   - Show detailed project status
-   - Task breakdown by status and priority
-   - Recent session activity
-   - Cost summary
+Priority 2 - Continue Project Commands (F007-F009):
+These are HIGH priority and build on F005:
+- F007: 'bob project use' command
+- F008: 'bob project status' command
+- F009: 'bob project delete' command
 
-3. F009: 'bob project delete' command
-   - Delete project and optionally workspace
-   - Confirm before deletion
-   - Handle cascading deletes (tasks, sessions)
+Priority 3 - Task Commands (F015):
+F015: 'bob task list' is CRITICAL and has no dependencies
+- Can be implemented in parallel with F011
 
-Priority 2 - SpecSource Architecture (F010):
-F010: SpecSource abstract base class (no dependencies)
-   - Critical for spec source plugin system
-   - Enables file-based, GitHub, and other spec sources
-   - Foundation for F011-F014
-
-Priority 3 - Task Commands (F015-F019):
-Once F010 is complete, the task list commands become available.
+Recommended approach:
+Implement F011 (FileSpecSource) next as it's critical and newly unblocked.
+This will enable the full spec source plugin system to be tested end-to-end.
 
 =================================================================
 TECHNICAL NOTES:
 =================================================================
 
-Project Command Design:
-- All project commands in bob/cli/project.py
-- Each command properly decorated with @click.command()
-- Context passing works via @click.pass_context
-- Database path retrieved from ctx.obj.db_path
-- Consistent error handling with sys.exit(1)
+SpecSource Architecture Design:
 
-Command Output Design:
-- Table output for human consumption
-- JSON output for programmatic use (--json-output)
-- Color coding for status (using click.style)
-- Clear error messages with helpful suggestions
+1. **Abstract Base Class Pattern**:
+   - All spec sources inherit from SpecSource ABC
+   - Three abstract methods must be implemented
+   - Base class provides common infrastructure (last_sync, version tracking)
 
-Database Query Patterns:
-- list_projects() for basic listing
-- list_tasks(project_id=...) for task statistics
-- list_sessions(project_id=...) for cost totals
-- Aggregations done in Python (could optimize with SQL later)
+2. **TaskSpec vs Task Model**:
+   - TaskSpec: Lightweight spec-level representation
+   - Task (from models.py): Database model with execution state
+   - Conversion happens during import/sync
+   - TaskSpec is immutable from source, Task tracks progress
 
-Testing Patterns:
-- Click's CliRunner for command testing
-- isolated_filesystem() for clean test environments
-- JSON extraction using brace counting to handle stderr contamination
-- Comprehensive coverage of edge cases
+3. **Registry Pattern**:
+   - Scheme-based registration (file://, github://, jira://)
+   - Factory method creates instances from URIs
+   - Global singleton for convenience
+   - Type-safe validation on registration
+
+4. **Async-First Design**:
+   - All SpecSource methods are async
+   - Supports network I/O without blocking
+   - pytest-asyncio for testing
+
+5. **Change Detection Strategy**:
+   - sync() takes dict of known tasks (spec_id -> version)
+   - Compares with current state
+   - Returns SyncResult with changes
+   - Caller decides how to handle changes
+
+Testing Approach:
+- MockSpecSource for interface validation
+- Comprehensive edge case coverage
+- Async test support
+- Registry isolation between tests
 
 Code Quality:
-- Full type hints on all functions
+- Full type hints on all classes and methods
 - Comprehensive docstrings
-- Consistent code style
-- All functions under 50 lines
+- Properties for computed values
+- Clear separation of concerns
 
 Files Modified This Session:
-- bob/cli/project.py (new) - 330 lines
-- bob/cli/main.py (updated) - added project command imports
-- bob/database/migrations.py (updated) - stderr output
-- tests/test_cli_project.py (new) - 620 lines, 37 tests
-- feature_list.json (updated) - F005, F006 marked passing
+- bob/spec_sources/base.py (new) - 300 lines
+- bob/spec_sources/__init__.py (updated) - exports
+- tests/test_spec_sources.py (new) - 630 lines, 28 tests
+- feature_list.json (updated) - F010 marked passing
+- temp_scripts/check_features.py (new) - feature status helper
+- temp_scripts/update_f010.py (new) - update helper
 
 =================================================================
-COMMAND USAGE EXAMPLES:
+USAGE EXAMPLES:
 =================================================================
 
-Create a project:
-  bob project create my-app ./workspace file://spec.yaml
-  bob project create api-server ~/projects/api file://features.yaml -d "REST API"
+Using the SpecSource interface:
 
-List projects:
-  bob project list
-  bob project list --status active
-  bob project list --json-output
+```python
+from bob.spec_sources import get_registry, SpecSource
+
+# Get global registry
+registry = get_registry()
+
+# Register a spec source (done by plugin at import time)
+from bob.spec_sources.file import FileSpecSource
+registry.register("file", FileSpecSource)
+
+# Create a spec source from URI
+source = registry.create("file://spec.yaml")
+
+# Fetch all tasks
+tasks = await source.fetch_tasks()
+
+# Sync with known tasks
+known = {"F001": 1, "F002": 2}  # spec_id -> version
+result = await source.sync(known)
+
+print(f"Added: {len(result.added)}")
+print(f"Modified: {len(result.modified)}")
+print(f"Removed: {len(result.removed)}")
+
+# Mark task complete (if supported)
+success = await source.mark_completed("F001", {"pr": "https://..."})
+```
+
+Implementing a new spec source:
+
+```python
+from bob.spec_sources import SpecSource, TaskSpec, SyncResult
+
+class MySource(SpecSource):
+    async def fetch_tasks(self) -> list[TaskSpec]:
+        # Fetch from your source
+        return [TaskSpec(...), TaskSpec(...)]
+
+    async def sync(self, known_tasks: dict[str, int]) -> SyncResult:
+        # Detect changes
+        result = SyncResult()
+        # ... populate result.added, modified, removed
+        return result
+
+    async def mark_completed(self, spec_id: str, metadata: dict | None) -> bool:
+        # Optional: report completion
+        return False  # Not supported
+```
 
 =================================================================
 GIT COMMITS:
 =================================================================
 
-Session 4 Commits:
-1. 9d9a7b8 - Implement F005: 'bob project create' command - tests passing
-2. f0574f8 - Implement F005 and F006: Project create and list commands - tests passing
+Session 5 Commits:
+1. a5ca918 - Implement F010: SpecSource abstract base class - tests passing
 
-Lines of code added this session: ~950 lines (implementation + tests)
+Lines of code added this session: ~930 lines (implementation + tests)
 
 =================================================================
 ENVIRONMENT STATE:
@@ -211,12 +275,13 @@ Package: bob-framework 0.1.0 (editable mode)
 Dependencies:
 - anthropic>=0.40.0
 - click>=8.1.0 ✅
-- pyyaml>=6.0 ✅ (used for project.yaml)
+- pyyaml>=6.0 ✅
 - jinja2>=3.1.0
 - rich>=13.0.0
 - aiosqlite>=0.19.0
 - httpx>=0.27.0
-- pytest>=8.0 (dev)
+- pytest>=8.0 (dev) ✅
+- pytest-asyncio>=1.3.0 (dev) ✅
 - pytest-cov>=4.0 (dev)
 
 Directory Structure:
@@ -224,33 +289,36 @@ bob/
 ├── cli/
 │   ├── __init__.py
 │   ├── main.py ✅
-│   └── project.py ✅ NEW
+│   └── project.py ✅
 ├── database/
 │   ├── __init__.py
 │   ├── manager.py ✅
-│   ├── migrations.py ✅ (updated)
+│   ├── migrations.py ✅
 │   └── schema.sql ✅
 ├── models/
 │   ├── __init__.py
 │   └── base.py ✅
+├── spec_sources/
+│   ├── __init__.py ✅ (updated)
+│   └── base.py ✅ NEW
 └── [other modules...]
 
 tests/
 ├── test_cli.py ✅
-├── test_cli_project.py ✅ NEW
+├── test_cli_project.py ✅
 ├── test_database.py ✅
 ├── test_database_manager.py ✅
-└── test_models.py ✅
+├── test_models.py ✅
+└── test_spec_sources.py ✅ NEW
 
 =================================================================
-SESSION 4 COMPLETE
+SESSION 5 COMPLETE
 =================================================================
 
-Summary: Successfully implemented F005 (project create) and F006
-(project list), completing the foundation of project management commands.
-All 128 tests passing. The project command suite now supports creating
-projects with full workspace setup and listing projects with rich status
-information.
+Summary: Successfully implemented F010 (SpecSource abstract base class),
+establishing the pluggable architecture for pulling task specifications
+from various sources. All 156 tests passing. This is a foundational
+feature that unlocks file, GitHub, Jira, and Linear spec sources.
 
 Foundation Progress:
 - F001 ✅ Models
@@ -259,6 +327,7 @@ Foundation Progress:
 - F004 ✅ CLI framework
 - F005 ✅ Project create
 - F006 ✅ Project list
+- F010 ✅ SpecSource architecture
 
-Next: Continue with F007-F009 (project use/status/delete) or start
-F010 (SpecSource architecture) depending on priorities.
+Next: Implement F011 (FileSpecSource) to enable file-based spec import,
+or continue with F007-F009 (project use/status/delete commands).
