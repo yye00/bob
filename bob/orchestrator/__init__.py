@@ -21,6 +21,18 @@ from .task_decomposer import (
     validate_decomposition,
     suggest_decomposition,
 )
+from .research_agent import (
+    ResearchResult,
+    ExperimentResult,
+    ResearchContext,
+    ResearchTracker,
+    PERPLEXITY_TOOLS,
+    get_perplexity_mcp_config,
+    generate_research_prompt,
+    generate_research_queries_from_error,
+    parse_research_response,
+    create_research_session_prompt,
+)
 from .task_queue import TaskQueue
 
 __all__ = [
@@ -41,4 +53,14 @@ __all__ = [
     "analyze_task_for_decomposition",
     "validate_decomposition",
     "suggest_decomposition",
+    "ResearchResult",
+    "ExperimentResult",
+    "ResearchContext",
+    "ResearchTracker",
+    "PERPLEXITY_TOOLS",
+    "get_perplexity_mcp_config",
+    "generate_research_prompt",
+    "generate_research_queries_from_error",
+    "parse_research_response",
+    "create_research_session_prompt",
 ]
