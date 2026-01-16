@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "spec_history": [
+    {
+      "version": 1,
+      "hash": "28aba6e88a7f3f41edcc3f4c54248474d2851e49a57569e9e9f3975001be8877",
+      "synced_at": "2026-01-16T00:00:00Z",
+      "features_added": 75,
+      "feature_id_range": [1, 75],
+      "diff_summary": "Initial feature generation from spec - 75 features covering core foundation, spec sources, task management, escalation system, research-first workflow, observability, cost tracking, parallel execution, and plugin architecture"
+    }
+  ],
+  "current_spec_hash": "28aba6e88a7f3f41edcc3f4c54248474d2851e49a57569e9e9f3975001be8877",
+  "current_version": 1,
+  "total_features": 75,
+  "features_passing": 0
+}

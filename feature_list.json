@@ -1,0 +1,2487 @@
+[
+  {
+    "id": "F001",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": [],
+    "description": "Project model and data structures - Define core Project, Task, Session, and AgentConfig dataclasses",
+    "steps": [
+      "Create models.py with Project dataclass (id, name, description, workspace_dir, spec_source, config, created_at, status)",
+      "Create Task dataclass (id, project_id, spec_id, title, description, acceptance_criteria, steps, depends_on, priority, category, labels, status, assigned_agent, current_model, attempts, escalation_tier, failure_type, research_required, research_complete, research_queries, research_findings)",
+      "Create Session dataclass (id, project_id, task_id, agent_type, model, started_at, ended_at, status, turns, tokens, cost)",
+      "Create AgentConfig dataclass (agent_type, model, system_prompt, allowed_tools, mcp_servers, max_turns, temperature)",
+      "Create enums for ProjectStatus, TaskStatus, SessionStatus, AgentType, ModelTier, FailureType, EscalationAction",
+      "Verify all models have proper type hints and defaults"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F002",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": [],
+    "description": "SQLite database schema - Create database schema with tables for projects, tasks, sessions, events",
+    "steps": [
+      "Create database/schema.sql with CREATE TABLE statements for projects, tasks, sessions, events, research_sessions",
+      "Add indexes for common queries (idx_tasks_project, idx_tasks_status, idx_sessions_project, idx_events_project)",
+      "Create database/migrations.py for schema version tracking",
+      "Test schema creation on fresh SQLite database",
+      "Verify all foreign key constraints work correctly"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F003",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F002"],
+    "description": "Database manager - Create DatabaseManager class for SQLite operations with transactions",
+    "steps": [
+      "Create database/manager.py with DatabaseManager class",
+      "Implement connection pooling and context managers",
+      "Add transaction support with commit/rollback",
+      "Implement CRUD methods for projects (create, read, update, delete)",
+      "Implement CRUD methods for tasks",
+      "Implement CRUD methods for sessions",
+      "Add query methods with filtering and pagination",
+      "Test all database operations"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F004",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": [],
+    "description": "CLI framework setup - Set up Click/Typer CLI framework with main command groups",
+    "steps": [
+      "Create cli/main.py with Click group for main 'bob' command",
+      "Add command groups: project, task, run, sync, status, logs, costs, config",
+      "Implement global options (--verbose, --quiet, --json, --project)",
+      "Add version command (bob --version)",
+      "Add help command with examples",
+      "Test CLI parsing with various command combinations"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F005",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F003", "F004"],
+    "description": "Project create command - Implement 'bob project create' command",
+    "steps": [
+      "Create cli/project.py with create command",
+      "Accept arguments: name, --spec, --workspace, --source, --description",
+      "Validate project name (slug format)",
+      "Create workspace directory if not exists",
+      "Initialize project in database",
+      "Create .bob/ directory structure in workspace",
+      "Create default project.yaml config file",
+      "Output success message with next steps",
+      "Test creating projects with different spec sources"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F006",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F005"],
+    "description": "Project list command - Implement 'bob project list' command",
+    "steps": [
+      "Create list command in cli/project.py",
+      "Query all projects from database",
+      "Display table with: ID, Name, Status, Tasks (completed/total), Cost",
+      "Add --json flag for JSON output",
+      "Add --status filter (active, paused, completed, failed)",
+      "Highlight current project",
+      "Test with 0, 1, and multiple projects"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F007",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F005"],
+    "description": "Project use command - Implement 'bob project use' to set active project",
+    "steps": [
+      "Create use command in cli/project.py",
+      "Store active project in ~/.bob/state.json",
+      "Validate project exists in database",
+      "Update state file atomically",
+      "Display confirmation message",
+      "Test switching between projects"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F008",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F005"],
+    "description": "Project status command - Implement 'bob project status' command",
+    "steps": [
+      "Create status command in cli/project.py",
+      "Query project and all its tasks from database",
+      "Display: name, description, status, workspace path",
+      "Show task breakdown by status (pending, in_progress, completed, failed, blocked)",
+      "Show cost summary (total, by model, by agent type)",
+      "Show recent activity (last 5 sessions)",
+      "Add --json flag for structured output",
+      "Test with projects in different states"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F009",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F005"],
+    "description": "Project delete command - Implement 'bob project delete' with confirmation",
+    "steps": [
+      "Create delete command in cli/project.py",
+      "Show project details before deletion",
+      "Require confirmation (--yes flag to skip)",
+      "Delete project from database (cascade tasks, sessions)",
+      "Optionally delete workspace directory (--delete-workspace flag)",
+      "Display deletion summary",
+      "Test with various deletion scenarios"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F010",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": [],
+    "description": "SpecSource abstract base class - Create pluggable spec source architecture",
+    "steps": [
+      "Create spec_sources/base.py with SpecSource ABC",
+      "Define abstract methods: fetch_tasks(), sync(), mark_completed()",
+      "Define TaskSpec dataclass for spec-level task definitions",
+      "Define SyncResult dataclass (added, modified, removed tasks)",
+      "Create spec source registry for plugin registration",
+      "Test interface design with mock implementation"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F011",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F010"],
+    "description": "FileSpecSource - Implement file-based spec source (YAML format)",
+    "steps": [
+      "Create spec_sources/file_source.py with FileSpecSource class",
+      "Implement YAML parsing with PyYAML",
+      "Parse task definitions with all fields (id, title, description, acceptance_criteria, steps, depends_on, priority, category, labels)",
+      "Detect research requirements (keywords: REQUIRES RESEARCH, NEEDS RESEARCH, etc)",
+      "Extract research_queries from spec context",
+      "Implement sync() to detect file changes via hash comparison",
+      "Track spec version history",
+      "Test with sample YAML spec",
+      "Validate all required fields are present"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F012",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F011"],
+    "description": "FileSpecSource - Support JSON format",
+    "steps": [
+      "Add JSON format detection to FileSpecSource",
+      "Implement JSON parsing with same schema as YAML",
+      "Test with sample JSON spec file",
+      "Verify research detection works in JSON",
+      "Validate JSON schema matches YAML schema"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F013",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F011"],
+    "description": "FileSpecSource - Support Markdown format",
+    "steps": [
+      "Add Markdown format detection to FileSpecSource",
+      "Parse Markdown sections as tasks (## headers with task IDs)",
+      "Extract metadata from brackets [priority:1], [depends:F001], [labels:auth,mvp]",
+      "Parse acceptance criteria from ### Acceptance Criteria sections",
+      "Parse implementation steps from numbered/bulleted lists",
+      "Test with sample Markdown spec file",
+      "Verify all task fields can be extracted from Markdown"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F014",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F010"],
+    "description": "GitHubIssuesSource - Implement GitHub issues as spec source",
+    "steps": [
+      "Create spec_sources/github_source.py with GitHubIssuesSource class",
+      "Use GitHub API to fetch issues with specified labels",
+      "Parse issue title, body, labels as task fields",
+      "Map GitHub issue ID to task spec_id",
+      "Implement sync() to detect new/closed issues",
+      "Implement mark_completed() to add completion comment and close issue",
+      "Test with mock GitHub API responses",
+      "Test with real GitHub repository (if API key available)"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F015",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F003"],
+    "description": "Task list command - Implement 'bob task list' command",
+    "steps": [
+      "Create cli/task.py with list command",
+      "Query tasks from database with filters",
+      "Add --status filter (pending, in_progress, completed, failed, blocked, decomposed)",
+      "Add --priority filter (1-5)",
+      "Add --category filter (functional, test, infra, docs)",
+      "Add --needs-research flag to show only research-required tasks",
+      "Display table with: ID, Title, Status, Priority, Attempts, Model",
+      "Add --json flag for structured output",
+      "Test with various filter combinations"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F016",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F015"],
+    "description": "Task show command - Implement 'bob task show' for detailed task info",
+    "steps": [
+      "Create show command in cli/task.py",
+      "Display full task details (title, description, acceptance criteria, steps)",
+      "Show dependency graph (depends_on, blocks)",
+      "Show status and progress (attempts, current model, escalation tier)",
+      "Show error history if any failures",
+      "Add --research flag to show research findings",
+      "Add --escalation flag to show escalation state",
+      "Add --json flag for structured output",
+      "Test with tasks in various states"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F017",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F015"],
+    "description": "Task retry command - Implement 'bob task retry' to retry failed tasks",
+    "steps": [
+      "Create retry command in cli/task.py",
+      "Validate task exists and can be retried",
+      "Reset task status to pending",
+      "Clear current error state but preserve error_history",
+      "Display confirmation message",
+      "Test retrying tasks at different escalation tiers"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F018",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F015"],
+    "description": "Task skip command - Implement 'bob task skip' to skip tasks",
+    "steps": [
+      "Create skip command in cli/task.py",
+      "Mark task as skipped (new status)",
+      "Require confirmation or reason (--reason flag)",
+      "Update database with skip reason",
+      "Display confirmation message",
+      "Test skipping tasks with and without dependencies"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F019",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "low",
+    "depends_on": ["F015"],
+    "description": "Task add command - Implement 'bob task add' to manually add tasks",
+    "steps": [
+      "Create add command in cli/task.py",
+      "Accept arguments: --title, --description, --priority, --category",
+      "Accept optional: --depends-on, --labels, --steps",
+      "Generate new task ID",
+      "Insert into database",
+      "Display confirmation with new task ID",
+      "Test adding tasks with various configurations"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F020",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": [],
+    "description": "Port escalation.py from autonomous-coding - Copy and adapt escalation system",
+    "steps": [
+      "Copy escalation.py from ~/work/PhysicalDesign/claude-quickstarts/autonomous-coding/",
+      "Review ModelTier, FailureType, EscalationAction enums",
+      "Review EscalationController class and methods",
+      "Adapt to use BOB's Task model instead of feature_list.json",
+      "Adapt to use database persistence instead of JSON file",
+      "Keep escalation logic identical to preserve proven behavior",
+      "Test escalation flow with mock tasks"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F021",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F020"],
+    "description": "Port failure_classifier.py - Copy failure classification logic",
+    "steps": [
+      "Copy failure_classifier.py from autonomous-coding",
+      "Review failure pattern matching logic",
+      "Adapt to work with BOB's Task model",
+      "Keep classification logic unchanged",
+      "Test failure classification with various error messages"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F022",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F020"],
+    "description": "Port feature_decomposer.py as task_decomposer.py - Copy task decomposition logic",
+    "steps": [
+      "Copy feature_decomposer.py from autonomous-coding",
+      "Rename to task_decomposer.py",
+      "Adapt to use Task model instead of feature dict",
+      "Update to create sub-tasks in database",
+      "Keep decomposition prompting logic unchanged",
+      "Test decomposition with complex tasks"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F023",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F020"],
+    "description": "Port research_agent.py - Copy research agent implementation",
+    "steps": [
+      "Copy research_agent.py from autonomous-coding",
+      "Review Perplexity integration logic",
+      "Adapt to use Task model with research_required, research_complete fields",
+      "Integrate with research-first workflow",
+      "Add support for configurable MCP servers",
+      "Keep research prompting logic unchanged",
+      "Test research with mock Perplexity responses"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F024",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": [],
+    "description": "Port security.py - Copy bash command security allowlist",
+    "steps": [
+      "Copy security.py from autonomous-coding",
+      "Review command allowlist logic",
+      "Make allowlist configurable per-project via project.yaml",
+      "Keep security validation logic unchanged",
+      "Test with various allowed and blocked commands"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F025",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": [],
+    "description": "Port client.py - Copy Claude SDK client setup",
+    "steps": [
+      "Copy client.py from autonomous-coding",
+      "Review ClaudeSDKClient setup",
+      "Add model selection logic",
+      "Add cost tracking integration",
+      "Keep client configuration logic unchanged",
+      "Test client initialization with various models"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F026",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F020", "F021", "F022", "F023", "F025"],
+    "description": "Create Orchestrator - Main orchestration engine for task execution",
+    "steps": [
+      "Create orchestrator/engine.py with Orchestrator class",
+      "Implement main execution loop for single task",
+      "Integrate EscalationController for model escalation",
+      "Integrate FailureClassifier for error analysis",
+      "Integrate TaskDecomposer for complex tasks",
+      "Integrate ResearchController for research-first workflow",
+      "Implement session management with logging",
+      "Handle task state transitions (pending -> in_progress -> completed/failed)",
+      "Test orchestration with various task scenarios"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F027",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F023"],
+    "description": "ResearchController - Implement research-first workflow controller",
+    "steps": [
+      "Create research/controller.py with ResearchController class",
+      "Implement should_research() to check if task needs research",
+      "Implement run_research() to execute research phase",
+      "Check for Perplexity API key and use Perplexity if available",
+      "Fallback to web search if Perplexity unavailable",
+      "Execute research queries from task.research_queries",
+      "Document findings in task.research_findings",
+      "Mark task.research_complete = True after research",
+      "Implement get_implementation_context() to inject research into coding prompt",
+      "Test research workflow with mock search results"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F028",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F027"],
+    "description": "Research command - Implement 'bob research' command",
+    "steps": [
+      "Create cli/research.py with research command",
+      "Accept task_id argument",
+      "Validate task exists and needs research",
+      "Call ResearchController.run_research()",
+      "Display research findings",
+      "Update task in database",
+      "Test with tasks that have research_queries"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F029",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F026"],
+    "description": "Run command - Implement 'bob run' to execute agent on project tasks",
+    "steps": [
+      "Create cli/run.py with run command",
+      "Accept options: --project, --max-sessions, --dry-run",
+      "Get current/specified project from database",
+      "Initialize Orchestrator with project config",
+      "Start execution loop on pending tasks",
+      "Handle Ctrl+C gracefully with checkpoint save",
+      "Display progress and status updates",
+      "Test with project containing multiple tasks"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F030",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F003"],
+    "description": "TaskQueue - Implement dependency-aware task queue",
+    "steps": [
+      "Create orchestrator/task_queue.py with TaskQueue class",
+      "Implement get_ready_tasks() to find tasks with all dependencies met",
+      "Check task status is pending",
+      "Check all depends_on tasks are completed",
+      "Check no blocking failures in dependencies",
+      "Return tasks sorted by priority",
+      "Implement limit parameter for batch size",
+      "Test with complex dependency graphs (DAG)"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F031",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F030"],
+    "description": "Parallel execution - Implement run_parallel() for concurrent task execution",
+    "steps": [
+      "Add run_parallel() method to TaskQueue",
+      "Accept tasks list and max_workers parameter",
+      "Use asyncio.gather() or concurrent.futures for parallel execution",
+      "Create separate session for each parallel task",
+      "Handle failures in individual tasks without stopping others",
+      "Collect and return results from all tasks",
+      "Test with 2-5 independent tasks running concurrently"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F032",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F031"],
+    "description": "Run command with parallel execution - Add --parallel flag to 'bob run'",
+    "steps": [
+      "Add --parallel option to run command",
+      "Accept integer for max concurrent tasks",
+      "Use TaskQueue.get_ready_tasks() to get independent tasks",
+      "Call TaskQueue.run_parallel() with ready tasks",
+      "Display parallel execution status",
+      "Test with project having parallel-ready tasks"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F033",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F003"],
+    "description": "CostTracker - Implement token and cost tracking",
+    "steps": [
+      "Create observability/cost_tracker.py with CostTracker class",
+      "Define PRICING dict with model prices (input, output per 1M tokens)",
+      "Implement calculate_cost() with cache read discount (90% cheaper)",
+      "Implement track_session() to record token usage per session",
+      "Implement get_project_costs() for cost breakdown",
+      "Return costs by: model, agent type, day",
+      "Store cost data in sessions table",
+      "Test cost calculations with various token counts"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F034",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F033"],
+    "description": "Costs command - Implement 'bob costs' to show cost breakdown",
+    "steps": [
+      "Create cli/costs.py with costs command",
+      "Call CostTracker.get_project_costs()",
+      "Display total cost in USD",
+      "Display breakdown by model",
+      "Display breakdown by agent type",
+      "Display daily cost trend",
+      "Add --json flag for structured output",
+      "Add --project flag to select project",
+      "Test with project having multiple sessions"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F035",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F033"],
+    "description": "Cost limits - Implement budget enforcement",
+    "steps": [
+      "Add cost limit checking to Orchestrator",
+      "Read limits from global config (max_cost_per_project, max_cost_per_session, warn_at_percent)",
+      "Check project cost before starting new session",
+      "Warn at configured percentage threshold",
+      "Stop execution if limit exceeded",
+      "Display clear budget status messages",
+      "Test with various budget configurations"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F036",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F026"],
+    "description": "Structured logging - Implement JSON structured logging",
+    "steps": [
+      "Create observability/logger.py with StructuredLogger class",
+      "Use Python logging with JSON formatter",
+      "Log events with timestamp, level, event type, context (project_id, task_id, session_id)",
+      "Define event types: task_started, task_completed, task_failed, session_started, session_ended, escalation_triggered, research_started, research_completed",
+      "Write logs to project .bob/logs/ directory",
+      "Implement log rotation",
+      "Test logging various event types"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F037",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F036"],
+    "description": "Logs command - Implement 'bob logs' to view structured logs",
+    "steps": [
+      "Create cli/logs.py with logs command",
+      "Read JSON logs from project .bob/logs/ directory",
+      "Add --follow flag for real-time log streaming",
+      "Add --session flag to filter by session ID",
+      "Add --level filter (INFO, WARNING, ERROR)",
+      "Add --event filter by event type",
+      "Format JSON logs for human readability",
+      "Add --json flag to output raw JSON",
+      "Test log viewing and filtering"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F038",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F008"],
+    "description": "Status command - Implement global 'bob status' for all projects",
+    "steps": [
+      "Create cli/status.py with status command",
+      "Query all projects or specific project if --project specified",
+      "Display overview: active projects, total tasks, completion percentage",
+      "Show current running sessions",
+      "Show recent activity",
+      "Show total cost across all projects",
+      "Add --json flag for structured output",
+      "Test with 0, 1, and multiple projects"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F039",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F026"],
+    "description": "CheckpointManager - Implement session checkpointing for resume",
+    "steps": [
+      "Create orchestrator/checkpoint.py with CheckpointManager class",
+      "Implement save_checkpoint() to save conversation history and task state",
+      "Store checkpoints in .bob/checkpoints/ directory",
+      "Implement restore_checkpoint() to restore session state",
+      "Implement list_checkpoints() to show available checkpoints",
+      "Save checkpoint periodically during session (every N turns)",
+      "Save checkpoint on graceful shutdown (Ctrl+C)",
+      "Test checkpoint save and restore"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F040",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F039"],
+    "description": "Resume from checkpoint - Add resume capability to 'bob run'",
+    "steps": [
+      "Add --resume flag to run command with checkpoint ID",
+      "Call CheckpointManager.restore_checkpoint()",
+      "Resume conversation with restored history",
+      "Continue task execution from checkpoint state",
+      "Test resuming interrupted sessions"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F041",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "critical",
+    "depends_on": ["F011"],
+    "description": "Sync command - Implement 'bob sync' to sync with spec source",
+    "steps": [
+      "Create cli/sync.py with sync command",
+      "Get project and its spec source from database",
+      "Call spec_source.sync() to detect changes",
+      "Process SyncResult (added, modified, removed tasks)",
+      "Add new tasks to database",
+      "Update modified tasks (preserving status and progress)",
+      "Mark removed tasks as deprecated (never delete)",
+      "Display sync summary",
+      "Test with spec file that has been modified"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F042",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F041"],
+    "description": "Auto-sync on run - Add automatic spec sync check before 'bob run'",
+    "steps": [
+      "Add sync check to run command start",
+      "Compare spec source hash with last sync",
+      "If changed, prompt user to run sync or --force to skip",
+      "Add --no-sync flag to skip sync check",
+      "Test with modified and unmodified specs"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F043",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": [],
+    "description": "Config show command - Implement 'bob config show' to display configuration",
+    "steps": [
+      "Create cli/config.py with show command",
+      "Load global config from ~/.bob/config.yaml",
+      "Display all configuration sections",
+      "Add --json flag for structured output",
+      "Test with default and customized configs"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F044",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F043"],
+    "description": "Config set command - Implement 'bob config set' to update configuration",
+    "steps": [
+      "Create set command in cli/config.py",
+      "Accept key and value arguments (dot notation for nested keys)",
+      "Validate key exists in schema",
+      "Update ~/.bob/config.yaml",
+      "Display confirmation message",
+      "Test setting various config keys"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F045",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "low",
+    "depends_on": ["F043"],
+    "description": "Config edit command - Implement 'bob config edit' to open editor",
+    "steps": [
+      "Create edit command in cli/config.py",
+      "Open ~/.bob/config.yaml in $EDITOR",
+      "Validate YAML after editing",
+      "Display validation errors if any",
+      "Test with valid and invalid YAML edits"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F046",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F026"],
+    "description": "Prompt templates - Create template engine for prompts with project variables",
+    "steps": [
+      "Create prompts/template_engine.py with TemplateEngine class",
+      "Support Jinja2-style variable substitution ({project.name}, {project.tech_stack}, {task.title}, etc)",
+      "Load prompt templates from prompts/ directory",
+      "Provide project and task context to templates",
+      "Create generic versions of coding_prompt.md, research_prompt.md, diagnosis_prompt.md",
+      "Remove app-specific references (OpenROAD, Docker specifics)",
+      "Test template rendering with various project contexts"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F047",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F046"],
+    "description": "Custom prompts per project - Allow project-specific prompt overrides",
+    "steps": [
+      "Add prompts section to project.yaml config",
+      "Allow overriding system_prompt for agent types",
+      "Load custom prompts from project .bob/prompts/ directory",
+      "Fall back to global prompts if not overridden",
+      "Test with project having custom coding prompt"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F048",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "low",
+    "depends_on": [],
+    "description": "Plugin architecture base - Create Plugin base class and registry",
+    "steps": [
+      "Create plugins/base.py with Plugin ABC",
+      "Define abstract methods: on_load(), on_unload()",
+      "Create specialized plugin types: AgentPlugin, SpecSourcePlugin, ToolPlugin",
+      "Create PluginRegistry for loading and managing plugins",
+      "Implement plugin discovery from ~/.bob/plugins/",
+      "Test with mock plugin implementation"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F049",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "low",
+    "depends_on": ["F048"],
+    "description": "Plugin commands - Implement 'bob plugin list/install/uninstall' commands",
+    "steps": [
+      "Create cli/plugin.py with plugin command group",
+      "Implement list command to show installed plugins",
+      "Implement install command to install plugin from path",
+      "Implement uninstall command to remove plugin",
+      "Test with example plugin"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F050",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F004"],
+    "description": "Init command - Implement 'bob init' to initialize BOB environment",
+    "steps": [
+      "Create cli/init.py with init command",
+      "Create ~/.bob/ directory if not exists",
+      "Create ~/.bob/config.yaml with default configuration",
+      "Create ~/.bob/bob.db SQLite database with schema",
+      "Create ~/.bob/plugins/ directory",
+      "Create ~/.bob/cache/ directory",
+      "Display welcome message and next steps",
+      "Test initialization on fresh system"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F051",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F026"],
+    "description": "Integration test - End-to-end test with simple project",
+    "steps": [
+      "Create test project with simple spec (3-5 tasks)",
+      "Run 'bob init'",
+      "Run 'bob project create test-app --spec test_spec.yaml'",
+      "Run 'bob run --project test-app'",
+      "Verify tasks are executed in dependency order",
+      "Verify task status updates correctly",
+      "Verify cost tracking records token usage",
+      "Verify logs are created",
+      "Run 'bob project status test-app' and verify output",
+      "Run 'bob costs --project test-app' and verify output"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F052",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F026", "F027"],
+    "description": "Research-first integration test - Test research workflow end-to-end",
+    "steps": [
+      "Create test project with task that has research_required: true",
+      "Add research_queries to task spec",
+      "Run 'bob run --project test-research'",
+      "Verify research phase executes before implementation",
+      "Verify research findings are documented in task",
+      "Verify task.research_complete is set to true",
+      "Verify implementation uses research context",
+      "Test with and without PERPLEXITY_API_KEY"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F053",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F020", "F026"],
+    "description": "Escalation integration test - Test full escalation flow",
+    "steps": [
+      "Create test project with intentionally difficult task",
+      "Configure low MAX_ATTEMPTS_PER_MODEL for faster testing",
+      "Run 'bob run' and let task fail multiple times",
+      "Verify escalation from Sonnet to Opus",
+      "Verify failure classification happens",
+      "Verify appropriate escalation action is taken (decompose, research, etc)",
+      "Verify escalation state persists in database",
+      "Test 'bob task show <id> --escalation' displays escalation info"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F054",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F031"],
+    "description": "Parallel execution integration test - Test concurrent task execution",
+    "steps": [
+      "Create test project with 5+ independent tasks (no dependencies)",
+      "Run 'bob run --project test-parallel --parallel 3'",
+      "Verify multiple tasks execute concurrently",
+      "Verify each task gets its own session",
+      "Verify all tasks complete successfully",
+      "Verify database records are correct for all parallel sessions",
+      "Verify log files are separate and not corrupted"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F055",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F041"],
+    "description": "Spec sync integration test - Test spec synchronization",
+    "steps": [
+      "Create test project from initial spec with 5 tasks",
+      "Run 'bob run' and complete 2 tasks",
+      "Modify spec: add 2 new tasks, modify 1 existing task, remove 1 task",
+      "Run 'bob sync --project test-sync'",
+      "Verify new tasks are added to database",
+      "Verify modified task is updated (preserving status)",
+      "Verify removed task is marked deprecated (not deleted)",
+      "Verify completed tasks are not affected",
+      "Run 'bob task list' and verify all tasks are present"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F056",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F039", "F040"],
+    "description": "Checkpoint resume integration test - Test session checkpointing and resume",
+    "steps": [
+      "Create test project with long-running task",
+      "Run 'bob run --project test-checkpoint'",
+      "Interrupt with Ctrl+C during execution",
+      "Verify checkpoint is saved",
+      "List checkpoints with appropriate command",
+      "Resume from checkpoint with 'bob run --resume <checkpoint_id>'",
+      "Verify session continues from checkpoint state",
+      "Verify conversation history is preserved"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F057",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "low",
+    "depends_on": ["F014"],
+    "description": "GitHub issues integration test - Test GitHub as spec source",
+    "steps": [
+      "Create test GitHub repository with issues",
+      "Label issues with 'bob-task' or similar",
+      "Run 'bob project create github-test --source github --repo owner/repo --label bob-task'",
+      "Verify tasks are created from issues",
+      "Run 'bob run --project github-test'",
+      "Complete one task",
+      "Verify GitHub issue is updated and closed",
+      "Test sync to detect new issues"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F058",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F030"],
+    "description": "Dependency graph validation - Test complex DAG handling",
+    "steps": [
+      "Create test spec with complex dependency graph (10+ tasks, multiple levels)",
+      "Include parallel branches (tasks that can run concurrently)",
+      "Include sequential chains (tasks that must run in order)",
+      "Run 'bob run --project test-dag'",
+      "Verify tasks execute in correct order respecting dependencies",
+      "Verify parallel tasks are identified correctly",
+      "Test with circular dependency and verify error handling",
+      "Test with missing dependency and verify error handling"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F059",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": ["F033", "F035"],
+    "description": "Cost tracking accuracy test - Verify cost calculations are accurate",
+    "steps": [
+      "Create test that tracks known token usage",
+      "Execute session with mock token counts",
+      "Verify cost calculation matches expected values",
+      "Test cache read discount (90% cheaper)",
+      "Test different models have correct pricing",
+      "Test cost aggregation by model, agent, and day",
+      "Test budget limit enforcement stops execution"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F060",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F036", "F037"],
+    "description": "Structured logging test - Verify JSON logging works correctly",
+    "steps": [
+      "Create test project",
+      "Run 'bob run' with logging enabled",
+      "Verify JSON log files are created in .bob/logs/",
+      "Verify all events are logged with correct schema",
+      "Parse JSON logs programmatically and verify structure",
+      "Test 'bob logs' command displays logs correctly",
+      "Test 'bob logs --follow' streams logs in real-time",
+      "Test log filtering by session, level, and event type"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F061",
+    "spec_version_added": 1,
+    "category": "test",
+    "priority": "high",
+    "depends_on": ["F001", "F002", "F003"],
+    "description": "Unit tests for models and database - Test data layer thoroughly",
+    "steps": [
+      "Create tests/test_models.py",
+      "Test Project, Task, Session dataclass creation and validation",
+      "Create tests/test_database.py",
+      "Test database schema creation",
+      "Test CRUD operations for projects, tasks, sessions",
+      "Test transactions and rollback",
+      "Test query methods with filters",
+      "Achieve 80%+ code coverage on database layer"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F062",
+    "spec_version_added": 1,
+    "category": "test",
+    "priority": "high",
+    "depends_on": ["F011", "F012", "F013"],
+    "description": "Unit tests for spec sources - Test all spec source parsers",
+    "steps": [
+      "Create tests/test_spec_sources.py",
+      "Test FileSpecSource with YAML format",
+      "Test FileSpecSource with JSON format",
+      "Test FileSpecSource with Markdown format",
+      "Test research requirement detection",
+      "Test sync() detects changes correctly",
+      "Test error handling for malformed specs",
+      "Achieve 80%+ code coverage on spec sources"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F063",
+    "spec_version_added": 1,
+    "category": "test",
+    "priority": "high",
+    "depends_on": ["F020", "F021", "F022"],
+    "description": "Unit tests for escalation system - Test escalation logic",
+    "steps": [
+      "Create tests/test_escalation.py",
+      "Test ModelTier progression (Sonnet -> Opus)",
+      "Test failure classification for different error types",
+      "Test EscalationController.should_escalate()",
+      "Test EscalationController.get_next_action()",
+      "Test task decomposition triggering",
+      "Test research triggering",
+      "Achieve 80%+ code coverage on escalation code"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F064",
+    "spec_version_added": 1,
+    "category": "test",
+    "priority": "medium",
+    "depends_on": ["F030"],
+    "description": "Unit tests for TaskQueue - Test dependency resolution",
+    "steps": [
+      "Create tests/test_task_queue.py",
+      "Test get_ready_tasks() with no dependencies",
+      "Test get_ready_tasks() with linear dependency chain",
+      "Test get_ready_tasks() with parallel branches",
+      "Test get_ready_tasks() with complex DAG",
+      "Test blocking behavior when dependencies fail",
+      "Test priority ordering",
+      "Achieve 80%+ code coverage on TaskQueue"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F065",
+    "spec_version_added": 1,
+    "category": "test",
+    "priority": "medium",
+    "depends_on": ["F033"],
+    "description": "Unit tests for CostTracker - Test cost calculations",
+    "steps": [
+      "Create tests/test_cost_tracker.py",
+      "Test calculate_cost() with various token counts",
+      "Test cache read discount calculation",
+      "Test pricing for different models",
+      "Test get_project_costs() aggregation",
+      "Test cost breakdown by model, agent, day",
+      "Achieve 80%+ code coverage on CostTracker"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F066",
+    "spec_version_added": 1,
+    "category": "test",
+    "priority": "medium",
+    "depends_on": ["F027"],
+    "description": "Unit tests for ResearchController - Test research workflow",
+    "steps": [
+      "Create tests/test_research.py",
+      "Test should_research() logic",
+      "Test run_research() with mock Perplexity",
+      "Test run_research() with mock web search fallback",
+      "Test research findings documentation",
+      "Test get_implementation_context() with research",
+      "Achieve 80%+ code coverage on ResearchController"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F067",
+    "spec_version_added": 1,
+    "category": "test",
+    "priority": "low",
+    "depends_on": ["F004"],
+    "description": "CLI tests - Test command parsing and output",
+    "steps": [
+      "Create tests/test_cli.py",
+      "Use Click's testing utilities (CliRunner)",
+      "Test all major commands parse correctly",
+      "Test --help output for all commands",
+      "Test --json flag produces valid JSON",
+      "Test error messages for invalid inputs",
+      "Achieve 60%+ code coverage on CLI layer"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F068",
+    "spec_version_added": 1,
+    "category": "style",
+    "priority": "high",
+    "depends_on": ["F004"],
+    "description": "CLI help text and documentation - Ensure all commands have clear help",
+    "steps": [
+      "Review all CLI commands for help text completeness",
+      "Add examples to command help (--help output)",
+      "Ensure all arguments and options have descriptions",
+      "Add usage examples in docstrings",
+      "Test 'bob --help' shows useful overview",
+      "Test 'bob <command> --help' for all commands"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F069",
+    "spec_version_added": 1,
+    "category": "style",
+    "priority": "medium",
+    "depends_on": ["F004"],
+    "description": "CLI output formatting - Ensure consistent and readable output",
+    "steps": [
+      "Use rich library for formatted terminal output",
+      "Implement colored output for status (success=green, error=red, warning=yellow)",
+      "Use tables for list commands",
+      "Use progress bars for long operations",
+      "Ensure --json output is clean (no formatting, just JSON)",
+      "Test output in various terminal widths"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F070",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": [],
+    "description": "README.md - Create comprehensive project README",
+    "steps": [
+      "Write README.md with project overview",
+      "Include 'Why BOB?' section explaining vision",
+      "Add installation instructions",
+      "Add quick start guide",
+      "Document CLI commands with examples",
+      "Add architecture diagram",
+      "Include comparison with autonomous-coding",
+      "Add contributing guidelines",
+      "Add license information"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F071",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F070"],
+    "description": "Documentation - Create docs/ directory with detailed guides",
+    "steps": [
+      "Create docs/getting-started.md",
+      "Create docs/configuration.md (global and project configs)",
+      "Create docs/spec-formats.md (YAML, JSON, Markdown examples)",
+      "Create docs/escalation.md (explain escalation system)",
+      "Create docs/research-first.md (research workflow guide)",
+      "Create docs/plugins.md (plugin development guide)",
+      "Create docs/architecture.md (technical architecture)",
+      "Create docs/cli-reference.md (comprehensive command reference)"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F072",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "high",
+    "depends_on": [],
+    "description": "Requirements and dependencies - Create requirements.txt and setup.py",
+    "steps": [
+      "Create requirements.txt with all dependencies",
+      "Include: click/typer, pyyaml, jinja2, rich, aiosqlite, anthropic SDK",
+      "Create setup.py or pyproject.toml for package installation",
+      "Specify Python version requirement (3.10+)",
+      "Add optional dependencies (perplexity, postgres driver)",
+      "Test installation in fresh virtual environment"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F073",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "medium",
+    "depends_on": ["F072"],
+    "description": "Package distribution - Prepare for PyPI publication",
+    "steps": [
+      "Create setup.py with package metadata",
+      "Add classifiers, keywords, author info",
+      "Create MANIFEST.in for package files",
+      "Create .gitignore for Python project",
+      "Test package build with 'python setup.py sdist bdist_wheel'",
+      "Test installation from wheel",
+      "Verify 'bob' command is available after install"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F074",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "low",
+    "depends_on": [],
+    "description": "CI/CD setup - Create GitHub Actions workflows",
+    "steps": [
+      "Create .github/workflows/test.yml for automated testing",
+      "Run tests on push and PR",
+      "Test on multiple Python versions (3.10, 3.11, 3.12)",
+      "Create .github/workflows/publish.yml for PyPI publication",
+      "Trigger on git tag creation",
+      "Test CI/CD with mock PR"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  },
+  {
+    "id": "F075",
+    "spec_version_added": 1,
+    "category": "functional",
+    "priority": "low",
+    "depends_on": ["F070", "F071"],
+    "description": "Example projects - Create example spec files",
+    "steps": [
+      "Create examples/simple-webapp/spec.yaml (basic web app)",
+      "Create examples/cli-tool/spec.yaml (command-line tool)",
+      "Create examples/research-heavy/spec.yaml (project with research requirements)",
+      "Create examples/parallel-tasks/spec.yaml (project with parallel tasks)",
+      "Add README.md to each example explaining the project",
+      "Test each example can be run with 'bob run'"
+    ],
+    "passes": false,
+    "passed_at": null,
+    "needs_reverification": false,
+    "reverification_reason": null,
+    "deprecated": false,
+    "research_required": false,
+    "research_complete": false,
+    "research_queries": [],
+    "changelog": [
+      {
+        "version": 1,
+        "timestamp": "2026-01-16T00:00:00Z",
+        "action": "created",
+        "description": "Initial feature from spec v1"
+      }
+    ]
+  }
+]

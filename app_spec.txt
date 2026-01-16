@@ -1,0 +1,1497 @@
+# BOB: Build Orchestration Bot
+
+## Vision
+
+A **generalized, production-ready autonomous coding framework** that can manage multiple projects simultaneously, support any specification format, and provide robust orchestration for long-running AI-assisted development.
+
+BOB takes the excellent foundations from the `autonomous-coding` quickstart and evolves them into a standalone, configurable framework.
+
+---
+
+## Source Material
+
+BOB is built upon and improves the **Anthropic Claude Quickstarts - Autonomous Coding Demo**.
+
+### Source Repository
+
+```
+Repository: https://github.com/anthropics/claude-code/tree/main/claude-quickstarts
+Local Path: ~/work/PhysicalDesign/claude-quickstarts/autonomous-coding/
+
+Key Files:
+├── autonomous_agent_demo.py   # CLI entry point (203 lines)
+├── agent.py                   # Core orchestration loop (774 lines)
+├── client.py                  # Claude SDK client setup (181 lines)
+├── escalation.py              # Model escalation controller (398 lines)
+├── failure_classifier.py      # Failure pattern analysis (450 lines)
+├── feature_decomposer.py      # Task decomposition (460 lines)
+├── progress.py                # Session logging & tracking (205 lines)
+├── prompts.py                 # Prompt template loading (280 lines)
+├── research_agent.py          # Perplexity integration (400 lines)
+├── security.py                # Bash command allowlist (400 lines)
+├── stuck_detector.py          # Progress monitoring (351 lines)
+├── user_elicitation.py        # User intervention requests (490 lines)
+├── cleanup.py                 # Session lifecycle (370 lines)
+└── prompts/                   # Agent prompt templates
+    ├── app_spec.txt           # Application specification
+    ├── coding_prompt.md       # Main coding agent instructions
+    ├── initializer_prompt.md  # First-run setup
+    ├── feature_sync_prompt.md # Spec change handling
+    ├── escalation_prompt.md   # Opus model escalation
+    ├── diagnosis_prompt.md    # Root cause analysis
+    ├── research_prompt.md     # Perplexity research mode
+    ├── decomposition_prompt.md # Feature breakdown
+    └── remediation_prompt.md  # Applying research fixes
+```
+
+### How to Run the Original
+
+```bash
+cd ~/work/PhysicalDesign/claude-quickstarts/autonomous-coding
+
+# Set API keys
+export ANTHROPIC_API_KEY=your_key
+export PERPLEXITY_API_KEY=your_key  # Optional, for research
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run with a project directory
+python autonomous_agent_demo.py --project-dir ./my_project
+
+# Or with options
+python autonomous_agent_demo.py \
+    --project-dir ./my_project \
+    --max-iterations 10 \
+    --model claude-sonnet-4-5-20250929
+```
+
+---
+
+## Top 10 Issues with Current Implementation
+
+### Issue #1: Single Project / Hardcoded Spec
+
+**Location:** `autonomous_agent_demo.py:150-158`, `prompts/app_spec.txt`
+
+**Problem:** The spec file `app_spec.txt` lives in the `prompts/` directory and is copied to each project. Only one project can be active at a time. No project management (create, list, switch, delete).
+
+```python
+# autonomous_agent_demo.py:150-158
+project_dir = args.project_dir
+if not str(project_dir).startswith("generations/"):
+    if project_dir.is_absolute():
+        pass
+    else:
+        project_dir = Path("generations") / project_dir
+```
+
+**BOB Solution:** Multi-project management with `bob project create/list/use/delete`. Each project has its own spec, config, and state.
+
+---
+
+### Issue #2: JSON File Persistence
+
+**Location:** `progress.py:30-31`, `escalation.py:122`, `stuck_detector.py:30`
+
+**Problem:** All state stored in flat JSON files that can't be queried, don't scale, and risk corruption on concurrent access.
+
+```python
+# escalation.py:122
+self.state_file = project_dir / "harness_logs" / "escalation_state.json"
+
+# stuck_detector.py:30
+self.tracker_file = project_dir / "harness_logs" / "progress_tracker.json"
+
+# Feature list
+feature_list_path = self.project_dir / "feature_list.json"
+```
+
+**BOB Solution:** SQLite database (default) with optional PostgreSQL for scale. Proper transactions, indexes, and queryability.
+
+---
+
+### Issue #3: No Cost Tracking
+
+**Location:** `client.py`, `agent.py`
+
+**Problem:** No tracking of API token usage or costs. Can't see spend per project, session, or feature. No budget limits.
+
+```python
+# client.py - No cost tracking anywhere
+return ClaudeSDKClient(
+    options=ClaudeCodeOptions(
+        model=model,
+        # ... no cost tracking
+    )
+)
+```
+
+**BOB Solution:** `CostTracker` class that tracks tokens per session, calculates costs, and can enforce budget limits.
+
+---
+
+### Issue #4: Sequential Task Execution
+
+**Location:** `agent.py:388-726`
+
+**Problem:** Main loop processes one feature at a time sequentially. Independent tasks can't run in parallel, making large feature sets slow.
+
+```python
+# agent.py:388-726 - Single main loop
+while True:
+    iteration += 1
+    # ... processes ONE feature at a time
+    for feature_id in list(still_failing)[:1]:  # Only first failing feature!
+        # ...
+```
+
+**BOB Solution:** `TaskQueue` with dependency resolution and `run_parallel()` for concurrent execution of independent tasks.
+
+---
+
+### Issue #5: No API / Programmatic Access
+
+**Location:** `autonomous_agent_demo.py`
+
+**Problem:** CLI only. Can't integrate with CI/CD, webhooks, monitoring dashboards, or other automation.
+
+```python
+# autonomous_agent_demo.py - CLI only
+def main() -> None:
+    args = parse_args()
+    asyncio.run(run_autonomous_agent(...))
+
+if __name__ == "__main__":
+    main()
+```
+
+**BOB Solution:** Keep CLI-only but add scriptable output modes (JSON, quiet) for integration with shell scripts and automation.
+
+---
+
+### Issue #6: Limited Observability
+
+**Location:** `progress.py:22-74`
+
+**Problem:** Session logs are basic text files. No structured logging, no metrics export, no event system.
+
+```python
+# progress.py:44-48 - Plain text logging
+self.log_file = open(self.log_path, "w")
+self.log_file.write(f"Session {self.session_num} started at {timestamp}\n")
+self.log_file.write(f"Project: {self.project_dir.resolve()}\n")
+self.log_file.write("=" * 70 + "\n\n")
+```
+
+**BOB Solution:** Structured JSON logging and `bob status` / `bob logs` commands for better CLI-based monitoring.
+
+---
+
+### Issue #7: Hardcoded Model Configuration
+
+**Location:** `escalation.py:27-30`, `autonomous_agent_demo.py:31`
+
+**Problem:** Model names and escalation thresholds are hardcoded. Can't configure per-project.
+
+```python
+# escalation.py:27-30
+class ModelTier(Enum):
+    SONNET = "claude-sonnet-4-5-20250929"  # Hardcoded!
+    OPUS = "claude-opus-4-5-20251101"       # Hardcoded!
+
+# escalation.py:109
+MAX_ATTEMPTS_PER_MODEL = 3  # Hardcoded threshold
+```
+
+**BOB Solution:** Configurable models and thresholds in `project.yaml`. Different projects can use different models.
+
+---
+
+### Issue #8: Tightly Coupled Prompts
+
+**Location:** `prompts/coding_prompt.md:86-148`
+
+**Problem:** Prompts reference specific application details (OpenROAD, Docker containers). Can't reuse for different project types.
+
+```markdown
+# coding_prompt.md:86-148 - OpenROAD specific!
+### CRITICAL PRIORITY: REAL EXECUTION INFRASTRUCTURE
+**1. Docker Container Setup:**
+docker pull openroad/orfs:latest
+docker run --rm openroad/orfs:latest openroad -version
+```
+
+**BOB Solution:** Template engine with project variables (`{project.name}`, `{project.tech_stack}`). Generic prompts with project-specific injection.
+
+---
+
+### Issue #9: No Checkpointing / Resume
+
+**Location:** `agent.py:476-481`
+
+**Problem:** Sessions run to completion or error. Can't checkpoint mid-session. Context lost on interruption.
+
+```python
+# agent.py:476-481 - No checkpointing
+try:
+    async with client:
+        status, response = await run_agent_session(client, prompt, project_dir, logger)
+finally:
+    logger.stop()
+# Session ends, no checkpoint saved
+```
+
+**BOB Solution:** `CheckpointManager` that saves conversation state periodically. Can resume from any checkpoint.
+
+---
+
+### Issue #10: Duplicate Stuck Detection Systems
+
+**Location:** `stuck_detector.py` vs `escalation.py`
+
+**Problem:** Two overlapping stuck detection systems that can conflict.
+
+```python
+# agent.py:326-331 - Old-style check
+is_stuck, report = check_if_stuck(project_dir)  # stuck_detector.py
+
+# agent.py:699-709 - Checks both systems
+if result["is_stuck"]:
+    esc_summary = escalation_controller.get_escalation_summary()
+    if esc_summary["features_stuck"] == 0:
+        # Conflict - one says stuck, other says not
+        print("[Info] Old stuck detector triggered, but escalation system may have options...")
+```
+
+**BOB Solution:** Unified `ProgressController` that combines session tracking, feature attempts, and escalation state into one coherent system.
+
+---
+
+## Summary: Current vs BOB
+
+| Aspect | Current Implementation | BOB |
+|--------|----------------------|-----|
+| Projects | Single, hardcoded | Multi-project management |
+| Persistence | JSON files | SQLite/PostgreSQL |
+| Cost | None | Full tracking + budgets |
+| Execution | Sequential | Parallel tasks |
+| Interface | CLI only | CLI with scriptable output (JSON mode) |
+| Logging | Text files | Structured JSON + metrics |
+| Models | Hardcoded | Configurable per-project |
+| Prompts | App-specific | Templated, reusable |
+| Recovery | None | Checkpointing + resume |
+| Stuck Detection | Duplicate systems | Unified controller |
+
+---
+
+## BOB Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                              BOB CLI                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
+│  │  Project Manager │  │   Spec Adapters  │  │  Agent Registry  │  │
+│  │                  │  │                  │  │                  │  │
+│  │ - Create/delete  │  │ - File spec      │  │ - Coding agent   │  │
+│  │ - List projects  │  │ - YAML/JSON/MD   │  │ - Research agent │  │
+│  │ - Status/health  │  │ - GitHub issues  │  │ - Diagnosis agent│  │
+│  │ - Config mgmt    │  │ - (future: Jira) │  │ - Custom agents  │  │
+│  └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘  │
+│           │                     │                     │            │
+│  ┌────────▼─────────────────────▼─────────────────────▼─────────┐  │
+│  │                     Orchestration Engine                      │  │
+│  │                                                               │  │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐   │  │
+│  │  │ Task Queue  │  │ State       │  │ Escalation          │   │  │
+│  │  │             │  │ Machine     │  │ Controller          │   │  │
+│  │  │ - Priority  │  │             │  │ (from autonomous-   │   │  │
+│  │  │ - Deps      │  │ - Session   │  │  coding)            │   │  │
+│  │  │ - Parallel  │  │ - Checkpt   │  │ - Model tiers       │   │  │
+│  │  └─────────────┘  └─────────────┘  │ - Failure classify  │   │  │
+│  │                                     │ - Decomposition     │   │  │
+│  │                                     │ - Research-first    │   │  │
+│  │                                     └─────────────────────┘   │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │                     Persistence Layer                          │  │
+│  │                                                                │  │
+│  │  SQLite (default) - Projects, Tasks, Sessions, Costs          │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │                     Observability                              │  │
+│  │                                                                │  │
+│  │  - Structured JSON logging                                    │  │
+│  │  - CLI status/logs commands                                   │  │
+│  │  - Cost tracking (tokens, dollars)                            │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Core Concepts
+
+### 1. Projects
+
+A **Project** is an isolated workspace with its own:
+- Specification (what to build)
+- Tasks (units of work)
+- Configuration (models, security, prompts)
+- State (progress, escalation, research)
+
+```python
+@dataclass
+class Project:
+    id: str                      # Unique identifier (slug)
+    name: str                    # Human-readable name
+    description: str             # What this project is
+    workspace_dir: Path          # Where files live
+    spec_source: SpecSource      # Where tasks come from
+    config: ProjectConfig        # Project-specific settings
+    created_at: datetime
+    status: ProjectStatus        # active, paused, completed, failed
+
+    # Statistics
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+```
+
+### 2. Spec Sources (Pluggable)
+
+```python
+class SpecSource(ABC):
+    """Abstract base for specification sources."""
+
+    @abstractmethod
+    async def fetch_tasks(self) -> list[TaskSpec]:
+        """Fetch task specifications from the source."""
+        pass
+
+    @abstractmethod
+    async def sync(self) -> SyncResult:
+        """Sync with source, detecting changes."""
+        pass
+
+    @abstractmethod
+    async def mark_completed(self, task_id: str) -> None:
+        """Notify source that task is complete."""
+        pass
+
+# Implementations
+class FileSpecSource(SpecSource):
+    """Load tasks from a local file (YAML, JSON, Markdown)."""
+
+class GitHubIssuesSource(SpecSource):
+    """Load tasks from GitHub issues with specific labels."""
+
+class JiraSource(SpecSource):
+    """Load tasks from Jira tickets."""
+
+class LinearSource(SpecSource):
+    """Load tasks from Linear issues."""
+
+class APISource(SpecSource):
+    """Load tasks from a REST API endpoint."""
+```
+
+### 3. Tasks (Generalized Features)
+
+```python
+@dataclass
+class Task:
+    id: str                      # Unique task ID
+    project_id: str              # Parent project
+    spec_id: str                 # ID from source system
+
+    # Definition
+    title: str
+    description: str
+    acceptance_criteria: list[str]
+    steps: list[str]             # Implementation hints
+
+    # Dependencies
+    depends_on: list[str]        # Task IDs
+    blocks: list[str]            # Tasks blocked by this
+
+    # Metadata
+    priority: int                # 1 (critical) to 5 (nice-to-have)
+    category: str                # functional, test, infra, docs
+    labels: list[str]
+
+    # State
+    status: TaskStatus           # pending, in_progress, completed, failed, blocked, decomposed
+    assigned_agent: str | None   # Which agent type is working on it
+    current_model: str           # Model being used
+
+    # Tracking
+    attempts: int
+    last_attempt_at: datetime | None
+    completed_at: datetime | None
+
+    # Escalation
+    escalation_tier: int         # 0=sonnet, 1=opus, 2=diagnosed
+    failure_type: str | None
+    error_history: list[dict]
+
+    # Decomposition
+    parent_task_id: str | None   # If decomposed from another task
+    sub_task_ids: list[str]      # If decomposed into sub-tasks
+
+    # Research-First Support
+    research_required: bool      # True if task needs research before implementation
+    research_complete: bool      # True after research has been done
+    research_queries: list[str]  # Suggested queries for Perplexity/web search
+    research_findings: str | None  # Documented research results
+```
+
+### 4. Agent Types
+
+```python
+class AgentType(Enum):
+    INITIALIZER = "initializer"      # Generate tasks from spec
+    CODING = "coding"                 # Implement tasks
+    RESEARCH = "research"             # Web search, documentation
+    DIAGNOSIS = "diagnosis"           # Root cause analysis
+    DECOMPOSITION = "decomposition"   # Break down complex tasks
+    REVIEW = "review"                 # Code review
+    TEST = "test"                     # Write/run tests
+    DOCS = "docs"                     # Documentation
+    CUSTOM = "custom"                 # User-defined
+
+@dataclass
+class AgentConfig:
+    agent_type: AgentType
+    model: str                        # claude-sonnet-4-5-20250929, etc.
+    system_prompt: str
+    allowed_tools: list[str]
+    mcp_servers: dict[str, dict]
+    max_turns: int
+    temperature: float
+```
+
+### 5. Sessions
+
+```python
+@dataclass
+class Session:
+    id: str
+    project_id: str
+    task_id: str | None
+    agent_type: AgentType
+    model: str
+
+    started_at: datetime
+    ended_at: datetime | None
+    status: SessionStatus        # running, completed, failed, interrupted
+
+    # Metrics
+    turns: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cost_usd: float
+
+    # Artifacts
+    log_path: Path
+    checkpoint_path: Path | None
+```
+
+---
+
+## Key Improvements
+
+### 1. Multi-Project Support
+
+```bash
+# Create a new project from a spec file
+bob project create myapp --spec ./spec.yaml --workspace ./projects/myapp
+
+# Create from GitHub issues
+bob project create myapp \
+    --source github \
+    --repo owner/repo \
+    --label "ai-implement" \
+    --workspace ./projects/myapp
+
+# List all projects
+bob project list
+
+# Switch active project
+bob project use myapp
+
+# Project status
+bob project status myapp
+```
+
+### 2. Flexible Spec Formats
+
+**YAML Spec** (recommended):
+```yaml
+# spec.yaml
+name: My Application
+description: A full-stack web application with...
+
+defaults:
+  priority: 3
+  category: functional
+
+tasks:
+  - id: auth-login
+    title: User Login
+    description: |
+      Implement user login functionality with...
+    acceptance_criteria:
+      - User can login with email/password
+      - Invalid credentials show error message
+      - Successful login redirects to dashboard
+    steps:
+      - Create login form component
+      - Add authentication API endpoint
+      - Implement JWT token handling
+    priority: 1
+    labels: [auth, mvp]
+
+  - id: auth-logout
+    title: User Logout
+    depends_on: [auth-login]
+    description: Allow users to logout...
+
+```
+
+**Markdown Spec** (human-friendly):
+```markdown
+# My Application Spec
+
+## auth-login: User Login [priority:1] [labels:auth,mvp]
+
+Implement user login functionality with email and password.
+
+### Acceptance Criteria
+- User can login with email/password
+- Invalid credentials show error message
+- Successful login redirects to dashboard
+
+### Implementation Steps
+1. Create login form component
+2. Add authentication API endpoint
+3. Implement JWT token handling
+
+---
+
+## auth-logout: User Logout [depends:auth-login]
+
+Allow users to logout...
+
+```
+
+### 3. Parallel Task Execution
+
+```python
+class TaskQueue:
+    """Priority queue with dependency resolution."""
+
+    async def get_ready_tasks(self, limit: int = 5) -> list[Task]:
+        """
+        Get tasks that are ready to run in parallel.
+
+        A task is ready if:
+        - Status is pending
+        - All dependencies are completed
+        - Not blocked by a failed dependency
+        """
+        pass
+
+    async def run_parallel(self, tasks: list[Task], max_workers: int = 3):
+        """Run multiple tasks in parallel with separate sessions."""
+        pass
+```
+
+### 4. Database Persistence
+
+```sql
+-- Core tables
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    workspace_dir TEXT NOT NULL,
+    spec_source_type TEXT NOT NULL,
+    spec_source_config JSON,
+    config JSON,
+    status TEXT DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE tasks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id),
+    spec_id TEXT,
+    title TEXT NOT NULL,
+    description TEXT,
+    acceptance_criteria JSON,
+    steps JSON,
+    depends_on JSON,
+    priority INTEGER DEFAULT 3,
+    category TEXT,
+    labels JSON,
+    status TEXT DEFAULT 'pending',
+    assigned_agent TEXT,
+    current_model TEXT,
+    attempts INTEGER DEFAULT 0,
+    escalation_tier INTEGER DEFAULT 0,
+    failure_type TEXT,
+    error_history JSON,
+    parent_task_id TEXT REFERENCES tasks(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id),
+    task_id TEXT REFERENCES tasks(id),
+    agent_type TEXT NOT NULL,
+    model TEXT NOT NULL,
+    status TEXT DEFAULT 'running',
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP,
+    turns INTEGER DEFAULT 0,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    log_path TEXT,
+    checkpoint_path TEXT
+);
+
+CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT REFERENCES projects(id),
+    task_id TEXT REFERENCES tasks(id),
+    session_id TEXT REFERENCES sessions(id),
+    event_type TEXT NOT NULL,
+    event_data JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes
+CREATE INDEX idx_tasks_project ON tasks(project_id);
+CREATE INDEX idx_tasks_status ON tasks(status);
+CREATE INDEX idx_sessions_project ON sessions(project_id);
+CREATE INDEX idx_events_project ON events(project_id);
+```
+
+### 5. Escalation Model (from autonomous-coding)
+
+BOB's escalation system is ported directly from the improved `autonomous-coding` implementation. This is the **default behavior** that BOB inherits.
+
+**Source:** `~/work/PhysicalDesign/claude-quickstarts/autonomous-coding/escalation.py`
+
+#### Model Tiers
+
+```python
+class ModelTier(Enum):
+    SONNET = "claude-sonnet-4-5-20250929"  # Fast, cost-effective
+    OPUS = "claude-opus-4-5-20251101"       # More capable, for hard problems
+```
+
+#### Failure Types
+
+```python
+class FailureType(Enum):
+    UNKNOWN = "unknown"
+    TOO_BIG = "too_big"           # Feature too complex -> Decompose
+    MISSING_INFO = "missing_info" # Knowledge gaps -> Research
+    WRONG_INFRA = "wrong_infra"   # Missing packages -> User intervention
+    BAD_ASSUMPTIONS = "bad_assumptions"  # Wrong approach -> Research + restructure
+    NEEDS_RESEARCH = "needs_research"    # Specific research needed
+    DEPS_NOT_MET = "deps_not_met"        # Dependencies not satisfied
+```
+
+#### Escalation Actions
+
+```python
+class EscalationAction(Enum):
+    CONTINUE = "continue"           # Keep trying with current model
+    ESCALATE_MODEL = "escalate_model"  # Switch to Opus
+    DIAGNOSE = "diagnose"           # Run root cause analysis
+    DECOMPOSE = "decompose"         # Break into sub-tasks
+    RESEARCH = "research"           # Research mode (Perplexity/web)
+    REQUEST_USER = "request_user"   # Stop and ask for help
+    RESTRUCTURE = "restructure"     # Research and restructure
+    SKIP = "skip"                   # Skip (deps not met or decomposed)
+```
+
+#### Escalation Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        ESCALATION FLOW                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Task Fails                                                         │
+│      │                                                              │
+│      ▼                                                              │
+│  ┌─────────────────────┐                                           │
+│  │  SONNET (3 attempts)│                                           │
+│  └──────────┬──────────┘                                           │
+│             │ still failing                                         │
+│             ▼                                                       │
+│  ┌─────────────────────┐                                           │
+│  │  OPUS (3 attempts)  │                                           │
+│  └──────────┬──────────┘                                           │
+│             │ still failing                                         │
+│             ▼                                                       │
+│  ┌─────────────────────┐                                           │
+│  │     DIAGNOSIS       │  (Root cause analysis)                    │
+│  └──────────┬──────────┘                                           │
+│             │                                                       │
+│             ▼                                                       │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  Based on failure_type:                                      │   │
+│  │                                                              │   │
+│  │  TOO_BIG ──────────────▶ DECOMPOSE (break into sub-tasks)   │   │
+│  │  MISSING_INFO ─────────▶ RESEARCH (Perplexity/web search)   │   │
+│  │  WRONG_INFRA ──────────▶ REQUEST_USER (needs human help)    │   │
+│  │  BAD_ASSUMPTIONS ──────▶ RESTRUCTURE (research + rethink)   │   │
+│  │  NEEDS_RESEARCH ───────▶ RESEARCH (with specific queries)   │   │
+│  │  UNKNOWN ──────────────▶ REQUEST_USER (give up, ask human)  │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### Default Thresholds (configurable in BOB)
+
+```python
+MAX_ATTEMPTS_PER_MODEL = 3   # Attempts before escalating
+MAX_DIAGNOSIS_ATTEMPTS = 2   # Retries after diagnosis
+```
+
+#### Per-Task Escalation State
+
+Each task tracks its own escalation state:
+
+```python
+@dataclass
+class TaskEscalationState:
+    task_id: str
+    current_model: ModelTier = ModelTier.SONNET
+    attempts_at_current_model: int = 0
+    total_attempts: int = 0
+    failure_type: FailureType | None = None
+    diagnosis_done: bool = False
+    research_queries: list[str] = field(default_factory=list)
+    error_history: list[dict] = field(default_factory=list)
+    decomposed: bool = False
+    sub_task_ids: list[str] = field(default_factory=list)
+```
+
+This state persists across sessions and is used to determine the next action.
+
+### 6. Observability
+
+```python
+# Structured logging
+{
+    "timestamp": "2026-01-11T10:30:00Z",
+    "level": "INFO",
+    "event": "task_completed",
+    "project_id": "myapp",
+    "task_id": "auth-login",
+    "session_id": "sess_123",
+    "duration_ms": 45000,
+    "model": "claude-sonnet-4-5-20250929",
+    "tokens": {
+        "input": 15000,
+        "output": 3000,
+        "cache_read": 12000
+    },
+    "cost_usd": 0.045
+}
+
+# Prometheus metrics
+bob_tasks_total{project="myapp", status="completed"} 45
+bob_tasks_total{project="myapp", status="failed"} 3
+bob_sessions_active{project="myapp"} 2
+bob_tokens_total{project="myapp", type="input"} 1500000
+bob_cost_usd_total{project="myapp"} 12.50
+bob_escalations_total{project="myapp", from_model="sonnet", to_model="opus"} 5
+bob_research_tasks_total{project="myapp", status="pending"} 3
+bob_research_tasks_total{project="myapp", status="complete"} 12
+bob_research_queries_total{project="myapp"} 45
+```
+
+**CLI Status Commands:**
+```bash
+# Quick status overview
+bob status
+# Output:
+# Project: myapp
+# Tasks: 45/50 completed (90%)
+# Current: auth-oauth (attempt 2/3, model: sonnet)
+# Cost: $12.50
+
+# Detailed task status
+bob task list --status failed
+
+# Follow logs in real-time
+bob logs --follow
+```
+
+### 7. Cost Tracking
+
+```python
+@dataclass
+class CostTracker:
+    """Track API costs per project/session."""
+
+    # Pricing (per 1M tokens)
+    PRICING = {
+        "claude-sonnet-4-5-20250929": {"input": 3.0, "output": 15.0},
+        "claude-opus-4-5-20251101": {"input": 15.0, "output": 75.0},
+    }
+
+    def calculate_cost(
+        self,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+    ) -> float:
+        """Calculate cost in USD."""
+        prices = self.PRICING.get(model, {"input": 5.0, "output": 20.0})
+
+        # Cache reads are 90% cheaper
+        effective_input = input_tokens - cache_read_tokens + (cache_read_tokens * 0.1)
+
+        input_cost = (effective_input / 1_000_000) * prices["input"]
+        output_cost = (output_tokens / 1_000_000) * prices["output"]
+
+        return input_cost + output_cost
+
+    async def get_project_costs(self, project_id: str) -> ProjectCosts:
+        """Get cost breakdown for a project."""
+        return ProjectCosts(
+            total_usd=45.67,
+            by_model={
+                "claude-sonnet-4-5-20250929": 32.10,
+                "claude-opus-4-5-20251101": 13.57,
+            },
+            by_agent={
+                "coding": 38.00,
+                "research": 4.50,
+                "diagnosis": 3.17,
+            },
+            by_day=[
+                {"date": "2026-01-10", "cost": 23.45},
+                {"date": "2026-01-11", "cost": 22.22},
+            ]
+        )
+```
+
+### 8. Checkpointing & Resume
+
+```python
+class CheckpointManager:
+    """Save and restore agent state for resumability."""
+
+    async def save_checkpoint(
+        self,
+        session_id: str,
+        conversation_history: list[dict],
+        task_state: dict,
+    ) -> str:
+        """Save checkpoint, return checkpoint ID."""
+        pass
+
+    async def restore_checkpoint(self, checkpoint_id: str) -> SessionState:
+        """Restore session state from checkpoint."""
+        pass
+
+    async def list_checkpoints(self, session_id: str) -> list[Checkpoint]:
+        """List available checkpoints for a session."""
+        pass
+```
+
+### 9. Plugin Architecture
+
+```python
+class Plugin(ABC):
+    """Base class for BOB plugins."""
+
+    name: str
+    version: str
+
+    @abstractmethod
+    async def on_load(self, bob: "BOB") -> None:
+        """Called when plugin is loaded."""
+        pass
+
+    @abstractmethod
+    async def on_unload(self) -> None:
+        """Called when plugin is unloaded."""
+        pass
+
+class AgentPlugin(Plugin):
+    """Plugin that provides custom agent types."""
+
+    @abstractmethod
+    def get_agent_configs(self) -> list[AgentConfig]:
+        """Return agent configurations provided by this plugin."""
+        pass
+
+class SpecSourcePlugin(Plugin):
+    """Plugin that provides custom spec sources."""
+
+    @abstractmethod
+    def get_spec_source_class(self) -> type[SpecSource]:
+        """Return the SpecSource class provided by this plugin."""
+        pass
+
+class ToolPlugin(Plugin):
+    """Plugin that provides custom tools."""
+
+    @abstractmethod
+    def get_tools(self) -> list[Tool]:
+        """Return tools provided by this plugin."""
+        pass
+
+# Example: EDA Plugin for physical design workflows
+class EDAPlugin(AgentPlugin, ToolPlugin):
+    name = "eda"
+    version = "1.0.0"
+
+    def get_agent_configs(self) -> list[AgentConfig]:
+        return [
+            AgentConfig(
+                agent_type=AgentType.CUSTOM,
+                name="synthesis",
+                model="claude-sonnet-4-5-20250929",
+                system_prompt="You are an RTL synthesis expert...",
+                allowed_tools=["Bash", "Read", "Write", "yosys_analyze"],
+            ),
+            AgentConfig(
+                agent_type=AgentType.CUSTOM,
+                name="pnr",
+                model="claude-opus-4-5-20251101",
+                system_prompt="You are a place-and-route expert...",
+                allowed_tools=["Bash", "Read", "Write", "openroad_analyze"],
+            ),
+        ]
+
+    def get_tools(self) -> list[Tool]:
+        return [
+            YosysAnalyzeTool(),
+            OpenROADAnalyzeTool(),
+            TimingReportTool(),
+        ]
+```
+
+---
+
+## Research-First Architecture
+
+One of the key innovations from the autonomous-coding framework is the **research-first pattern** - allowing tasks to be marked as requiring research before implementation attempts.
+
+### Why Research-First?
+
+| Problem | Solution |
+|---------|----------|
+| Agent wastes attempts on known-hard problems | Pre-mark tasks for research |
+| Reactive research only after failures | Proactive research before coding |
+| No guidance on what to research | Spec provides suggested queries |
+| Research findings lost between sessions | Persist findings in task state |
+
+### Research Detection in Specs
+
+**YAML Spec with Research:**
+```yaml
+tasks:
+  - id: timing-optimization
+    title: Extreme Timing Closure
+    description: |
+      Achieve timing closure on design with 5.3x clock violation.
+      REQUIRES RESEARCH on advanced ECO techniques.
+    research_required: true
+    research_queries:
+      - "OpenROAD timing-driven placement techniques"
+      - "buffer insertion algorithms for timing closure"
+      - "iterative ECO flow vs single-pass optimization"
+    steps:
+      - Research optimization strategies
+      - Implement best approach from research
+      - Verify timing improvement
+```
+
+**Auto-Detection Keywords:**
+When parsing specs, BOB detects research requirements via keywords:
+- `REQUIRES RESEARCH`, `NEEDS RESEARCH`, `DO RESEARCH`
+- `research first`, `research before implementing`
+- `investigate`, `explore options`, `find best approach`
+- `use perplexity`, `web search needed`
+
+### Research State Machine
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Task with research_required: true             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   ┌─────────────┐     ┌─────────────────┐     ┌─────────────┐  │
+│   │   PENDING   │────▶│   RESEARCHING   │────▶│   READY     │  │
+│   │             │     │                 │     │             │  │
+│   │ research_   │     │ Agent uses      │     │ research_   │  │
+│   │ complete:   │     │ Perplexity to   │     │ complete:   │  │
+│   │ false       │     │ research        │     │ true        │  │
+│   └─────────────┘     └─────────────────┘     └──────┬──────┘  │
+│                                                       │         │
+│                                                       ▼         │
+│                                               ┌─────────────┐  │
+│                                               │ IMPLEMENTING│  │
+│                                               │             │  │
+│                                               │ Normal      │  │
+│                                               │ coding flow │  │
+│                                               └─────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Research Engine: Perplexity + Web Search
+
+BOB uses **Perplexity** as the primary research engine, with web search as a fallback.
+
+**Setup:**
+```bash
+# Set Perplexity API key (required for Perplexity MCP)
+export PERPLEXITY_API_KEY=your_api_key_here
+```
+
+**Research Tools (priority order):**
+
+1. **Perplexity MCP Plugin** (preferred) - If available via Claude Code plugin system
+   - `perplexity_research` - Deep research on complex topics
+   - `perplexity_ask` - Quick questions
+   - `perplexity_search` - Web search with AI summarization
+   - `perplexity_reason` - Reasoning through problems
+
+2. **Web Search** (fallback) - Built-in Claude Code web search
+   - Used when Perplexity is unavailable
+   - Less structured but always available
+
+**Configuration:**
+```yaml
+# project.yaml
+research:
+  engine: perplexity  # perplexity | websearch | both
+  perplexity:
+    api_key: ${PERPLEXITY_API_KEY}
+    mcp_server:
+      command: npx
+      args: [-y, "@perplexity-ai/mcp-server"]
+  fallback_to_websearch: true
+```
+
+### Research Workflow
+
+```python
+class ResearchController:
+    """Manages research-first task flow."""
+
+    def __init__(self, config: ResearchConfig):
+        self.config = config
+        self.perplexity_available = self._check_perplexity()
+
+    def _check_perplexity(self) -> bool:
+        """Check if Perplexity API key is configured."""
+        return bool(os.environ.get("PERPLEXITY_API_KEY"))
+
+    async def should_research(self, task: Task) -> bool:
+        """Check if task needs research before implementation."""
+        return task.research_required and not task.research_complete
+
+    async def run_research(self, task: Task) -> ResearchResult:
+        """
+        Execute research phase for a task.
+
+        1. Use suggested queries from task.research_queries
+        2. Search with Perplexity (preferred) or web search (fallback)
+        3. Document findings
+        4. Mark research_complete = True
+        """
+        findings = []
+
+        for query in task.research_queries:
+            if self.perplexity_available:
+                # Use Perplexity MCP tools
+                result = await self.perplexity_research(query)
+            else:
+                # Fallback to web search
+                result = await self.web_search(query)
+            findings.append(result)
+
+        # Persist findings
+        task.research_findings = self.summarize_findings(findings)
+        task.research_complete = True
+
+        return ResearchResult(
+            task_id=task.id,
+            queries=task.research_queries,
+            findings=task.research_findings,
+            engine_used="perplexity" if self.perplexity_available else "websearch",
+        )
+
+    async def get_implementation_context(self, task: Task) -> str:
+        """
+        Build implementation prompt including research context.
+
+        If task has research findings, inject them into the coding prompt.
+        """
+        if task.research_findings:
+            return f"""
+## Research Findings (apply these to your implementation)
+
+{task.research_findings}
+
+## Task Requirements
+{task.description}
+"""
+        return task.description
+```
+
+### Database Schema Addition
+
+```sql
+-- Add research columns to tasks table
+ALTER TABLE tasks ADD COLUMN research_required BOOLEAN DEFAULT FALSE;
+ALTER TABLE tasks ADD COLUMN research_complete BOOLEAN DEFAULT FALSE;
+ALTER TABLE tasks ADD COLUMN research_queries JSON;
+ALTER TABLE tasks ADD COLUMN research_findings TEXT;
+
+-- Research sessions tracking
+CREATE TABLE research_sessions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT REFERENCES tasks(id),
+    query TEXT NOT NULL,
+    result TEXT,
+    sources JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### CLI Commands for Research
+
+```bash
+# View tasks needing research
+bob task list --needs-research
+
+# Trigger research for a specific task
+bob research <task_id>
+
+# View research findings
+bob task show <task_id> --research
+
+# Mark research complete manually
+bob task research-complete <task_id>
+```
+
+### Benefits of Research-First
+
+1. **Proactive vs Reactive**: Research happens before wasted implementation attempts
+2. **Guided Research**: Spec authors provide domain-specific queries
+3. **Knowledge Persistence**: Findings survive across sessions
+4. **Cost Efficiency**: Avoid expensive Opus escalations for research-solvable problems
+5. **Better Solutions**: Research-backed implementations often superior to trial-and-error
+
+---
+
+## CLI Interface
+
+```bash
+# Initialize BOB
+bob init
+
+# Project management
+bob project create <name> [options]
+bob project list
+bob project status <name>
+bob project use <name>
+bob project delete <name>
+
+# Run agent
+bob run                          # Run current project
+bob run --project <name>         # Run specific project
+bob run --max-sessions 10        # Limit sessions
+bob run --parallel 3             # Parallel task execution
+bob run --dry-run                # Show what would run
+
+# Task management
+bob task list [--status pending|completed|failed]
+bob task show <task_id>
+bob task retry <task_id>
+bob task skip <task_id>
+bob task add --title "..." --description "..."
+
+# Sync with spec source
+bob sync                         # Sync current project
+bob sync --project <name>
+
+# Monitoring
+bob status                       # Overall status
+bob status --json                # JSON output for scripting
+bob logs                         # Stream logs
+bob logs --session <id>          # Specific session logs
+bob logs --follow                # Follow in real-time
+bob costs                        # Show cost breakdown
+
+# Configuration
+bob config show
+bob config set <key> <value>
+bob config edit
+```
+
+---
+
+## Configuration
+
+### Global Config (`~/.bob/config.yaml`)
+```yaml
+# Default model settings
+models:
+  default: claude-sonnet-4-5-20250929
+  escalation: claude-opus-4-5-20251101
+
+# API configuration
+api:
+  anthropic_api_key: ${ANTHROPIC_API_KEY}
+
+# Database
+database:
+  type: sqlite  # sqlite, postgresql
+  path: ~/.bob/bob.db
+
+# Logging
+logging:
+  level: INFO
+  format: json
+
+# Cost limits
+limits:
+  max_cost_per_project: 100.0  # USD
+  max_cost_per_session: 5.0
+  warn_at_percent: 80
+
+# Escalation defaults (from autonomous-coding)
+escalation:
+  max_attempts_per_model: 3
+  models:
+    tier1: claude-sonnet-4-5-20250929
+    tier2: claude-opus-4-5-20251101
+```
+
+### Project Config (`project.yaml`)
+```yaml
+name: My App
+description: Building a web application
+
+# Spec source
+spec:
+  type: file
+  path: ./spec.yaml
+  # Or:
+  # type: github
+  # repo: owner/repo
+  # label: ai-implement
+
+# Workspace
+workspace: ./workspace
+
+# Model overrides
+models:
+  default: claude-sonnet-4-5-20250929
+  escalation: claude-opus-4-5-20251101
+
+# Security
+security:
+  sandbox: true
+  allowed_commands:
+    - npm
+    - node
+    - python
+    - pytest
+    - git
+  filesystem_scope: ./workspace
+
+# Agent customization
+agents:
+  coding:
+    system_prompt: |
+      You are a full-stack developer building {project.name}.
+      Follow these coding standards: ...
+    max_turns: 500
+
+  research:
+    enabled: true
+    mcp_servers:
+      perplexity:
+        command: npx
+        args: [-y, "@perplexity-ai/mcp-server"]
+
+# Escalation settings (override global defaults)
+escalation:
+  max_attempts_per_model: 3
+  enable_decomposition: true
+  enable_research: true
+```
+
+---
+
+## Directory Structure
+
+```
+~/.bob/
+├── config.yaml              # Global configuration
+├── bob.db                   # SQLite database
+├── plugins/                 # Installed plugins
+└── cache/                   # Cached data
+
+./my-project/
+├── project.yaml             # Project configuration
+├── spec.yaml                # Task specifications
+├── workspace/               # Generated code
+│   ├── src/
+│   ├── tests/
+│   └── ...
+└── .bob/                    # Project BOB data
+    ├── state.json           # Quick state cache
+    ├── sessions/            # Session logs
+    ├── checkpoints/         # Session checkpoints
+    └── artifacts/           # Research notes, etc.
+```
+
+---
+
+## Implementation Plan
+
+### Phase 1: Core Foundation
+- [ ] Project model and database schema
+- [ ] Basic CLI (create, list, delete projects)
+- [ ] Port escalation logic from autonomous-coding (as default)
+- [ ] File-based spec source with research detection
+- [ ] Single-task execution with existing agent logic
+- [ ] Research-first workflow (check research_required before coding)
+- [ ] SQLite persistence
+
+### Phase 2: Multi-Project & Orchestration
+- [ ] Multi-project management
+- [ ] Task queue with dependency resolution
+- [ ] Session management
+- [ ] Progress tracking (unified, replacing duplicate systems)
+
+### Phase 3: Observability & Cost
+- [ ] Structured JSON logging
+- [ ] Cost tracking per project/session/task
+- [ ] CLI status/logs commands
+- [ ] Checkpointing for resume
+
+### Phase 4: Parallel Execution
+- [ ] Parallel task execution for independent tasks
+- [ ] Concurrent session management
+- [ ] Resource management
+
+### Phase 5: Integrations & Extensions
+- [ ] GitHub issues spec source
+- [ ] Plugin architecture for custom agents
+- [ ] Additional spec sources (Jira, Linear)
+
+---
+
+## Migration from autonomous-coding
+
+The existing components can be reused with minimal changes:
+
+| Component | Status | Migration Path |
+|-----------|--------|----------------|
+| `escalation.py` | Keep | Parameterize models, add DB persistence |
+| `failure_classifier.py` | Keep | No changes needed |
+| `feature_decomposer.py` | Refactor | Rename to `task_decomposer.py`, use Task model |
+| `research_agent.py` | Keep | Add config for MCP servers, integrate with research-first flow |
+| `security.py` | Keep | Make allowlist configurable per-project |
+| `progress.py` | Replace | Use database for progress tracking |
+| `prompts.py` | Refactor | Template engine with project variables |
+| `agent.py` | Refactor | Extract into `orchestrator.py` |
+| `client.py` | Keep | Add model selection, cost tracking |
+
+---
+
+## Example Usage
+
+```bash
+# Create a new project
+bob project create todo-app \
+    --spec ./todo-spec.yaml \
+    --workspace ./todo-app
+
+# Run the agent (uses escalation model from autonomous-coding by default)
+bob run --project todo-app
+
+# Run with parallel task execution
+bob run --project todo-app --parallel 2
+
+# Monitor progress in another terminal
+bob status --project todo-app
+bob logs --follow
+
+# Check costs
+bob costs --project todo-app
+
+# View tasks by status
+bob task list --status failed
+bob task list --needs-research
+
+# Retry a failed task
+bob task retry F042
+
+# Show escalation state for a task
+bob task show F042 --escalation
+```
+
+---
+
+## Why "BOB"?
+
+- **B**uild **O**rchestration **B**ot
+- Simple, memorable name
+- "Bob the Builder" vibes - it builds things autonomously
+- Easy to type in CLI: `bob run`, `bob status`
+
+---
+
+## Next Steps
+
+1. Set up BOB repository structure (separate from quickstarts)
+2. Copy and adapt escalation.py from autonomous-coding as the core
+3. Implement core models (Project, Task, Session)
+4. Create SQLite persistence layer
+5. Build CLI skeleton with Click/Typer
+6. Port research-first workflow from autonomous-coding
+7. Implement file-based spec source with YAML/JSON/MD support
+8. Create basic orchestration loop
+9. Add tests
+
+---
+
+## Open Questions
+
+1. **Workspace isolation**: Should each project have completely isolated Python environments?
+2. **Git integration**: Auto-commit after each task? Branch per task?
+3. **Rollback**: How to handle failed tasks that modified files?
+4. **Escalation tuning**: Should thresholds be per-task or per-project?
+5. **Research caching**: Cache Perplexity results across tasks with similar queries?

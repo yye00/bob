@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/home/captain/work/bob_builder/bob/logs/.6291a49d01f1195d71e2f2b20cff876ee0233d62-audit.json",
+    "files": [
+        {
+            "date": 1768597541673,
+            "name": "/home/captain/work/bob_builder/bob/logs/mcp-puppeteer-2026-01-16.log",
+            "hash": "f87322c3d3ece1f777138c9a3b981f7800751da86d990fa87d13b72038e37332"
+        }
+    ],
+    "hashType": "sha256"
+}
