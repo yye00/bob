@@ -115,10 +115,10 @@ class TestCommandGroups:
         assert "Run the autonomous coding agent" in result.output
 
     def test_sync_group(self, runner):
-        """Test sync command group."""
+        """Test sync command."""
         result = runner.invoke(cli, ["sync", "--help"])
         assert result.exit_code == 0
-        assert "Sync with spec source" in result.output
+        assert "Sync tasks with spec source" in result.output
 
     def test_status_group(self, runner):
         """Test status command group."""

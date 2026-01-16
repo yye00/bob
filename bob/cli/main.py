@@ -11,6 +11,7 @@ import click
 
 # Import project commands
 from bob.cli import project as project_commands
+from bob.cli import sync as sync_commands
 
 # Version info
 __version__ = "0.1.0"
@@ -150,6 +151,9 @@ def project() -> None:
 project.add_command(project_commands.create)
 project.add_command(project_commands.list)
 
+# Add sync command directly (not a subcommand group, just a command)
+cli.add_command(sync_commands.sync)
+
 
 @cli.group()
 def task() -> None:
@@ -188,20 +192,7 @@ def run() -> None:
     pass
 
 
-@cli.group()
-def sync() -> None:
-    """Sync with spec source.
-
-    \b
-    Synchronize tasks with the spec source (file, GitHub issues, etc.).
-    Detects new features, updates, and changes to existing tasks.
-
-    \b
-    Examples:
-      bob sync                   # Sync active project
-      bob sync --force           # Force full re-sync
-    """
-    pass
+# Sync command is added directly from sync_commands module
 
 
 @cli.group()

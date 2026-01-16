@@ -442,6 +442,86 @@ class DatabaseManager:
             )
             return cursor.rowcount > 0
 
+    def update_task_spec(
+        self,
+        task_id: str,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        acceptance_criteria: Optional[list[str]] = None,
+        steps: Optional[list[str]] = None,
+        depends_on: Optional[list[str]] = None,
+        priority: Optional[str] = None,
+        category: Optional[str] = None,
+        labels: Optional[list[str]] = None,
+        research_required: Optional[bool] = None,
+        research_queries: Optional[list[str]] = None,
+    ) -> bool:
+        """Update task specification fields (from spec sync).
+
+        This is separate from update_task() which only updates execution state.
+        This method updates fields that come from the spec source.
+
+        Args:
+            task_id: Task ID
+            title: New title (optional)
+            description: New description (optional)
+            acceptance_criteria: New acceptance criteria (optional)
+            steps: New steps (optional)
+            depends_on: New dependencies (optional)
+            priority: New priority (optional)
+            category: New category (optional)
+            labels: New labels (optional)
+            research_required: New research required flag (optional)
+            research_queries: New research queries (optional)
+
+        Returns:
+            True if task was updated, False if not found
+        """
+        updates = []
+        params = []
+
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if acceptance_criteria is not None:
+            updates.append("acceptance_criteria = ?")
+            params.append(json.dumps(acceptance_criteria))
+        if steps is not None:
+            updates.append("steps = ?")
+            params.append(json.dumps(steps))
+        if depends_on is not None:
+            updates.append("depends_on = ?")
+            params.append(json.dumps(depends_on))
+        if priority is not None:
+            updates.append("priority = ?")
+            params.append(priority)
+        if category is not None:
+            updates.append("category = ?")
+            params.append(category)
+        if labels is not None:
+            updates.append("labels = ?")
+            params.append(json.dumps(labels))
+        if research_required is not None:
+            updates.append("research_required = ?")
+            params.append(1 if research_required else 0)
+        if research_queries is not None:
+            updates.append("research_queries = ?")
+            params.append(json.dumps(research_queries))
+
+        if not updates:
+            return False
+
+        params.append(task_id)
+
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?", params
+            )
+            return cursor.rowcount > 0
+
     def delete_task(self, task_id: str) -> bool:
         """Delete a task.
 
