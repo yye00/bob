@@ -8,6 +8,13 @@ from bob.observability.cost_tracker import (
     SessionCost,
     TokenUsage,
 )
+from bob.observability.logger import (
+    EventType,
+    JSONFormatter,
+    LogContext,
+    StructuredLogger,
+    create_logger,
+)
 
 __all__ = [
     "PRICING",
@@ -16,4 +23,9 @@ __all__ = [
     "ProjectCostSummary",
     "SessionCost",
     "TokenUsage",
+    "EventType",
+    "JSONFormatter",
+    "LogContext",
+    "StructuredLogger",
+    "create_logger",
 ]
