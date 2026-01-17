@@ -35,6 +35,13 @@ from .research_agent import (
 )
 from .research_controller import ResearchController
 from .task_queue import TaskQueue
+from .client import (
+    create_client,
+    create_research_client,
+    PUPPETEER_TOOLS,
+    PERPLEXITY_TOOLS as CLIENT_PERPLEXITY_TOOLS,
+    BUILTIN_TOOLS,
+)
 
 __all__ = [
     "EscalationController",
@@ -65,4 +72,9 @@ __all__ = [
     "parse_research_response",
     "create_research_session_prompt",
     "ResearchController",
+    "create_client",
+    "create_research_client",
+    "PUPPETEER_TOOLS",
+    "CLIENT_PERPLEXITY_TOOLS",
+    "BUILTIN_TOOLS",
 ]
