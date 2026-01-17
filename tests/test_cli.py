@@ -133,10 +133,10 @@ class TestCommandGroups:
         assert "View session logs" in result.output
 
     def test_costs_group(self, runner):
-        """Test costs command group."""
+        """Test costs command."""
         result = runner.invoke(cli, ["costs", "--help"])
         assert result.exit_code == 0
-        assert "View cost reports" in result.output
+        assert "Show cost breakdown for projects" in result.output
 
     def test_config_group(self, runner):
         """Test config command group."""

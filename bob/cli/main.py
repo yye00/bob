@@ -10,6 +10,7 @@ from typing import Optional
 import click
 
 # Import project commands
+from bob.cli import costs as costs_commands
 from bob.cli import project as project_commands
 from bob.cli import research as research_commands
 from bob.cli import sync as sync_commands
@@ -242,22 +243,8 @@ def logs() -> None:
     pass
 
 
-@cli.group()
-def costs() -> None:
-    """View cost reports.
-
-    \b
-    View API costs for sessions, tasks, and projects.
-    Tracks token usage and estimated costs.
-
-    \b
-    Examples:
-      bob costs                  # Total costs
-      bob costs --project my-app
-      bob costs --task F001
-      bob costs --since 2024-01-01
-    """
-    pass
+# Add costs command directly (not a group, just a command)
+cli.add_command(costs_commands.costs)
 
 
 @cli.group()

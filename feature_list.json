@@ -1167,8 +1167,8 @@
       "Add --project flag to select project",
       "Test with project having multiple sessions"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T00:00:29.522+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
