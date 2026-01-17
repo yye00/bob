@@ -4469,3 +4469,70 @@ REMAINING FEATURES:
 
 Project completion: 94.7% (71/75 features passing)
 
+
+
+=================================================================
+SESSION 40 - FEATURE F019 COMPLETED
+=================================================================
+
+FEATURE COMPLETED: F019 (Task add command)
+-------------------------------------------
+
+Summary:
+Implemented complete 'bob task add' command to manually add tasks to projects,
+with full argument support and comprehensive testing.
+
+Implementation Details:
+
+1. Created 'add' command in bob/cli/task.py:
+   - Required arguments: --title (-t), --description (-d)
+   - Optional arguments: --priority (-p), --category (-c)
+   - Multiple value arguments: --depends-on, --label (-l), --step (-s)
+   - JSON output support with --json flag
+   - Automatic task ID generation (M001, M002, etc.)
+   - Full integration with database manager
+
+2. Key Features:
+   - Auto-generates sequential manual task IDs (M### format)
+   - Supports all task properties: priority, category, dependencies, labels, steps
+   - Validates project existence and falls back to active project
+   - Provides both rich console output and JSON output
+   - Error handling for missing required fields
+
+3. Bug Fix:
+   - Fixed naming conflict: list() builtin was shadowed by task list command
+   - Solution: Used builtins.list() to explicitly reference Python's list builtin
+   - Added ctx.obj null check for test compatibility
+
+4. Comprehensive Tests (14 tests added):
+   - test_add_help: Command help text
+   - test_add_basic_task: Minimal task creation
+   - test_add_task_with_short_flags: Short flag support (-t, -d, -p, -c, -l, -s)
+   - test_add_task_with_all_options: All arguments combined
+   - test_add_multiple_tasks: Sequential ID generation (M001, M002, M003)
+   - test_add_task_json_output: JSON output format
+   - test_add_task_global_json_flag: Global --json flag
+   - test_add_task_no_active_project: Error handling
+   - test_add_task_missing_title: Required field validation
+   - test_add_task_missing_description: Required field validation
+   - test_add_task_with_multiple_dependencies: Multiple --depends-on flags
+   - test_add_task_priority_choices: All priority levels (critical, high, medium, low)
+   - test_add_task_category_choices: All categories (functional, test, infra, docs)
+   - test_add_task_with_multiple_steps: Multiple --step flags
+
+5. Registered command in main CLI (bob/cli/main.py)
+
+Tests Added: 14 tests
+Total Tests: 1163 (was 1149)
+All tests passing ✓
+
+REMAINING FEATURES:
+-------------------
+3 low-priority features remain:
+1. F045: Config edit command (depends on F043) ✓
+2. F057: GitHub issues integration test (depends on F014) ✓
+3. F075: Example projects (depends on F070, F071) ✓
+
+All dependencies are satisfied for remaining features.
+
+Project completion: 96.0% (72/75 features passing)

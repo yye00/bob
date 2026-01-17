@@ -195,6 +195,7 @@ task.add_command(task_commands.list)
 task.add_command(task_commands.show)
 task.add_command(task_commands.retry)
 task.add_command(task_commands.skip)
+task.add_command(task_commands.add)
 
 # Add run command
 cli.add_command(run_commands.run)

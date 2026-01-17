@@ -1660,3 +1660,536 @@ class TestTaskSkipCommand:
         updated_task = db.get_task(task.id)
         assert updated_task.status == TaskStatus.SKIPPED
         assert updated_task.skip_reason == "Dependency issue"
+
+
+# ============================================================================
+# Task Add Command Tests
+# ============================================================================
+
+
+class TestTaskAddCommand:
+    """Test task add command."""
+
+    def test_add_help(self):
+        """Test add command help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["task", "add", "--help"])
+        assert result.exit_code == 0
+        assert "Manually add a new task" in result.output
+        assert "--title" in result.output
+        assert "--description" in result.output
+        assert "--priority" in result.output
+        assert "--category" in result.output
+
+    def test_add_basic_task(self, tmp_path):
+        """Test adding a basic task with minimal options."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "--title", "Fix bug",
+                "--description", "Fix login issue"
+            ]
+        )
+
+        assert result.exit_code == 0
+        assert "M001" in result.output
+        assert "created successfully" in result.output
+        assert "Fix bug" in result.output
+
+        # Verify task was created
+        tasks = db.list_tasks(project_id=project.id, limit=10)
+        assert len(tasks) == 1
+        assert tasks[0].spec_id == "M001"
+        assert tasks[0].title == "Fix bug"
+        assert tasks[0].description == "Fix login issue"
+        assert tasks[0].priority == "medium"
+        assert tasks[0].category == "functional"
+        assert tasks[0].status == TaskStatus.PENDING
+
+    def test_add_task_with_short_flags(self, tmp_path):
+        """Test adding a task with short flags."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "-t", "Deploy",
+                "-d", "Deploy to production"
+            ]
+        )
+
+        assert result.exit_code == 0
+        assert "M001" in result.output
+
+        tasks = db.list_tasks(project_id=project.id, limit=10)
+        assert len(tasks) == 1
+        assert tasks[0].title == "Deploy"
+
+    def test_add_task_with_all_options(self, tmp_path):
+        """Test adding a task with all options specified."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create a task for dependency
+        dep_task = Task(
+            id="task-dep",
+            project_id=project.id,
+            spec_id="F001",
+            title="Dependency Task",
+            description="Task to depend on",
+            status=TaskStatus.COMPLETED,
+        )
+        db.create_task(dep_task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "--title", "Research API",
+                "--description", "Research REST API design",
+                "--priority", "high",
+                "--category", "infra",
+                "--depends-on", "F001",
+                "--label", "research",
+                "--label", "api",
+                "--step", "Read documentation",
+                "--step", "Test endpoints",
+            ]
+        )
+
+        assert result.exit_code == 0
+        assert "M001" in result.output
+
+        tasks = db.list_tasks(project_id=project.id, limit=10)
+        manual_task = [t for t in tasks if t.spec_id == "M001"][0]
+        assert manual_task.title == "Research API"
+        assert manual_task.description == "Research REST API design"
+        assert manual_task.priority == "high"
+        assert manual_task.category == "infra"
+        assert manual_task.depends_on == ["F001"]
+        assert set(manual_task.labels) == {"research", "api"}
+        assert manual_task.steps == ["Read documentation", "Test endpoints"]
+
+    def test_add_multiple_tasks(self, tmp_path):
+        """Test adding multiple tasks generates sequential IDs."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+
+        # Add first task
+        result1 = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "-t", "Task 1",
+                "-d", "First task"
+            ]
+        )
+        assert result1.exit_code == 0
+        assert "M001" in result1.output
+
+        # Add second task
+        result2 = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "-t", "Task 2",
+                "-d", "Second task"
+            ]
+        )
+        assert result2.exit_code == 0
+        assert "M002" in result2.output
+
+        # Add third task
+        result3 = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "-t", "Task 3",
+                "-d", "Third task"
+            ]
+        )
+        assert result3.exit_code == 0
+        assert "M003" in result3.output
+
+        # Verify all tasks exist
+        tasks = db.list_tasks(project_id=project.id, limit=10)
+        assert len(tasks) == 3
+        spec_ids = {t.spec_id for t in tasks}
+        assert spec_ids == {"M001", "M002", "M003"}
+
+    def test_add_task_json_output(self, tmp_path):
+        """Test adding a task with JSON output."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "-t", "JSON Task",
+                "-d", "Task with JSON output",
+                "-p", "critical",
+                "-c", "test",
+                "--json"
+            ]
+        )
+
+        assert result.exit_code == 0
+
+        output = extract_json(result.output)
+        assert output["status"] == "success"
+        assert output["message"] == "Task created"
+        assert output["task"]["spec_id"] == "M001"
+        assert output["task"]["title"] == "JSON Task"
+        assert output["task"]["description"] == "Task with JSON output"
+        assert output["task"]["priority"] == "critical"
+        assert output["task"]["category"] == "test"
+        assert output["task"]["status"] == "pending"
+
+    def test_add_task_global_json_flag(self, tmp_path):
+        """Test adding a task with global --json flag."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "--json",
+                "task", "add",
+                "-t", "Task",
+                "-d", "Description",
+            ]
+        )
+
+        assert result.exit_code == 0
+        output = extract_json(result.output)
+        assert output["status"] == "success"
+
+    def test_add_task_no_active_project(self, tmp_path):
+        """Test adding a task when no active project exists."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "-t", "Task",
+                "-d", "Description",
+            ]
+        )
+
+        assert result.exit_code != 0
+        assert "No active project found" in result.output
+
+    def test_add_task_missing_title(self, tmp_path):
+        """Test that add command requires a title."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "--description", "Description only"
+            ]
+        )
+
+        # Click will error on missing required option
+        assert result.exit_code != 0
+        assert "--title" in result.output or "Missing option" in result.output
+
+    def test_add_task_missing_description(self, tmp_path):
+        """Test that add command requires a description."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "--title", "Title only"
+            ]
+        )
+
+        # Click will error on missing required option
+        assert result.exit_code != 0
+        assert "--description" in result.output or "Missing option" in result.output
+
+    def test_add_task_with_multiple_dependencies(self, tmp_path):
+        """Test adding a task with multiple dependencies."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "-t", "Complex Task",
+                "-d", "Task with multiple dependencies",
+                "--depends-on", "F001",
+                "--depends-on", "F002",
+                "--depends-on", "F003",
+            ]
+        )
+
+        assert result.exit_code == 0
+
+        tasks = db.list_tasks(project_id=project.id, limit=10)
+        assert len(tasks) == 1
+        assert tasks[0].depends_on == ["F001", "F002", "F003"]
+
+    def test_add_task_priority_choices(self, tmp_path):
+        """Test adding tasks with different priority levels."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+
+        for priority in ["critical", "high", "medium", "low"]:
+            result = runner.invoke(
+                cli,
+                [
+                    "--db", str(db_path),
+                    "task", "add",
+                    "-t", f"{priority} task",
+                    "-d", f"Task with {priority} priority",
+                    "-p", priority,
+                ]
+            )
+            assert result.exit_code == 0
+
+        tasks = db.list_tasks(project_id=project.id, limit=10)
+        assert len(tasks) == 4
+        priorities = {t.priority for t in tasks}
+        assert priorities == {"critical", "high", "medium", "low"}
+
+    def test_add_task_category_choices(self, tmp_path):
+        """Test adding tasks with different categories."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+
+        for category in ["functional", "test", "infra", "docs"]:
+            result = runner.invoke(
+                cli,
+                [
+                    "--db", str(db_path),
+                    "task", "add",
+                    "-t", f"{category} task",
+                    "-d", f"Task with {category} category",
+                    "-c", category,
+                ]
+            )
+            assert result.exit_code == 0
+
+        tasks = db.list_tasks(project_id=project.id, limit=10)
+        assert len(tasks) == 4
+        categories = {t.category for t in tasks}
+        assert categories == {"functional", "test", "infra", "docs"}
+
+    def test_add_task_with_multiple_steps(self, tmp_path):
+        """Test adding a task with multiple implementation steps."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--db", str(db_path),
+                "task", "add",
+                "-t", "Multi-step task",
+                "-d", "Task with multiple steps",
+                "--step", "Step 1: Setup",
+                "--step", "Step 2: Implementation",
+                "--step", "Step 3: Testing",
+                "--step", "Step 4: Documentation",
+            ]
+        )
+
+        assert result.exit_code == 0
+
+        tasks = db.list_tasks(project_id=project.id, limit=10)
+        assert len(tasks) == 1
+        assert len(tasks[0].steps) == 4
+        assert tasks[0].steps == [
+            "Step 1: Setup",
+            "Step 2: Implementation",
+            "Step 3: Testing",
+            "Step 4: Documentation",
+        ]

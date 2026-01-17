@@ -782,3 +782,207 @@ def skip(
         console.print()
         console.print("This task will not be executed during 'bob run'")
         console.print("To unskip, use: bob task retry " + spec_id)
+
+
+# ============================================================================
+# Task Add Command
+# ============================================================================
+
+
+@click.command("add")
+@click.option(
+    "--title",
+    "-t",
+    required=True,
+    help="Task title",
+)
+@click.option(
+    "--description",
+    "-d",
+    required=True,
+    help="Task description",
+)
+@click.option(
+    "--priority",
+    "-p",
+    type=click.Choice(["critical", "high", "medium", "low"], case_sensitive=False),
+    default="medium",
+    help="Priority level (default: medium)",
+)
+@click.option(
+    "--category",
+    "-c",
+    type=click.Choice(["functional", "test", "infra", "docs"], case_sensitive=False),
+    default="functional",
+    help="Task category (default: functional)",
+)
+@click.option(
+    "--depends-on",
+    multiple=True,
+    help="Task dependencies (can be specified multiple times)",
+)
+@click.option(
+    "--label",
+    "-l",
+    multiple=True,
+    help="Labels (can be specified multiple times)",
+)
+@click.option(
+    "--step",
+    "-s",
+    multiple=True,
+    help="Implementation steps (can be specified multiple times)",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output in JSON format",
+)
+@click.pass_context
+def add(
+    ctx: click.Context,
+    title: str,
+    description: str,
+    priority: str,
+    category: str,
+    depends_on: tuple[str, ...],
+    label: tuple[str, ...],
+    step: tuple[str, ...],
+    json_output: bool,
+) -> None:
+    """Manually add a new task to the project.
+
+    \b
+    Create a task without syncing from spec source. Useful for ad-hoc tasks,
+    reminders, or supplemental work items.
+
+    \b
+    Examples:
+      bob task add --title "Fix bug" --description "Fix login issue"
+      bob task add -t "Deploy" -d "Deploy to prod" -p high -c infra
+      bob task add -t "Research" -d "Research API" --depends-on F001 --depends-on F002
+      bob task add -t "Test" -d "Write tests" --label testing --step "Write unit tests" --step "Run tests"
+      bob task add -t "Document" -d "Add docs" --json
+    """
+    # Get global context
+    global_ctx = ctx.obj
+
+    # Handle case where ctx.obj is None (happens in some test contexts)
+    if global_ctx is None:
+        from bob.cli.main import GlobalContext
+        global_ctx = GlobalContext()
+        ctx.obj = global_ctx
+
+    # Override with global JSON flag if set
+    if global_ctx.json_output:
+        json_output = True
+
+    # Get database manager
+    db = DatabaseManager(global_ctx.db_path)
+
+    # Determine project ID
+    project_id = global_ctx.project_id
+    if not project_id:
+        # Try to get active project
+        projects = db.list_projects(status=ProjectStatus.ACTIVE, limit=1)
+        if not projects:
+            if json_output:
+                click.echo(json.dumps({
+                    "error": "No active project found",
+                    "message": "Use --project to specify a project or 'bob project use' to set an active project"
+                }))
+            else:
+                click.echo("Error: No active project found", err=True)
+                click.echo("Use --project to specify a project or 'bob project use' to set an active project", err=True)
+            ctx.exit(1)
+        project_id = projects[0].id
+
+    # Generate new task ID
+    # Find the next available manual task ID (M001, M002, etc.)
+    all_tasks = db.list_tasks(project_id=project_id, limit=10000)
+
+    # Find manual task IDs (those starting with 'M')
+    manual_task_ids = [t.spec_id for t in all_tasks if t.spec_id.startswith('M') and len(t.spec_id) > 1]
+
+    # Extract numeric parts
+    max_num = 0
+    for task_id in manual_task_ids:
+        try:
+            num = int(task_id[1:])
+            max_num = max(max_num, num)
+        except ValueError:
+            continue
+
+    # Generate new ID
+    new_spec_id = f"M{max_num + 1:03d}"
+    new_task_id = f"task_{project_id}_{new_spec_id}"
+
+    # Import uuid for task ID
+    import uuid
+    from bob.models.base import Task
+
+    # Create task object
+    # Note: Use builtins.list to avoid shadowing the task list command
+    import builtins
+    task = Task(
+        id=str(uuid.uuid4()),
+        project_id=project_id,
+        spec_id=new_spec_id,
+        title=title,
+        description=description,
+        acceptance_criteria=[],
+        steps=builtins.list(step),
+        depends_on=builtins.list(depends_on),
+        priority=priority.lower(),
+        category=category.lower(),
+        labels=builtins.list(label),
+        status=TaskStatus.PENDING,
+        assigned_agent=None,
+        current_model="claude-sonnet-4-5-20250929",
+        attempts=0,
+        escalation_tier=ModelTier.TIER1,
+        failure_type=None,
+        research_required=False,
+        research_complete=False,
+        research_queries=[],
+        research_findings={},
+        skip_reason=None,
+    )
+
+    # Insert into database
+    db.create_task(task)
+
+    # Output result
+    if json_output:
+        click.echo(json.dumps({
+            "status": "success",
+            "message": "Task created",
+            "task": {
+                "id": task.id,
+                "spec_id": task.spec_id,
+                "title": task.title,
+                "description": task.description,
+                "priority": task.priority,
+                "category": task.category,
+                "depends_on": task.depends_on,
+                "labels": task.labels,
+                "steps": task.steps,
+                "status": task.status.value,
+            },
+        }, indent=2))
+    else:
+        console = Console()
+        console.print(f"✓ Task [cyan]{new_spec_id}[/cyan] created successfully")
+        console.print(f"  Title: {title}")
+        console.print(f"  Priority: {priority}")
+        console.print(f"  Category: {category}")
+        if depends_on:
+            console.print(f"  Dependencies: {', '.join(depends_on)}")
+        if label:
+            console.print(f"  Labels: {', '.join(label)}")
+        if step:
+            console.print(f"  Steps: {len(step)} step(s)")
+        console.print()
+        console.print(f"View with: bob task show {new_spec_id}")
+        console.print(f"Run with: bob run")

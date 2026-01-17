@@ -951,7 +951,49 @@
       "sub_features": [],
       "created_at": "2026-01-16T22:50:58.408549",
       "updated_at": "2026-01-16T22:50:58.408559"
+    },
+    "F048": {
+      "feature_id": "F048",
+      "current_model": "claude-sonnet-4-5-20250929",
+      "attempts_at_current_model": 0,
+      "total_attempts": 1,
+      "failure_type": null,
+      "diagnosis_done": false,
+      "research_queries": [],
+      "error_history": [],
+      "decomposed": false,
+      "sub_features": [],
+      "created_at": "2026-01-16T23:05:34.723803",
+      "updated_at": "2026-01-16T23:05:34.723807"
+    },
+    "F067": {
+      "feature_id": "F067",
+      "current_model": "claude-sonnet-4-5-20250929",
+      "attempts_at_current_model": 0,
+      "total_attempts": 1,
+      "failure_type": null,
+      "diagnosis_done": false,
+      "research_queries": [],
+      "error_history": [],
+      "decomposed": false,
+      "sub_features": [],
+      "created_at": "2026-01-16T23:05:34.738198",
+      "updated_at": "2026-01-16T23:05:34.738206"
+    },
+    "F049": {
+      "feature_id": "F049",
+      "current_model": "claude-sonnet-4-5-20250929",
+      "attempts_at_current_model": 0,
+      "total_attempts": 1,
+      "failure_type": null,
+      "diagnosis_done": false,
+      "research_queries": [],
+      "error_history": [],
+      "decomposed": false,
+      "sub_features": [],
+      "created_at": "2026-01-16T23:05:34.738637",
+      "updated_at": "2026-01-16T23:05:34.738640"
     }
   },
-  "updated_at": "2026-01-16T22:50:58.408671"
+  "updated_at": "2026-01-16T23:05:34.738682"
 }
