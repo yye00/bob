@@ -14,6 +14,7 @@ from bob.cli import config as config_commands
 from bob.cli import costs as costs_commands
 from bob.cli import init as init_commands
 from bob.cli import logs as logs_commands
+from bob.cli import plugin as plugin_commands
 from bob.cli import project as project_commands
 from bob.cli import research as research_commands
 from bob.cli import run as run_commands
@@ -233,6 +234,10 @@ def config() -> None:
 # Add config subcommands
 config.add_command(config_commands.show)
 config.add_command(config_commands.set_config)
+
+
+# Add plugin command group directly (it's already a group)
+cli.add_command(plugin_commands.plugin)
 
 
 # ============================================================================
