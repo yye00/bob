@@ -3685,3 +3685,101 @@ Ready features (dependencies satisfied):
 - F066: Unit tests for ResearchController - Test research workflow (MEDIUM)
 - F069: CLI output formatting - Ensure consistent and readable output (MEDIUM)
 - F071: Documentation - Create docs/ directory with detailed guides (MEDIUM)
+
+
+================================================================================
+SESSION 35 - 2026-01-17
+================================================================================
+
+FEATURES COMPLETED:
+1. F064: Unit tests for TaskQueue - Test dependency resolution
+2. F065: Unit tests for CostTracker - Test cost calculations
+3. F066: Unit tests for ResearchController - Test research workflow
+4. F060: Structured logging test - Verify JSON logging works correctly
+
+F064: Unit Tests for TaskQueue
+-------------------------------
+**Status:** Tests already existed and were passing!
+
+Test Coverage:
+- tests/test_task_queue.py (31 tests, 95% coverage)
+- Tests get_ready_tasks() with various dependency scenarios
+- Tests priority ordering and blocking behavior  
+- Tests complex DAG handling
+- Tests parallel execution with run_parallel()
+- All requirements from F064 steps satisfied
+
+F065: Unit Tests for CostTracker
+---------------------------------
+**Status:** Tests already existed and were passing!
+
+Test Coverage:
+- tests/test_cost_tracker.py (23 tests, 95% coverage)
+- Tests cost calculations with various token counts
+- Tests cache read discount calculation
+- Tests pricing for different models (Sonnet, Opus, Haiku)
+- Tests get_project_costs() aggregation
+- Tests cost breakdown by model
+- All requirements from F065 steps satisfied
+
+F066: Unit Tests for ResearchController
+----------------------------------------
+**Status:** Tests already existed and were passing!
+
+Test Coverage:
+- tests/test_research_controller.py (23 tests, 97% coverage)
+- Tests should_research() logic
+- Tests run_research() with mock Perplexity
+- Tests web search fallback
+- Tests research findings documentation
+- Tests get_implementation_context() with research
+- All requirements from F066 steps satisfied
+
+F060: Structured Logging Integration Test
+------------------------------------------
+**Status:** Created 11 new integration tests - all passing!
+
+Implementation:
+- Created tests/test_integration_logging.py (11 tests, ~500 lines)
+- Tests JSON log file creation in .bob/logs/
+- Tests log schema with proper structure (context nested)
+- Tests event type logging (all EventType enum values)
+- Tests different log levels (DEBUG, INFO, WARNING, ERROR)
+- Tests exception logging with traceback
+- Tests context propagation across log entries
+- Tests log file rotation
+- Tests CLI log filtering by session, event type, and level
+
+Key Findings:
+- Log files use .log extension (not .jsonl)
+- Context fields are nested under "context" key
+- Extra data is nested under "extra_data" key
+- EventType values: SESSION_STARTED (not SESSION_START), etc.
+- set_context() takes individual kwargs, not LogContext object
+- create_logger() signature: (name, project_workspace, level)
+
+Test Results:
+- All 966 tests passing (955 existing + 11 new)
+- No regressions
+- Clean codebase state
+
+PROGRESS:
+- 61/75 features passing (81.3%)
+- +4 features this session (F064, F065, F066, F060)
+- 14 features remaining
+- 11 new integration tests added
+
+All tests passing. Clean codebase state.
+
+NEXT SESSION PRIORITIES:
+Ready features (dependencies satisfied):
+- F055: Spec sync integration test - Test spec synchronization (MEDIUM)
+- F056: Checkpoint resume integration test - Test session checkpointing (MEDIUM)
+- F058: Dependency graph validation - Test complex DAG handling (MEDIUM)
+- F069: CLI output formatting - Ensure consistent and readable output (MEDIUM)
+- F019: Task add command - Implement 'bob task add' (LOW)
+- F045: Config edit command - Implement 'bob config edit' (LOW)
+
+Note: F064, F065, F066 were already implemented with comprehensive tests - just
+needed verification and marking as passing.
+
