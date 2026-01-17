@@ -2354,3 +2354,99 @@ to sync before running if the spec has changed.
    Dependencies: None
 
 =================================================================
+
+=================================================================
+Session 21: F032 Implementation Complete
+=================================================================
+Date: 2026-01-16
+Agent: Claude (Coding Agent)
+
+Feature Implemented:
+-------------------
+F032: Run command with parallel execution - Add --parallel flag to 'bob run'
+
+Status: ✅ PASSING (34/75 features, 45.3% complete)
+
+Implementation Details:
+----------------------
+
+1. Created bob/cli/run.py (262 lines)
+   - Main run command with --parallel, --task, --max-turns, --agent, --model options
+   - JSON output support for programmatic access
+   - _run_parallel() helper function for concurrent execution
+   - Integration with TaskQueue.get_ready_tasks() and run_parallel()
+   - Rich console output with tables and status messages
+
+2. Updated bob/cli/main.py
+   - Imported run_commands module
+   - Registered run command in CLI
+   - Removed empty run group placeholder
+
+3. Created tests/test_cli_run.py (500+ lines, 17 tests)
+   - TestRunCommand: Basic functionality tests (3 tests)
+   - TestRunParallelExecution: Parallel execution tests (9 tests)
+   - TestRunCommandOptions: Command option tests (5 tests)
+   - Helper function extract_json() for robust JSON parsing with stderr
+   - All tests passing
+
+Features Verified:
+-----------------
+✅ --parallel option accepts integer for max concurrent tasks
+✅ Uses TaskQueue.get_ready_tasks() to get independent tasks  
+✅ Calls TaskQueue.run_parallel() with ready tasks
+✅ Displays parallel execution status with rich tables
+✅ Tests with project having parallel-ready tasks
+✅ Handles no active project gracefully
+✅ Handles no ready tasks scenario
+✅ Skips blocked tasks (respects dependencies)
+✅ Prioritizes critical/high priority tasks
+✅ Creates separate sessions for each parallel task
+✅ Respects max_workers limit
+✅ JSON output format with all required fields
+
+Test Results:
+------------
+- tests/test_cli_run.py: 17/17 passing ✅
+- Full test suite: 593/593 passing ✅
+- No regressions
+- Code coverage comprehensive
+
+Git Commit:
+----------
+e583a40 - "Implement F032: Run command with parallel execution - tests passing"
+
+Progress Summary:
+----------------
+- Session start: 33/75 (44.0%)
+- After F032: 34/75 (45.3%)
+- Features added this session: 1
+- Total tests: 593 (all passing)
+
+Quality Metrics:
+---------------
+- All tests passing ✅
+- No regressions ✅
+- Comprehensive test coverage ✅
+- Clean git history ✅
+- JSON output properly formatted ✅
+- Error handling robust ✅
+
+Next High-Priority Features (dependencies satisfied):
+-----------------------------------------------------
+1. F054: Parallel execution integration test (HIGH) - depends on F031 ✅
+2. F009: Project delete command (MEDIUM)
+3. F014: GitHubIssuesSource - GitHub issues as spec source (MEDIUM)
+4. F017: Task retry command (MEDIUM)
+5. F018: Task skip command (MEDIUM)
+
+Notes:
+-----
+- F032 implements the --parallel flag for 'bob run' command
+- Uses existing TaskQueue.run_parallel() infrastructure from F031
+- Single task execution (--task) and auto-select (no options) marked as TODO
+- Mock executor used for testing (real agent execution to be implemented later)
+- extract_json() helper handles mixed stdout/stderr from Click commands
+- Rich tables provide excellent user experience
+- JSON mode perfect for CI/CD integration
+
+=================================================================
