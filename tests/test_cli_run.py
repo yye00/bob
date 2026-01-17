@@ -565,3 +565,205 @@ class TestRunCommandOptions:
         assert output["status"] == "completed"
         # Should auto-select the highest priority task (critical)
         assert output["task_id"] == "F002"
+
+
+class TestRunResumeFromCheckpoint:
+    """Test run command with --resume flag for checkpoint restoration."""
+
+    @pytest.fixture
+    def setup_checkpoint(self, tmp_path: Path):
+        """Setup a test project with a checkpoint."""
+        from bob.orchestrator.checkpoint import CheckpointManager
+
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        # Create workspace dir
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Create project
+        project = Project(
+            id="proj-001",
+            name="test-resume",
+            description="Test checkpoint resume",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create task
+        task = Task(
+            id="task-001",
+            project_id="proj-001",
+            spec_id="F001",
+            title="Test Task",
+            description="Test task description",
+            status=TaskStatus.PENDING,
+            priority="high",
+            category="functional",
+            depends_on=[],
+            attempts=0,
+        )
+        db.create_task(task)
+
+        # Create session
+        session = Session(
+            id="session-001",
+            project_id="proj-001",
+            task_id="task-001",
+            agent_type=AgentType.CODING,
+            status=SessionStatus.RUNNING,
+            model="claude-sonnet-4-20250514",
+            started_at=datetime.now(),
+            turns=5,
+            input_tokens=1000,
+            output_tokens=500,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            cost=0.05,
+        )
+        db.create_session(session)
+
+        # Create checkpoint
+        checkpoint_manager = CheckpointManager(db, workspace)
+        conversation_history = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": "Can you help?"},
+            {"role": "assistant", "content": "Of course!"},
+        ]
+
+        checkpoint_id = checkpoint_manager.save_checkpoint(
+            session_id="session-001",
+            conversation_history=conversation_history,
+            metadata={"test": "data"},
+        )
+
+        return db_path, project, task, session, checkpoint_id
+
+    def test_resume_help_shows_flag(self) -> None:
+        """Test that --resume flag appears in help text."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run", "--help"])
+
+        assert result.exit_code == 0
+        assert "--resume" in result.output
+
+    def test_resume_loads_checkpoint(self, setup_checkpoint) -> None:
+        """Test resuming from a checkpoint loads checkpoint data."""
+        db_path, project, task, session, checkpoint_id = setup_checkpoint
+        runner = CliRunner()
+
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "run",
+            "--resume", checkpoint_id,
+        ])
+
+        assert result.exit_code == 0
+        assert "Resuming from checkpoint" in result.output
+        assert checkpoint_id in result.output
+        assert "Conversation turns: 4" in result.output
+        assert "test-resume" in result.output
+        assert "F001" in result.output
+
+    def test_resume_json_output(self, setup_checkpoint) -> None:
+        """Test resuming with JSON output."""
+        db_path, project, task, session, checkpoint_id = setup_checkpoint
+        runner = CliRunner()
+
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "run",
+            "--resume", checkpoint_id,
+            "--json",
+        ])
+
+        assert result.exit_code == 0
+        output = extract_json(result.output)
+        assert output["status"] == "resumed"
+        assert output["checkpoint_id"] == checkpoint_id
+        assert output["session_id"] == "session-001"
+        assert output["project_id"] == "proj-001"
+        assert output["conversation_turns"] == 4
+
+    def test_resume_nonexistent_checkpoint(self, tmp_path: Path) -> None:
+        """Test resuming from a nonexistent checkpoint."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        # Create workspace dir
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Create project
+        project = Project(
+            id="proj-001",
+            name="test-resume",
+            description="Test checkpoint resume",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "run",
+            "--resume", "nonexistent-checkpoint",
+        ])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_resume_nonexistent_checkpoint_json(self, tmp_path: Path) -> None:
+        """Test resuming from nonexistent checkpoint with JSON output."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        # Create workspace dir
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Create project
+        project = Project(
+            id="proj-001",
+            name="test-resume",
+            description="Test checkpoint resume",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "run",
+            "--resume", "nonexistent-checkpoint",
+            "--json",
+        ])
+
+        assert result.exit_code == 1
+        output = extract_json(result.output)
+        assert "error" in output
+        assert "not found" in output["error"]
+
+    def test_resume_with_task_data(self, setup_checkpoint) -> None:
+        """Test that resume displays task information from checkpoint."""
+        db_path, project, task, session, checkpoint_id = setup_checkpoint
+        runner = CliRunner()
+
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "run",
+            "--resume", checkpoint_id,
+        ])
+
+        assert result.exit_code == 0
+        # Should display task info
+        assert "F001" in result.output
+        assert "Test Task" in result.output

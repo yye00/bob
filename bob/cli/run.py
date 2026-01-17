@@ -61,6 +61,11 @@ from bob.orchestrator.engine import create_orchestrator
     help="Override model selection",
 )
 @click.option(
+    "--resume",
+    "checkpoint_id",
+    help="Resume from checkpoint with given ID",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Show what would be executed without actually running",
@@ -80,6 +85,7 @@ def run(
     max_sessions: int,
     agent: str,
     model: Optional[str],
+    checkpoint_id: Optional[str],
     dry_run: bool,
     json_output: bool,
 ) -> None:
@@ -89,6 +95,7 @@ def run(
     Start an agent session to work on tasks. By default, the agent will
     automatically select the highest-priority ready task. Use --task to
     run a specific task, or --parallel to run multiple tasks concurrently.
+    Use --resume to continue from a previous checkpoint.
 
     \b
     Examples:
@@ -98,6 +105,7 @@ def run(
       bob run --max-turns 50           # Limit turns per session
       bob run --agent coding           # Use specific agent type
       bob run --model opus             # Override model selection
+      bob run --resume <checkpoint_id> # Resume from checkpoint
       bob run --json                   # JSON output for scripting
     """
     # Get global context
@@ -109,6 +117,17 @@ def run(
 
     # Get database manager
     db = DatabaseManager(global_ctx.db_path)
+
+    # Handle resume from checkpoint
+    if checkpoint_id:
+        _run_resume(
+            db=db,
+            checkpoint_id=checkpoint_id,
+            max_turns=max_turns,
+            json_output=json_output,
+            ctx=ctx,
+        )
+        return
 
     # Determine project ID
     project_id = global_ctx.project_id
@@ -472,3 +491,125 @@ def _run_auto_select(
         json_output=json_output,
         ctx=ctx,
     )
+
+
+def _run_resume(
+    db: DatabaseManager,
+    checkpoint_id: str,
+    max_turns: int,
+    json_output: bool,
+    ctx: click.Context,
+) -> None:
+    """Resume execution from a checkpoint.
+
+    Args:
+        db: DatabaseManager instance
+        checkpoint_id: Checkpoint ID to resume from
+        max_turns: Maximum turns to continue for
+        json_output: Whether to output in JSON format
+        ctx: Click context
+    """
+    from bob.orchestrator.checkpoint import CheckpointManager
+
+    console = Console()
+
+    # First, we need to determine the project from the checkpoint
+    # We'll need to find the checkpoint file and extract project info
+    # For now, we'll try to find it in any project's checkpoint directory
+
+    # Try to get active project as fallback
+    projects = db.list_projects(status=ProjectStatus.ACTIVE, limit=100)
+
+    checkpoint_data = None
+    checkpoint_manager = None
+    project = None
+
+    # Search for checkpoint across all projects
+    for proj in projects:
+        workspace_dir = Path(proj.workspace_dir)
+        checkpoint_dir = workspace_dir / ".bob" / "checkpoints"
+
+        if checkpoint_dir.exists():
+            temp_manager = CheckpointManager(db, workspace_dir)
+            try:
+                checkpoint_data = temp_manager.restore_checkpoint(checkpoint_id)
+                checkpoint_manager = temp_manager
+                project = proj
+                break
+            except ValueError:
+                # Checkpoint not found in this project, try next
+                continue
+
+    if not checkpoint_data or not checkpoint_manager or not project:
+        if json_output:
+            click.echo(json.dumps({
+                "error": f"Checkpoint {checkpoint_id} not found in any project"
+            }))
+            ctx.exit(1)
+        else:
+            click.echo(f"✗ Checkpoint {checkpoint_id} not found")
+            click.echo()
+            click.echo("Available checkpoints:")
+            # Try to list checkpoints from the first project
+            if projects:
+                temp_manager = CheckpointManager(db, Path(projects[0].workspace_dir))
+                checkpoints = temp_manager.list_checkpoints(limit=5)
+                if checkpoints:
+                    for cp in checkpoints:
+                        click.echo(f"  - {cp['checkpoint_id']}")
+                else:
+                    click.echo("  (no checkpoints found)")
+            ctx.exit(1)
+
+    # Extract session and conversation history
+    session_id = checkpoint_data["session_id"]
+    conversation_history = checkpoint_data["conversation_history"]
+    task_data = checkpoint_data.get("task")
+
+    if not json_output:
+        console.print()
+        console.print(f"[bold cyan]Resuming from checkpoint:[/bold cyan] {checkpoint_id}")
+        console.print()
+        console.print(f"  Project: {project.name}")
+        console.print(f"  Session ID: {session_id}")
+        console.print(f"  Conversation turns: {len(conversation_history)}")
+        if task_data:
+            console.print(f"  Task: {task_data['spec_id']} - {task_data['title']}")
+        console.print()
+
+    # Create orchestrator and resume
+    from bob.orchestrator.engine import OrchestratorConfig
+
+    project_dir = Path(project.workspace_dir)
+    config = OrchestratorConfig(
+        default_model=checkpoint_data["session"].get("model", "claude-sonnet-4-20250514"),
+    )
+    orchestrator = create_orchestrator(
+        db_manager=db,
+        project_id=project.id,
+        project_dir=project_dir,
+        config=config,
+    )
+
+    # Resume execution with conversation history
+    # For now, this is a placeholder - real implementation will use agent SDK
+    if json_output:
+        click.echo(json.dumps({
+            "status": "resumed",
+            "checkpoint_id": checkpoint_id,
+            "session_id": session_id,
+            "project_id": project.id,
+            "conversation_turns": len(conversation_history),
+            "message": "Session resumed from checkpoint (placeholder implementation)"
+        }, indent=2))
+    else:
+        console.print("[yellow]Note: Full resume execution not yet implemented[/yellow]")
+        console.print("[yellow]This is a placeholder that will integrate with Claude SDK[/yellow]")
+        console.print()
+        console.print("✓ Checkpoint loaded successfully")
+        console.print()
+        console.print("Next steps:")
+        console.print("  - Restore conversation history to agent")
+        console.print("  - Continue execution from checkpoint state")
+        console.print("  - Save new checkpoints periodically")
+        console.print()
