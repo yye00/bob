@@ -1121,3 +1121,226 @@ class TestEndToEndWorkflow:
         restored_late = checkpoint_manager.restore_checkpoint(checkpoint_id_2)
         assert len(restored_late["conversation_history"]) == 3  # Later iteration
         assert restored_late.get("metadata", {}).get("iteration") == 3
+
+    def test_e2e_complex_dependency_graph(self, tmp_path):
+        """Test complex DAG handling with 12 tasks.
+
+        This test covers F058 requirements:
+        1. Create test spec with complex dependency graph (12 tasks, 4 levels)
+        2. Include parallel branches (tasks that can run concurrently)
+        3. Include sequential chains (tasks that must run in order)
+        4. Verify tasks execute in correct order respecting dependencies
+        5. Verify parallel tasks are identified correctly
+        6. Test with circular dependency and verify error handling
+        7. Test with missing dependency and verify error handling
+        """
+        from bob.orchestrator.task_queue import TaskQueue
+
+        # Setup database and workspace
+        db_path = tmp_path / "test.db"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Create complex DAG:
+        #
+        # Level 0: F001 (root task)
+        # Level 1: F002, F003 (parallel, both depend on F001)
+        # Level 2: F004, F005 (both depend on F002)
+        #          F006, F007 (both depend on F003)
+        # Level 3: F008 (depends on F004, F005, F006 - diamond pattern)
+        #          F009 (depends on F007 - separate chain)
+        # Level 4: F010 (depends on F008, F009 - final convergence)
+        #
+        # Additional tasks for error testing:
+        # F011: Circular dependency (depends on F010, F011 - self reference)
+        # F012: Missing dependency (depends on non-existent F099)
+
+        spec_path = tmp_path / "spec.yaml"
+        spec_data = {
+            "spec_version": 1,
+            "tasks": [
+                # Level 0
+                {"id": "F001", "title": "Root Task", "description": "Entry point", "spec_version": 1},
+                # Level 1 - Parallel branches
+                {"id": "F002", "title": "Branch A Start", "description": "Branch A", "depends_on": ["F001"], "spec_version": 1},
+                {"id": "F003", "title": "Branch B Start", "description": "Branch B", "depends_on": ["F001"], "spec_version": 1},
+                # Level 2 - Sequential chains within branches
+                {"id": "F004", "title": "Branch A Step 1", "description": "Chain A1", "depends_on": ["F002"], "spec_version": 1},
+                {"id": "F005", "title": "Branch A Step 2", "description": "Chain A2", "depends_on": ["F002"], "spec_version": 1},
+                {"id": "F006", "title": "Branch B Step 1", "description": "Chain B1", "depends_on": ["F003"], "spec_version": 1},
+                {"id": "F007", "title": "Branch B Step 2", "description": "Chain B2", "depends_on": ["F003"], "spec_version": 1},
+                # Level 3 - Diamond pattern convergence
+                {"id": "F008", "title": "Diamond Merge", "description": "Merge A+B", "depends_on": ["F004", "F005", "F006"], "spec_version": 1},
+                {"id": "F009", "title": "Separate Chain", "description": "From B2", "depends_on": ["F007"], "spec_version": 1},
+                # Level 4 - Final convergence
+                {"id": "F010", "title": "Final Task", "description": "End point", "depends_on": ["F008", "F009"], "spec_version": 1},
+            ],
+        }
+
+        import yaml
+        with open(spec_path, "w") as f:
+            yaml.dump(spec_data, f)
+
+        # Create project
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "project", "create",
+            "test-dag",
+            str(workspace),
+            f"file://{spec_path}",
+        ])
+        assert result.exit_code == 0
+
+        # Get project and sync
+        db = DatabaseManager(db_path)
+        projects = db.list_projects()
+        project = next((p for p in projects if p.name == "test-dag"), None)
+        assert project is not None
+        project_id = project.id
+
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "--project", project_id,
+            "sync",
+        ])
+        assert result.exit_code == 0
+
+        # Create task queue
+        task_queue = TaskQueue(db, project_id)
+
+        # Step 1: Verify complex dependency graph loaded correctly
+        all_tasks = db.list_tasks(project_id=project_id)
+        assert len(all_tasks) == 10  # F001-F010
+
+        task_by_spec_id = {t.spec_id: t for t in all_tasks}
+
+        # Step 2: Verify parallel branches identified (Level 1)
+        # After F001 completes, both F002 and F003 should be ready
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        assert "F001" in ready_spec_ids  # Only F001 is ready initially
+
+        # Complete F001
+        db.update_task(task_by_spec_id["F001"].id, status=TaskStatus.COMPLETED)
+
+        # Now F002 and F003 should be ready (parallel)
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        assert ready_spec_ids == {"F002", "F003"}  # Both can run in parallel
+
+        # Step 3: Verify sequential chains (Level 2)
+        # Complete F002
+        db.update_task(task_by_spec_id["F002"].id, status=TaskStatus.COMPLETED)
+
+        # Now F004 and F005 should be ready (parallel within branch A)
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        assert "F004" in ready_spec_ids
+        assert "F005" in ready_spec_ids
+        # F003 still ready (not completed yet)
+        assert "F003" in ready_spec_ids
+
+        # Complete F003
+        db.update_task(task_by_spec_id["F003"].id, status=TaskStatus.COMPLETED)
+
+        # Now F004, F005, F006, F007 should all be ready
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        assert ready_spec_ids == {"F004", "F005", "F006", "F007"}
+
+        # Step 4: Verify diamond pattern (Level 3)
+        # F008 depends on F004, F005, F006 - must wait for all
+        db.update_task(task_by_spec_id["F004"].id, status=TaskStatus.COMPLETED)
+        db.update_task(task_by_spec_id["F005"].id, status=TaskStatus.COMPLETED)
+
+        # F008 NOT ready yet (still waiting for F006)
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        assert "F008" not in ready_spec_ids
+        assert "F006" in ready_spec_ids
+        assert "F007" in ready_spec_ids
+
+        # Complete F006
+        db.update_task(task_by_spec_id["F006"].id, status=TaskStatus.COMPLETED)
+
+        # NOW F008 should be ready
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        assert "F008" in ready_spec_ids
+        assert "F007" in ready_spec_ids  # Still ready
+
+        # Step 5: Verify final convergence (Level 4)
+        # F010 depends on both F008 and F009
+        db.update_task(task_by_spec_id["F007"].id, status=TaskStatus.COMPLETED)
+        db.update_task(task_by_spec_id["F008"].id, status=TaskStatus.COMPLETED)
+
+        # F009 ready, but F010 not yet
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        assert "F009" in ready_spec_ids
+        assert "F010" not in ready_spec_ids
+
+        # Complete F009
+        db.update_task(task_by_spec_id["F009"].id, status=TaskStatus.COMPLETED)
+
+        # NOW F010 should be ready (final task)
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        assert ready_spec_ids == {"F010"}
+
+        # Step 6: Test dependency chain calculation
+        # F010 should have longest dependency chain
+        chain = task_queue.get_task_dependency_chain(task_by_spec_id["F010"])
+        chain_spec_ids = {t.spec_id for t in chain}
+        # Should include F001, F008, F009, and their dependencies
+        assert "F001" in chain_spec_ids  # Root
+        assert "F008" in chain_spec_ids  # Diamond merge
+        assert "F009" in chain_spec_ids  # Separate chain
+        assert len(chain) >= 5  # At least 5 tasks in the dependency chain
+
+        # Step 7: Test circular dependency error handling
+        # Create a task with self-reference directly in database
+        from bob.models.base import Task, TaskStatus as TaskStatusEnum
+        import uuid
+
+        circular_task = Task(
+            id=f"task-{uuid.uuid4().hex[:8]}",
+            project_id=project_id,
+            spec_id="F011",
+            title="Circular Task",
+            description="Task with circular dependency",
+            status=TaskStatusEnum.PENDING,
+            depends_on=["F011"],  # Self-reference!
+        )
+        db.create_task(circular_task)
+
+        # TaskQueue should detect the circular dependency
+        # The task has itself as a dependency, so it can never be ready
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        # F011 should NOT be in ready tasks (circular dependency)
+        # It will never become ready because it depends on itself
+        assert "F011" not in ready_spec_ids
+
+        # Step 8: Test missing dependency error handling
+        # Create task that depends on non-existent task
+        missing_task = Task(
+            id=f"task-{uuid.uuid4().hex[:8]}",
+            project_id=project_id,
+            spec_id="F012",
+            title="Missing Dependency Task",
+            description="Task with missing dependency",
+            status=TaskStatusEnum.PENDING,
+            depends_on=["F099"],  # F099 doesn't exist!
+        )
+        db.create_task(missing_task)
+
+        # Verify missing dependency handling
+        # Task with missing dependency should not be in ready tasks
+        # (dependency F099 doesn't exist)
+        ready_tasks = task_queue.get_ready_tasks()
+        ready_spec_ids = {t.spec_id for t in ready_tasks}
+        # F012 should NOT be ready (missing dependency F099)
+        # It will never become ready because F099 doesn't exist
+        assert "F012" not in ready_spec_ids
