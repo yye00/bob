@@ -1,0 +1,228 @@
+# Example Spec: Command-Line Tool
+# Demonstrates building a CLI application with argument parsing and file operations
+
+name: File Analyzer CLI
+description: A command-line tool to analyze text files and generate statistics
+
+defaults:
+  priority: 2
+  category: functional
+
+tasks:
+  # Project Setup
+  - id: project-init
+    title: Initialize Python Project
+    description: Set up Python project structure with pyproject.toml
+    acceptance_criteria:
+      - pyproject.toml exists with correct metadata
+      - src/ directory structure is created
+      - Project can be installed with pip install -e .
+    steps:
+      - Create src/file_analyzer/ directory
+      - Create pyproject.toml with project metadata
+      - Add dependencies (click, rich, pathlib)
+      - Create src/file_analyzer/__init__.py
+      - Create src/file_analyzer/__main__.py for CLI entry point
+      - Test installation with pip install -e .
+    priority: 1
+    labels: [setup, python]
+
+  # CLI Framework
+  - id: cli-framework
+    title: Implement CLI Framework with Click
+    depends_on: [project-init]
+    description: Set up Click-based CLI with main command group
+    acceptance_criteria:
+      - Main CLI command responds to --help
+      - --version flag shows version number
+      - Command group structure is set up
+    steps:
+      - Import click in __main__.py
+      - Create main() function with @click.group decorator
+      - Add --version option
+      - Add --verbose flag for debug output
+      - Test that file-analyzer --help works
+    priority: 1
+    labels: [cli, framework]
+
+  # File Reading
+  - id: file-reader
+    title: File Reading Module
+    depends_on: [project-init]
+    description: Create module to safely read text files
+    acceptance_criteria:
+      - Can read text files of any size
+      - Handles different encodings (UTF-8, ASCII, Latin-1)
+      - Provides error messages for binary files
+      - Handles file not found errors gracefully
+    steps:
+      - Create src/file_analyzer/reader.py
+      - Implement read_file() function with encoding detection
+      - Add error handling for FileNotFoundError
+      - Add check for binary files
+      - Handle encoding errors with fallback
+      - Write tests for various file types
+    priority: 1
+    labels: [core, io]
+
+  # Statistics Calculator
+  - id: stats-calculator
+    title: Text Statistics Calculator
+    depends_on: [file-reader]
+    description: Calculate various statistics from text content
+    acceptance_criteria:
+      - Counts total lines
+      - Counts total words
+      - Counts total characters
+      - Identifies most common words
+      - Calculates average word length
+    steps:
+      - Create src/file_analyzer/stats.py
+      - Implement line_count() function
+      - Implement word_count() function
+      - Implement char_count() function
+      - Implement most_common_words() function
+      - Implement average_word_length() function
+      - Add tests for each statistic
+    priority: 1
+    labels: [core, analysis]
+
+  # Analyze Command
+  - id: analyze-command
+    title: Implement analyze Command
+    depends_on: [cli-framework, stats-calculator]
+    description: Create main analyze command that ties everything together
+    acceptance_criteria:
+      - file-analyzer analyze command shows all statistics
+      - Output is formatted with Rich library
+      - Progress bar shown for large files
+      - Supports glob patterns like *.txt
+    steps:
+      - Create analyze command with @click.command()
+      - Add file argument with path validation
+      - Integrate file reader and stats calculator
+      - Format output with Rich tables
+      - Add progress bar for multi-file analysis
+      - Test with single file and glob patterns
+    priority: 1
+    labels: [cli, command]
+
+  # Compare Command
+  - id: compare-command
+    title: Implement compare Command
+    depends_on: [analyze-command]
+    description: Compare statistics between two or more files
+    acceptance_criteria:
+      - Accepts multiple file arguments
+      - Shows side-by-side comparison
+      - Highlights differences
+      - Supports JSON output format
+    steps:
+      - Create compare command
+      - Add multiple file arguments
+      - Calculate stats for each file
+      - Create comparison table with Rich
+      - Add --json flag for machine-readable output
+      - Test with 2+ files
+    priority: 2
+    labels: [cli, command]
+
+  # Export Functionality
+  - id: export-feature
+    title: Export Results to File
+    depends_on: [analyze-command]
+    description: Add ability to export analysis results
+    acceptance_criteria:
+      - Supports JSON export format
+      - Supports CSV export format
+      - Supports Markdown report format
+      - --output flag specifies output file
+    steps:
+      - Create src/file_analyzer/export.py
+      - Implement export_json() function
+      - Implement export_csv() function
+      - Implement export_markdown() function
+      - Add --output and --format flags to analyze command
+      - Test all export formats
+    priority: 2
+    labels: [feature, export]
+
+  # Configuration File
+  - id: config-file
+    title: Configuration File Support
+    depends_on: [cli-framework]
+    description: Support .file-analyzer.yaml configuration file
+    acceptance_criteria:
+      - Reads config from ~/.file-analyzer.yaml
+      - Reads config from ./.file-analyzer.yaml
+      - Config can set default options
+      - Command-line flags override config
+    steps:
+      - Create src/file_analyzer/config.py
+      - Implement config file discovery
+      - Parse YAML configuration
+      - Merge config with CLI options
+      - Add --config flag to specify custom config path
+      - Test config precedence
+    priority: 3
+    labels: [feature, config]
+
+  # Unit Tests
+  - id: unit-tests
+    title: Comprehensive Unit Tests
+    depends_on: [file-reader, stats-calculator]
+    description: Write tests for all core functionality
+    acceptance_criteria:
+      - Test coverage above 80%
+      - All functions have tests
+      - Edge cases are tested
+      - Tests pass in CI
+    steps:
+      - Install pytest and pytest-cov
+      - Create tests/test_reader.py
+      - Create tests/test_stats.py
+      - Create tests/test_commands.py
+      - Test error handling and edge cases
+      - Run pytest --cov to verify coverage
+    priority: 2
+    category: test
+    labels: [testing]
+
+  # Documentation
+  - id: documentation
+    title: User Documentation
+    depends_on: [analyze-command, compare-command, export-feature]
+    description: Create comprehensive user guide
+    acceptance_criteria:
+      - README.md has installation instructions
+      - All commands documented with examples
+      - API documentation for developers
+      - Tutorial for common use cases
+    steps:
+      - Write README.md with overview
+      - Document installation process
+      - Add usage examples for each command
+      - Create docs/ directory with detailed guides
+      - Add docstrings to all functions
+    priority: 3
+    category: docs
+    labels: [documentation]
+
+  # Package Distribution
+  - id: package-distribution
+    title: PyPI Package Setup
+    depends_on: [project-init, documentation]
+    description: Prepare package for PyPI distribution
+    acceptance_criteria:
+      - pyproject.toml has all required fields
+      - README.md is included in package
+      - Long description renders correctly on PyPI
+      - Entry point is correctly configured
+    steps:
+      - Update pyproject.toml with PyPI metadata
+      - Add classifiers for Python versions
+      - Configure entry point for CLI
+      - Test build with python -m build
+      - Test installation from wheel
+    priority: 3
+    labels: [packaging, distribution]

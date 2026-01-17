@@ -1,0 +1,134 @@
+# Example Spec: Research-Heavy Project
+# Demonstrates tasks that require research before implementation
+
+name: Modern API Gateway
+description: Build an API gateway with rate limiting, caching, and load balancing
+
+defaults:
+  priority: 2
+  category: functional
+
+tasks:
+  # Research Tasks
+  - id: research-api-gateway-patterns
+    title: Research API Gateway Patterns
+    description: Research modern API gateway architecture patterns and best practices
+    acceptance_criteria:
+      - Comparison of at least 3 API gateway solutions
+      - Document selected architecture pattern (reverse proxy vs sidecar vs edge)
+      - List of required features for our use case
+    steps:
+      - Search for API gateway architecture patterns 2024
+      - Compare Kong Traefik and NGINX approaches
+      - Investigate service mesh integration
+      - Document findings in docs/research/api-gateway-patterns.md
+      - Create decision matrix for architecture selection
+    priority: 1
+    category: research
+    labels: [research, architecture]
+    research_required: true
+    research_queries:
+      - "API gateway architecture patterns best practices 2024"
+      - "Kong vs Traefik vs NGINX comparison"
+      - "service mesh vs API gateway when to use"
+
+  - id: research-rate-limiting
+    title: Research Rate Limiting Algorithms
+    description: Research and select appropriate rate limiting algorithm
+    acceptance_criteria:
+      - Comparison of Token Bucket, Leaky Bucket, Fixed Window, Sliding Window
+      - Selection of algorithm with justification
+      - Implementation strategy documented
+    steps:
+      - Search for rate limiting algorithms comparison
+      - Compare token bucket leaky bucket and sliding window
+      - Research distributed rate limiting with Redis
+      - Document algorithm pros and cons
+      - Select algorithm for implementation
+      - Document implementation approach
+    priority: 1
+    category: research
+    labels: [research, algorithms]
+    research_required: true
+    research_queries:
+      - "rate limiting algorithms comparison 2024"
+      - "token bucket vs leaky bucket vs sliding window"
+      - "distributed rate limiting with Redis patterns"
+
+  - id: research-caching-strategies
+    title: Research Caching Strategies
+    description: Research caching strategies for API gateway
+    acceptance_criteria:
+      - Comparison of caching strategies (write-through, write-back, cache-aside)
+      - Cache invalidation strategies documented
+      - Selected Redis data structures for cache
+    steps:
+      - Search for API caching strategies
+      - Research cache invalidation patterns
+      - Research Redis caching patterns for API gateway
+      - Document caching strategy selection
+      - Design cache key structure
+    priority: 1
+    category: research
+    labels: [research, caching]
+    research_required: true
+    research_queries:
+      - "API caching strategies comparison"
+      - "cache invalidation patterns best practices"
+      - "Redis caching patterns for HTTP APIs"
+
+  # Project Setup
+  - id: project-setup
+    title: Initialize Project
+    depends_on: [research-api-gateway-patterns]
+    description: Set up project structure based on research findings
+    acceptance_criteria:
+      - Go module initialized
+      - Project structure follows selected pattern
+      - Dependencies installed
+    steps:
+      - Create Go module with go mod init
+      - Set up directory structure per architecture pattern
+      - Install dependencies (gorilla/mux go-redis etc)
+      - Create main.go with basic server
+    priority: 1
+    labels: [setup, golang]
+
+  # Core Gateway
+  - id: proxy-core
+    title: Implement Reverse Proxy Core
+    depends_on: [project-setup]
+    description: Build basic reverse proxy functionality
+    acceptance_criteria:
+      - Proxies requests to backend services
+      - Handles request/response transformation
+      - Proper error handling
+      - Supports HTTP and HTTPS
+    steps:
+      - Implement httputil.ReverseProxy wrapper
+      - Add request director for header manipulation
+      - Implement health checking for backends
+      - Add error handling and logging
+      - Test proxy with sample backend
+    priority: 1
+    labels: [core, proxy]
+
+  # Documentation
+  - id: documentation
+    title: API Gateway Documentation
+    depends_on: [research-api-gateway-patterns, research-rate-limiting, research-caching-strategies]
+    description: Document architecture configuration and operation
+    acceptance_criteria:
+      - Architecture document references research findings
+      - Configuration guide is complete
+      - Deployment guide exists
+      - API reference is generated
+    steps:
+      - Write architecture document based on research
+      - Document configuration options
+      - Create deployment guide for Docker and Kubernetes
+      - Generate API reference
+      - Add runbook for operations
+    priority: 3
+    category: docs
+    labels: [documentation]

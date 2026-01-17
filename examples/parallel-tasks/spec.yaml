@@ -1,0 +1,291 @@
+# Example Spec: Parallel Tasks
+# Demonstrates tasks that can run independently and in parallel
+
+name: Microservices Platform
+description: Build a microservices platform with independent services
+
+defaults:
+  priority: 2
+  category: functional
+
+tasks:
+  # Foundation (must complete first)
+  - id: shared-lib
+    title: Shared Library and Types
+    description: Create shared library with common types and utilities
+    acceptance_criteria:
+      - Protobuf definitions for all message types
+      - Shared Go module with common utilities
+      - Published to internal registry
+    steps:
+      - Create shared/ directory
+      - Define protobuf schemas
+      - Generate Go code from protobufs
+      - Create common utilities (logging, tracing, etc.)
+      - Publish as Go module
+    priority: 1
+    labels: [shared, foundation]
+
+  # These three services can be built in PARALLEL
+  # They all depend on shared-lib but not on each other
+
+  - id: user-service
+    title: User Service
+    depends_on: [shared-lib]
+    description: Microservice for user management
+    acceptance_criteria:
+      - CRUD API for users
+      - PostgreSQL database
+      - gRPC and REST endpoints
+      - Unit tests passing
+    steps:
+      - Create user-service/ directory
+      - Set up Go module
+      - Create PostgreSQL schema
+      - Implement gRPC service
+      - Add REST gateway
+      - Write unit tests
+    priority: 1
+    labels: [service, user, parallel-group-a]
+
+  - id: product-service
+    title: Product Service
+    depends_on: [shared-lib]
+    description: Microservice for product catalog
+    acceptance_criteria:
+      - CRUD API for products
+      - MongoDB database
+      - gRPC and REST endpoints
+      - Unit tests passing
+    steps:
+      - Create product-service/ directory
+      - Set up Go module
+      - Create MongoDB schema
+      - Implement gRPC service
+      - Add REST gateway
+      - Write unit tests
+    priority: 1
+    labels: [service, product, parallel-group-a]
+
+  - id: order-service
+    title: Order Service
+    depends_on: [shared-lib]
+    description: Microservice for order processing
+    acceptance_criteria:
+      - CRUD API for orders
+      - PostgreSQL database
+      - gRPC and REST endpoints
+      - Unit tests passing
+    steps:
+      - Create order-service/ directory
+      - Set up Go module
+      - Create PostgreSQL schema
+      - Implement gRPC service
+      - Add REST gateway
+      - Write unit tests
+    priority: 1
+    labels: [service, order, parallel-group-a]
+
+  # These infrastructure components can also run in PARALLEL
+  # They depend on shared-lib but not on each other
+
+  - id: api-gateway-service
+    title: API Gateway Service
+    depends_on: [shared-lib]
+    description: API gateway for external clients
+    acceptance_criteria:
+      - Routes requests to appropriate services
+      - Rate limiting and authentication
+      - REST API documentation
+    steps:
+      - Create api-gateway/ directory
+      - Set up routing to services
+      - Implement rate limiting
+      - Add authentication middleware
+      - Generate OpenAPI docs
+    priority: 1
+    labels: [infrastructure, gateway, parallel-group-b]
+
+  - id: notification-service
+    title: Notification Service
+    depends_on: [shared-lib]
+    description: Service for sending notifications
+    acceptance_criteria:
+      - Email notification support
+      - SMS notification support
+      - Pub/Sub integration
+      - Template system
+    steps:
+      - Create notification-service/ directory
+      - Integrate email provider (SendGrid)
+      - Integrate SMS provider (Twilio)
+      - Set up Pub/Sub subscriptions
+      - Create notification templates
+    priority: 2
+    labels: [infrastructure, notification, parallel-group-b]
+
+  - id: analytics-service
+    title: Analytics Service
+    depends_on: [shared-lib]
+    description: Service for analytics and reporting
+    acceptance_criteria:
+      - Collects metrics from all services
+      - Time-series database (InfluxDB)
+      - Analytics API
+      - Real-time dashboards
+    steps:
+      - Create analytics-service/ directory
+      - Set up InfluxDB
+      - Create metrics collection pipeline
+      - Implement analytics API
+      - Create Grafana dashboards
+    priority: 2
+    labels: [infrastructure, analytics, parallel-group-b]
+
+  # Integration tests require ALL services to be complete
+  # Cannot run in parallel with anything
+
+  - id: integration-tests
+    title: Cross-Service Integration Tests
+    depends_on: [user-service, product-service, order-service, api-gateway-service]
+    description: End-to-end tests across all services
+    acceptance_criteria:
+      - Tests complete user workflows
+      - Tests service-to-service communication
+      - Tests failure scenarios
+      - All tests passing
+    steps:
+      - Create integration-tests/ directory
+      - Set up test environment with docker-compose
+      - Write end-to-end test scenarios
+      - Test happy paths
+      - Test error handling
+      - Run tests in CI
+    priority: 1
+    category: test
+    labels: [testing, integration]
+
+  # Docker configs can be created in PARALLEL
+  # Each only depends on its own service
+
+  - id: user-service-docker
+    title: Dockerize User Service
+    depends_on: [user-service]
+    description: Create Docker image for user service
+    acceptance_criteria:
+      - Multi-stage Dockerfile
+      - Image size < 50MB
+      - Health check endpoint
+    steps:
+      - Create Dockerfile
+      - Optimize image size
+      - Add health check
+      - Test image locally
+    priority: 2
+    labels: [docker, user, parallel-group-c]
+
+  - id: product-service-docker
+    title: Dockerize Product Service
+    depends_on: [product-service]
+    description: Create Docker image for product service
+    acceptance_criteria:
+      - Multi-stage Dockerfile
+      - Image size < 50MB
+      - Health check endpoint
+    steps:
+      - Create Dockerfile
+      - Optimize image size
+      - Add health check
+      - Test image locally
+    priority: 2
+    labels: [docker, product, parallel-group-c]
+
+  - id: order-service-docker
+    title: Dockerize Order Service
+    depends_on: [order-service]
+    description: Create Docker image for order service
+    acceptance_criteria:
+      - Multi-stage Dockerfile
+      - Image size < 50MB
+      - Health check endpoint
+    steps:
+      - Create Dockerfile
+      - Optimize image size
+      - Add health check
+      - Test image locally
+    priority: 2
+    labels: [docker, order, parallel-group-c]
+
+  - id: gateway-docker
+    title: Dockerize API Gateway
+    depends_on: [api-gateway-service]
+    description: Create Docker image for API gateway
+    acceptance_criteria:
+      - Multi-stage Dockerfile
+      - Image size < 50MB
+      - Health check endpoint
+    steps:
+      - Create Dockerfile
+      - Optimize image size
+      - Add health check
+      - Test image locally
+    priority: 2
+    labels: [docker, gateway, parallel-group-c]
+
+  # Orchestration requires all Docker images
+  - id: kubernetes-deploy
+    title: Kubernetes Deployment
+    depends_on: [user-service-docker, product-service-docker, order-service-docker, gateway-docker]
+    description: Create Kubernetes manifests for all services
+    acceptance_criteria:
+      - Deployments for all services
+      - Services and Ingress configured
+      - ConfigMaps and Secrets
+      - Helm chart created
+    steps:
+      - Create K8s manifests
+      - Create Helm chart
+      - Configure service discovery
+      - Set up ingress
+      - Test deployment
+    priority: 2
+    labels: [kubernetes, orchestration]
+
+  # Monitoring can be set up in parallel with other infrastructure
+  - id: monitoring-stack
+    title: Monitoring and Observability
+    depends_on: [shared-lib]
+    description: Set up monitoring for all services
+    acceptance_criteria:
+      - Prometheus deployed
+      - Grafana dashboards created
+      - Log aggregation (ELK/Loki)
+      - Distributed tracing (Jaeger)
+    steps:
+      - Deploy Prometheus
+      - Create Grafana dashboards
+      - Set up log aggregation
+      - Configure distributed tracing
+      - Create alerts
+    priority: 2
+    labels: [monitoring, observability, parallel-group-b]
+
+  # Documentation can be written in parallel with development
+  - id: api-documentation
+    title: API Documentation
+    depends_on: [shared-lib]
+    description: Comprehensive API documentation
+    acceptance_criteria:
+      - OpenAPI specs for all services
+      - Architecture diagrams
+      - Deployment guide
+      - Development guide
+    steps:
+      - Generate OpenAPI specs
+      - Create architecture diagrams
+      - Write deployment guide
+      - Write development guide
+      - Set up API docs website
+    priority: 3
+    category: docs
+    labels: [documentation, parallel-group-b]

@@ -2610,8 +2610,8 @@
       "Add README.md to each example explaining the project",
       "Test each example can be run with 'bob run'"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T04:27:20.089918+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
