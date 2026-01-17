@@ -700,3 +700,245 @@ class TestGetNextTask:
         # Should return F001 (the only ready task), not F002 (blocked)
         assert next_task is not None
         assert next_task.spec_id == "F001"
+
+
+class TestRunParallel:
+    """Test run_parallel() method for concurrent task execution."""
+
+    def test_run_parallel_empty_list(self, db, sample_project):
+        """Test run_parallel with empty task list."""
+        queue = TaskQueue(db, project_id=sample_project.id)
+        results = queue.run_parallel([])
+        assert results == []
+
+    def test_run_parallel_single_task(self, db, sample_project):
+        """Test run_parallel with single task."""
+        task = Task(
+            id="task-001",
+            project_id=sample_project.id,
+            spec_id="F001",
+            title="Task 1",
+            description="Task 1",
+            status=TaskStatus.PENDING,
+            depends_on=[],
+        )
+        db.create_task(task)
+
+        queue = TaskQueue(db, project_id=sample_project.id)
+        results = queue.run_parallel([task])
+
+        assert len(results) == 1
+        assert results[0]["task_id"] == task.id
+        assert results[0]["spec_id"] == "F001"
+        assert results[0]["status"] == "success"
+        assert results[0]["session_id"] is not None
+
+    def test_run_parallel_multiple_tasks(self, db, sample_project):
+        """Test run_parallel with multiple independent tasks."""
+        tasks = []
+        for i in range(1, 6):
+            task = Task(
+                id=f"task-{i:03d}",
+                project_id=sample_project.id,
+                spec_id=f"F{i:03d}",
+                title=f"Task {i}",
+                description=f"Task {i}",
+                status=TaskStatus.PENDING,
+                depends_on=[],
+            )
+            db.create_task(task)
+            tasks.append(task)
+
+        queue = TaskQueue(db, project_id=sample_project.id)
+        results = queue.run_parallel(tasks, max_workers=3)
+
+        # Should have results for all tasks
+        assert len(results) == 5
+
+        # All should be successful
+        for result in results:
+            assert result["status"] == "success"
+            assert result["session_id"] is not None
+            assert result["task_id"] in [t.id for t in tasks]
+
+        # Verify sessions were created in database
+        sessions = db.list_sessions(project_id=sample_project.id)
+        assert len(sessions) == 5
+
+    def test_run_parallel_creates_separate_sessions(self, db, sample_project):
+        """Test that run_parallel creates a separate session for each task."""
+        tasks = []
+        for i in range(1, 4):
+            task = Task(
+                id=f"task-{i:03d}",
+                project_id=sample_project.id,
+                spec_id=f"F{i:03d}",
+                title=f"Task {i}",
+                description=f"Task {i}",
+                status=TaskStatus.PENDING,
+                depends_on=[],
+            )
+            db.create_task(task)
+            tasks.append(task)
+
+        queue = TaskQueue(db, project_id=sample_project.id)
+        results = queue.run_parallel(tasks, max_workers=2)
+
+        # Extract session IDs
+        session_ids = [r["session_id"] for r in results]
+
+        # All session IDs should be unique
+        assert len(session_ids) == len(set(session_ids))
+
+        # Verify each session links to correct task
+        for result in results:
+            session = db.get_session(result["session_id"])
+            assert session is not None
+            assert session.task_id == result["task_id"]
+            assert session.project_id == sample_project.id
+
+    def test_run_parallel_handles_individual_failures(self, db, sample_project):
+        """Test that failures in individual tasks don't stop others."""
+        tasks = []
+        for i in range(1, 4):
+            task = Task(
+                id=f"task-{i:03d}",
+                project_id=sample_project.id,
+                spec_id=f"F{i:03d}",
+                title=f"Task {i}",
+                description=f"Task {i}",
+                status=TaskStatus.PENDING,
+                depends_on=[],
+            )
+            db.create_task(task)
+            tasks.append(task)
+
+        # Custom executor that fails on second task
+        def failing_executor(task: Task) -> dict:
+            if task.spec_id == "F002":
+                raise ValueError("Simulated task failure")
+            return {"status": "success"}
+
+        queue = TaskQueue(db, project_id=sample_project.id)
+        results = queue.run_parallel(tasks, executor_func=failing_executor)
+
+        # Should have results for all tasks
+        assert len(results) == 3
+
+        # Check individual results
+        results_by_spec = {r["spec_id"]: r for r in results}
+
+        # F001 should succeed
+        assert results_by_spec["F001"]["status"] == "success"
+
+        # F002 should fail
+        assert results_by_spec["F002"]["status"] == "error"
+        assert "Simulated task failure" in results_by_spec["F002"]["error"]
+
+        # F003 should succeed (not affected by F002 failure)
+        assert results_by_spec["F003"]["status"] == "success"
+
+    def test_run_parallel_with_custom_executor(self, db, sample_project):
+        """Test run_parallel with custom executor function."""
+        task = Task(
+            id="task-001",
+            project_id=sample_project.id,
+            spec_id="F001",
+            title="Task 1",
+            description="Task 1",
+            status=TaskStatus.PENDING,
+            depends_on=[],
+        )
+        db.create_task(task)
+
+        # Custom executor that returns custom data
+        def custom_executor(task: Task) -> dict:
+            return {
+                "status": "success",
+                "custom_data": f"Processed {task.spec_id}",
+            }
+
+        queue = TaskQueue(db, project_id=sample_project.id)
+        results = queue.run_parallel([task], executor_func=custom_executor)
+
+        assert len(results) == 1
+        assert results[0]["status"] == "success"
+
+    def test_run_parallel_respects_max_workers(self, db, sample_project):
+        """Test that run_parallel respects max_workers parameter."""
+        import threading
+        import time
+
+        # Track concurrent executions
+        concurrent_count = 0
+        max_concurrent = 0
+        lock = threading.Lock()
+
+        def tracking_executor(task: Task) -> dict:
+            nonlocal concurrent_count, max_concurrent
+
+            with lock:
+                concurrent_count += 1
+                max_concurrent = max(max_concurrent, concurrent_count)
+
+            time.sleep(0.05)  # Simulate work
+
+            with lock:
+                concurrent_count -= 1
+
+            return {"status": "success"}
+
+        # Create 10 tasks
+        tasks = []
+        for i in range(1, 11):
+            task = Task(
+                id=f"task-{i:03d}",
+                project_id=sample_project.id,
+                spec_id=f"F{i:03d}",
+                title=f"Task {i}",
+                description=f"Task {i}",
+                status=TaskStatus.PENDING,
+                depends_on=[],
+            )
+            db.create_task(task)
+            tasks.append(task)
+
+        queue = TaskQueue(db, project_id=sample_project.id)
+
+        # Run with max_workers=3
+        results = queue.run_parallel(tasks, max_workers=3, executor_func=tracking_executor)
+
+        assert len(results) == 10
+        # Max concurrent should not exceed max_workers
+        assert max_concurrent <= 3
+
+    def test_run_parallel_returns_timing_info(self, db, sample_project):
+        """Test that run_parallel returns timing information."""
+        task = Task(
+            id="task-001",
+            project_id=sample_project.id,
+            spec_id="F001",
+            title="Task 1",
+            description="Task 1",
+            status=TaskStatus.PENDING,
+            depends_on=[],
+        )
+        db.create_task(task)
+
+        queue = TaskQueue(db, project_id=sample_project.id)
+        results = queue.run_parallel([task])
+
+        assert len(results) == 1
+        result = results[0]
+
+        # Check timing fields exist
+        assert "started_at" in result
+        assert "completed_at" in result
+
+        # Verify they're valid ISO timestamps
+        from datetime import datetime
+        started = datetime.fromisoformat(result["started_at"])
+        completed = datetime.fromisoformat(result["completed_at"])
+
+        # Completed should be after started
+        assert completed >= started

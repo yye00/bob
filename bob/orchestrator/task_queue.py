@@ -4,10 +4,14 @@ This module provides a task queue that respects task dependencies and priorities
 ensuring tasks are only executed when all their dependencies are satisfied.
 """
 
+import asyncio
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Optional
 
 from bob.database.manager import DatabaseManager
-from bob.models.base import Task, TaskStatus
+from bob.models.base import AgentType, Session, SessionStatus, Task, TaskStatus
 
 
 class TaskQueue:
@@ -236,3 +240,160 @@ class TaskQueue:
         """
         ready_tasks = self.get_ready_tasks(limit=1)
         return ready_tasks[0] if ready_tasks else None
+
+    def run_parallel(
+        self,
+        tasks: list[Task],
+        max_workers: int = 5,
+        executor_func: Optional[callable] = None,
+    ) -> list[dict]:
+        """Execute multiple tasks in parallel.
+
+        This method runs multiple independent tasks concurrently, creating a
+        separate session for each task. Failures in individual tasks do not
+        stop the execution of other tasks.
+
+        Args:
+            tasks: List of Task objects to execute in parallel
+            max_workers: Maximum number of concurrent workers (default: 5)
+            executor_func: Optional callable to execute each task. If None,
+                          a mock executor is used that simulates task execution
+                          for testing purposes. In production, this should be
+                          a function that executes the actual agent session.
+                          Signature: func(task: Task) -> dict
+
+        Returns:
+            List of result dictionaries, one per task, containing:
+                - task_id: Task ID
+                - spec_id: Task spec ID
+                - session_id: Session ID created for this task
+                - status: "success" or "error"
+                - error: Error message (if status == "error")
+                - started_at: Start timestamp
+                - completed_at: Completion timestamp
+
+        Example:
+            >>> queue = TaskQueue(db_manager, project_id="proj-001")
+            >>> ready_tasks = queue.get_ready_tasks(limit=5)
+            >>> results = queue.run_parallel(ready_tasks, max_workers=3)
+            >>> for result in results:
+            ...     if result["status"] == "success":
+            ...         print(f"Task {result['spec_id']} completed")
+            ...     else:
+            ...         print(f"Task {result['spec_id']} failed: {result['error']}")
+        """
+        if not tasks:
+            return []
+
+        # Default executor for testing (mock implementation)
+        if executor_func is None:
+            def default_executor(task: Task) -> dict:
+                """Default mock executor for testing."""
+                import time
+                time.sleep(0.1)  # Simulate work
+                return {
+                    "task_id": task.id,
+                    "spec_id": task.spec_id,
+                    "status": "success",
+                }
+            executor_func = default_executor
+
+        results = []
+
+        # Use ThreadPoolExecutor for parallel execution
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_task = {
+                executor.submit(self._execute_task, task, executor_func): task
+                for task in tasks
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as exc:
+                    # Handle executor-level exceptions
+                    results.append({
+                        "task_id": task.id,
+                        "spec_id": task.spec_id,
+                        "session_id": None,
+                        "status": "error",
+                        "error": f"Executor exception: {str(exc)}",
+                        "started_at": datetime.now().isoformat(),
+                        "completed_at": datetime.now().isoformat(),
+                    })
+
+        return results
+
+    def _execute_task(self, task: Task, executor_func: callable) -> dict:
+        """Execute a single task and create a session for it.
+
+        This is an internal method used by run_parallel() to execute each task
+        in a separate thread.
+
+        Args:
+            task: Task to execute
+            executor_func: Function to execute the task
+
+        Returns:
+            Result dictionary with task execution details
+        """
+        started_at = datetime.now()
+        session_id = f"session-{uuid.uuid4().hex[:12]}"
+
+        try:
+            # Create a session for this task
+            session = Session(
+                id=session_id,
+                project_id=task.project_id,
+                task_id=task.id,
+                agent_type=AgentType.CODING,  # Default to coding agent
+                model="claude-sonnet-4",  # Default model
+                started_at=started_at,
+                status=SessionStatus.RUNNING,
+            )
+
+            # Store session in database
+            self.db_manager.create_session(session)
+
+            # Execute the task using the provided executor function
+            exec_result = executor_func(task)
+
+            # Update session as completed
+            session.ended_at = datetime.now()
+            session.status = SessionStatus.COMPLETED
+            self.db_manager.update_session(session)
+
+            # Return result
+            return {
+                "task_id": task.id,
+                "spec_id": task.spec_id,
+                "session_id": session_id,
+                "status": exec_result.get("status", "success"),
+                "error": exec_result.get("error"),
+                "started_at": started_at.isoformat(),
+                "completed_at": datetime.now().isoformat(),
+            }
+
+        except Exception as exc:
+            # Handle task-level exceptions
+            # Update session as failed if it was created
+            try:
+                session.ended_at = datetime.now()
+                session.status = SessionStatus.FAILED
+                self.db_manager.update_session(session)
+            except Exception:
+                pass  # Session may not have been created
+
+            return {
+                "task_id": task.id,
+                "spec_id": task.spec_id,
+                "session_id": session_id,
+                "status": "error",
+                "error": str(exc),
+                "started_at": started_at.isoformat(),
+                "completed_at": datetime.now().isoformat(),
+            }
