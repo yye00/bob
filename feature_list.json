@@ -1754,8 +1754,8 @@
       "Run 'bob project status test-app' and verify output",
       "Run 'bob costs --project test-app' and verify output"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T21:10:57.324965Z",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
