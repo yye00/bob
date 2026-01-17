@@ -524,3 +524,131 @@ def show(
         if len(sessions) > 10:
             console.print(f"[dim]Showing last 10 of {len(sessions)} sessions[/dim]")
             console.print()
+
+
+# ============================================================================
+# Task Retry Command
+# ============================================================================
+
+
+@click.command("retry")
+@click.argument("spec_id")
+@click.option(
+    "--reset-escalation",
+    is_flag=True,
+    help="Reset escalation tier to TIER1",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output in JSON format",
+)
+@click.pass_context
+def retry(
+    ctx: click.Context,
+    spec_id: str,
+    reset_escalation: bool,
+    json_output: bool,
+) -> None:
+    """Retry a failed or completed task.
+
+    \b
+    Reset task status to PENDING and clear error state.
+    Preserves error history for debugging.
+
+    \b
+    Examples:
+      bob task retry F001
+      bob task retry F042 --reset-escalation
+      bob task retry F015 --json
+    """
+    # Get global context
+    global_ctx = ctx.obj
+
+    # Override with global JSON flag if set
+    if global_ctx.json_output:
+        json_output = True
+
+    # Get database manager
+    db = DatabaseManager(global_ctx.db_path)
+
+    # Determine project ID
+    project_id = global_ctx.project_id
+    if not project_id:
+        # Try to get active project
+        projects = db.list_projects(status=ProjectStatus.ACTIVE, limit=1)
+        if not projects:
+            if json_output:
+                click.echo(json.dumps({
+                    "error": "No active project found",
+                    "message": "Use --project to specify a project or 'bob project use' to set an active project"
+                }))
+            else:
+                click.echo("Error: No active project found", err=True)
+                click.echo("Use --project to specify a project or 'bob project use' to set an active project", err=True)
+            ctx.exit(1)
+        project_id = projects[0].id
+
+    # Find task by spec_id
+    all_tasks = db.list_tasks(project_id=project_id, limit=1000)
+    task = None
+    for t in all_tasks:
+        if t.spec_id == spec_id:
+            task = t
+            break
+
+    if not task:
+        if json_output:
+            click.echo(json.dumps({
+                "error": "Task not found",
+                "spec_id": spec_id,
+                "project_id": project_id,
+            }))
+        else:
+            click.echo(f"Error: Task '{spec_id}' not found in project", err=True)
+        ctx.exit(1)
+
+    # Validate task can be retried
+    # Note: We allow retrying any task (pending, failed, completed, etc.)
+    # This provides flexibility for users
+
+    # Update task in database
+    # Note: Cannot clear failure_type (None means "don't update")
+    update_kwargs = {
+        "task_id": task.id,
+        "status": TaskStatus.PENDING,
+    }
+    if reset_escalation:
+        update_kwargs["escalation_tier"] = ModelTier.TIER1
+
+    db.update_task(**update_kwargs)
+
+    # Get updated task for display
+    task = db.get_task(task.id)
+
+    # Output result
+    if json_output:
+        click.echo(json.dumps({
+            "status": "success",
+            "message": "Task reset to pending",
+            "task": {
+                "id": task.id,
+                "spec_id": task.spec_id,
+                "title": task.title,
+                "status": task.status.value,
+                "attempts": task.attempts,
+                "escalation_tier": task.escalation_tier.value,
+            },
+            "reset_escalation": reset_escalation,
+        }, indent=2))
+    else:
+        console = Console()
+        console.print(f"✓ Task [cyan]{spec_id}[/cyan] reset to [green]PENDING[/green]")
+        console.print(f"  Title: {task.title}")
+        console.print(f"  Attempts: {task.attempts}")
+        console.print(f"  Escalation: {task.escalation_tier.value}")
+        if reset_escalation:
+            console.print(f"  [yellow]Escalation tier reset to TIER1[/yellow]")
+        console.print()
+        console.print("Run 'bob run' to execute the task")

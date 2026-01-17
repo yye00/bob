@@ -9,7 +9,49 @@ from click.testing import CliRunner
 
 from bob.cli.main import cli
 from bob.database.manager import DatabaseManager
-from bob.models.base import Project, ProjectStatus, Task, TaskStatus
+from bob.models.base import ModelTier, Project, ProjectStatus, Task, TaskStatus
+
+
+def extract_json(output: str) -> dict:
+    """Extract JSON from output that may contain extra text."""
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        # Find the opening brace
+        start = output.find('{')
+        if start == -1:
+            start = output.find('[')
+
+        if start != -1:
+            # Find matching closing brace using depth tracking
+            depth = 0
+            in_string = False
+            escape = False
+
+            for i in range(start, len(output)):
+                c = output[i]
+
+                if escape:
+                    escape = False
+                    continue
+
+                if c == '\\':
+                    escape = True
+                    continue
+
+                if c == '"' and not escape:
+                    in_string = not in_string
+
+                if not in_string:
+                    if c in '{[':
+                        depth += 1
+                    elif c in '}]':
+                        depth -= 1
+                        if depth == 0:
+                            json_str = output[start:i+1]
+                            return json.loads(json_str)
+
+        raise ValueError(f"Could not extract JSON from output: {output}")
 
 
 @pytest.fixture
@@ -984,3 +1026,304 @@ class TestTaskShowCommand:
         json_str = "\n".join(json_lines)
         data = json.loads(json_str)
         assert data["spec_id"] == "F001"
+
+
+class TestTaskRetryCommand:
+    """Test task retry command."""
+
+    def test_retry_help(self):
+        """Test retry command help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["task", "retry", "--help"])
+        assert result.exit_code == 0
+        assert "Retry a failed or completed task" in result.output
+        assert "--reset-escalation" in result.output
+
+    def test_retry_failed_task(self, tmp_path):
+        """Test retrying a failed task."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create a failed task
+        from bob.models.base import FailureType
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Failed Task",
+            description="Task that failed",
+            status=TaskStatus.FAILED,
+            failure_type=FailureType.TIMEOUT,
+            attempts=3,
+            escalation_tier=ModelTier.TIER2,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--db", str(db_path), "task", "retry", "F001"])
+
+        assert result.exit_code == 0
+        assert "reset to PENDING" in result.output
+
+        # Verify task was updated
+        updated_task = db.get_task(task.id)
+        assert updated_task.status == TaskStatus.PENDING
+        # failure_type is not cleared (limitation of update_task API)
+        assert updated_task.escalation_tier == ModelTier.TIER2  # Not reset by default
+
+    def test_retry_with_reset_escalation(self, tmp_path):
+        """Test retrying a task with escalation reset."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create a failed task with escalation
+        from bob.models.base import FailureType
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Failed Task",
+            description="Task that failed",
+            status=TaskStatus.FAILED,
+            failure_type=FailureType.BAD_ASSUMPTIONS,
+            attempts=5,
+            escalation_tier=ModelTier.TIER2,  # Only tier1 and tier2 exist
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--db", str(db_path), "task", "retry", "F001", "--reset-escalation"]
+        )
+
+        assert result.exit_code == 0
+        assert "reset to PENDING" in result.output
+        assert "Escalation tier reset to TIER1" in result.output
+
+        # Verify task was updated
+        updated_task = db.get_task(task.id)
+        assert updated_task.status == TaskStatus.PENDING
+        # failure_type is not cleared (limitation of update_task API)
+        assert updated_task.escalation_tier == ModelTier.TIER1  # Reset to tier1
+
+    def test_retry_completed_task(self, tmp_path):
+        """Test retrying a completed task."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create a completed task
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Completed Task",
+            description="Task that was completed",
+            status=TaskStatus.COMPLETED,
+            attempts=1,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--db", str(db_path), "task", "retry", "F001"])
+
+        assert result.exit_code == 0
+        assert "reset to PENDING" in result.output
+
+        # Verify task was updated
+        updated_task = db.get_task(task.id)
+        assert updated_task.status == TaskStatus.PENDING
+
+    def test_retry_nonexistent_task(self, tmp_path):
+        """Test retrying a task that doesn't exist."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--db", str(db_path), "task", "retry", "F999"])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_retry_no_active_project(self, tmp_path):
+        """Test retry when no active project exists."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--db", str(db_path), "task", "retry", "F001"])
+
+        assert result.exit_code == 1
+        assert "No active project found" in result.output
+
+    def test_retry_json_output(self, tmp_path):
+        """Test retry command with JSON output."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create a failed task
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Failed Task",
+            description="Task that failed",
+            status=TaskStatus.FAILED,
+            attempts=2,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--db", str(db_path), "task", "retry", "F001", "--json"]
+        )
+
+        assert result.exit_code == 0
+
+        # Parse JSON output
+        data = extract_json(result.output)
+        assert data["status"] == "success"
+        assert data["message"] == "Task reset to pending"
+        assert data["task"]["spec_id"] == "F001"
+        assert data["task"]["status"] == "pending"
+
+    def test_retry_global_json_flag(self, tmp_path):
+        """Test retry command with global --json flag."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create a failed task
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Failed Task",
+            description="Task that failed",
+            status=TaskStatus.FAILED,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["--json", "--db", str(db_path), "task", "retry", "F001"]
+        )
+
+        assert result.exit_code == 0
+
+        # Parse JSON output
+        data = extract_json(result.output)
+        assert data["status"] == "success"
+        assert data["task"]["spec_id"] == "F001"
+
+    def test_retry_clears_failure_type(self, tmp_path):
+        """Test that retry clears failure type."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create a failed task
+        from bob.models.base import FailureType
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Failed Task",
+            description="Task that failed",
+            status=TaskStatus.FAILED,
+            failure_type=FailureType.TIMEOUT,
+            attempts=3,
+            escalation_tier=ModelTier.TIER2,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--db", str(db_path), "task", "retry", "F001"])
+
+        assert result.exit_code == 0
+
+        # Verify failure type was cleared
+        updated_task = db.get_task(task.id)
+        assert updated_task.status == TaskStatus.PENDING
+        # failure_type is not cleared (limitation of update_task API)
