@@ -1327,3 +1327,336 @@ class TestTaskRetryCommand:
         updated_task = db.get_task(task.id)
         assert updated_task.status == TaskStatus.PENDING
         # failure_type is not cleared (limitation of update_task API)
+
+
+# ============================================================================
+# Task Skip Command Tests
+# ============================================================================
+
+
+class TestTaskSkipCommand:
+    """Test task skip command."""
+
+    def test_skip_help(self):
+        """Test skip command help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["task", "skip", "--help"])
+        assert result.exit_code == 0
+        assert "Skip a task with a reason" in result.output
+        assert "--reason" in result.output
+
+    def test_skip_pending_task(self, tmp_path):
+        """Test skipping a pending task."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Pending Task",
+            description="Task to skip",
+            status=TaskStatus.PENDING,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--db", str(db_path), "task", "skip", "F001", "--reason", "Not needed for v1.0"]
+        )
+
+        assert result.exit_code == 0
+        assert "marked as SKIPPED" in result.output
+        assert "Not needed for v1.0" in result.output
+
+        # Verify task was updated
+        updated_task = db.get_task(task.id)
+        assert updated_task.status == TaskStatus.SKIPPED
+        assert updated_task.skip_reason == "Not needed for v1.0"
+
+    def test_skip_with_short_flag(self, tmp_path):
+        """Test skipping a task with short -r flag."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Task",
+            description="Task to skip",
+            status=TaskStatus.PENDING,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--db", str(db_path), "task", "skip", "F001", "-r", "Postponed"]
+        )
+
+        assert result.exit_code == 0
+        updated_task = db.get_task(task.id)
+        assert updated_task.status == TaskStatus.SKIPPED
+        assert updated_task.skip_reason == "Postponed"
+
+    def test_skip_in_progress_task(self, tmp_path):
+        """Test skipping an in-progress task."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="In Progress Task",
+            description="Task currently running",
+            status=TaskStatus.IN_PROGRESS,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--db", str(db_path), "task", "skip", "F001", "--reason", "Cancelled"]
+        )
+
+        assert result.exit_code == 0
+        updated_task = db.get_task(task.id)
+        assert updated_task.status == TaskStatus.SKIPPED
+
+    def test_skip_cannot_skip_deprecated(self, tmp_path):
+        """Test that deprecated tasks cannot be skipped."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Deprecated Task",
+            description="Task already deprecated",
+            status=TaskStatus.DEPRECATED,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--db", str(db_path), "task", "skip", "F001", "--reason", "Test"]
+        )
+
+        assert result.exit_code == 1
+        assert "Cannot skip deprecated task" in result.output
+
+        # Verify task was not changed
+        updated_task = db.get_task(task.id)
+        assert updated_task.status == TaskStatus.DEPRECATED
+
+    def test_skip_nonexistent_task(self, tmp_path):
+        """Test skipping a task that doesn't exist."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--db", str(db_path), "task", "skip", "F999", "--reason", "Test"]
+        )
+
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_skip_no_active_project(self, tmp_path):
+        """Test skipping without an active project."""
+        db_path = tmp_path / "test.db"
+        DatabaseManager(db_path)  # Initialize db
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--db", str(db_path), "task", "skip", "F001", "--reason", "Test"]
+        )
+
+        assert result.exit_code == 1
+        assert "No active project" in result.output
+
+    def test_skip_json_output(self, tmp_path):
+        """Test skip command with JSON output."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Task",
+            description="Task to skip",
+            status=TaskStatus.PENDING,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--db", str(db_path), "task", "skip", "F001", "-r", "JSON test", "--json"]
+        )
+
+        assert result.exit_code == 0
+
+        output = extract_json(result.output)
+        assert output["status"] == "success"
+        assert output["message"] == "Task skipped"
+        assert output["task"]["spec_id"] == "F001"
+        assert output["task"]["status"] == "skipped"
+        assert output["task"]["skip_reason"] == "JSON test"
+
+    def test_skip_missing_reason(self, tmp_path):
+        """Test that skip command requires a reason."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F001",
+            title="Task",
+            description="Task to skip",
+            status=TaskStatus.PENDING,
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--db", str(db_path), "task", "skip", "F001"]
+        )
+
+        # Click will error on missing required option
+        assert result.exit_code != 0
+        assert "--reason" in result.output or "Missing option" in result.output
+
+    def test_skip_with_dependencies(self, tmp_path):
+        """Test skipping a task that has dependencies."""
+        db_path = tmp_path / "test.db"
+        db = DatabaseManager(db_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        project = Project(
+            id="proj-001",
+            name="test-project",
+            description="Test",
+            workspace_dir=str(workspace),
+            spec_source="file://spec.yaml",
+            status=ProjectStatus.ACTIVE,
+        )
+        db.create_project(project)
+
+        # Create dependent task
+        task = Task(
+            id="task-001",
+            project_id=project.id,
+            spec_id="F002",
+            title="Dependent Task",
+            description="Task with dependencies",
+            status=TaskStatus.PENDING,
+            depends_on=["F001"],
+        )
+        db.create_task(task)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--db", str(db_path), "task", "skip", "F002", "-r", "Dependency issue"]
+        )
+
+        assert result.exit_code == 0
+        updated_task = db.get_task(task.id)
+        assert updated_task.status == TaskStatus.SKIPPED
+        assert updated_task.skip_reason == "Dependency issue"

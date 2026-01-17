@@ -281,9 +281,9 @@ class DatabaseManager:
                     acceptance_criteria, steps, depends_on, priority, category,
                     labels, status, assigned_agent, current_model, attempts,
                     escalation_tier, failure_type, research_required,
-                    research_complete, research_queries, research_findings,
+                    research_complete, research_queries, research_findings, skip_reason,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (
                     task.id,
@@ -307,6 +307,7 @@ class DatabaseManager:
                     1 if task.research_complete else 0,
                     json.dumps(task.research_queries),
                     json.dumps(task.research_findings),
+                    task.skip_reason,
                 ),
             )
         return task.id
@@ -394,6 +395,7 @@ class DatabaseManager:
         research_complete: Optional[bool] = None,
         research_findings: Optional[dict[str, Any]] = None,
         attempts: Optional[int] = None,
+        skip_reason: Optional[str] = None,
     ) -> bool:
         """Update task fields.
 
@@ -408,6 +410,7 @@ class DatabaseManager:
             research_complete: New research complete flag (optional)
             research_findings: New research findings (optional)
             attempts: New attempt count (optional)
+            skip_reason: Reason for skipping the task (optional)
 
         Returns:
             True if task was updated, False if not found
@@ -442,6 +445,9 @@ class DatabaseManager:
         if attempts is not None:
             updates.append("attempts = ?")
             params.append(attempts)
+        if skip_reason is not None:
+            updates.append("skip_reason = ?")
+            params.append(skip_reason)
 
         if not updates:
             return False
@@ -800,6 +806,12 @@ class DatabaseManager:
         Returns:
             Task object
         """
+        # Handle optional skip_reason field (added in schema v3)
+        try:
+            skip_reason = row["skip_reason"]
+        except (KeyError, IndexError):
+            skip_reason = None
+
         return Task(
             id=row["id"],
             project_id=row["project_id"],
@@ -822,6 +834,7 @@ class DatabaseManager:
             research_complete=bool(row["research_complete"]),
             research_queries=json.loads(row["research_queries"]),
             research_findings=json.loads(row["research_findings"]),
+            skip_reason=skip_reason,
         )
 
     def _row_to_session(self, row: sqlite3.Row) -> Session:

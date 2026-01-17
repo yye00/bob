@@ -606,8 +606,8 @@
       "Display confirmation message",
       "Test skipping tasks with and without dependencies"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T01:01:36.492612+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,

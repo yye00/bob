@@ -185,6 +185,7 @@ def task() -> None:
 task.add_command(task_commands.list)
 task.add_command(task_commands.show)
 task.add_command(task_commands.retry)
+task.add_command(task_commands.skip)
 
 # Add run command
 cli.add_command(run_commands.run)

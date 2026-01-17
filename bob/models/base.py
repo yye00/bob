@@ -164,6 +164,7 @@ class Task:
     research_complete: bool = False
     research_queries: list[str] = field(default_factory=list)
     research_findings: dict[str, Any] = field(default_factory=dict)
+    skip_reason: Optional[str] = None
 
 
 @dataclass

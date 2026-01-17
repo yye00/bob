@@ -652,3 +652,133 @@ def retry(
             console.print(f"  [yellow]Escalation tier reset to TIER1[/yellow]")
         console.print()
         console.print("Run 'bob run' to execute the task")
+
+
+# ============================================================================
+# Task Skip Command
+# ============================================================================
+
+
+@click.command("skip")
+@click.argument("spec_id")
+@click.option(
+    "--reason",
+    "-r",
+    required=True,
+    help="Reason for skipping this task",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output in JSON format",
+)
+@click.pass_context
+def skip(
+    ctx: click.Context,
+    spec_id: str,
+    reason: str,
+    json_output: bool,
+) -> None:
+    """Skip a task with a reason.
+
+    \b
+    Mark a task as skipped and record the reason. Skipped tasks will not be
+    executed during 'bob run' but remain in the task list for reference.
+
+    \b
+    Examples:
+      bob task skip F001 --reason "Waiting for external dependency"
+      bob task skip F042 -r "Feature postponed to v2.0"
+      bob task skip F015 --reason "Blocked by infrastructure setup" --json
+    """
+    # Get global context
+    global_ctx = ctx.obj
+
+    # Override with global JSON flag if set
+    if global_ctx.json_output:
+        json_output = True
+
+    # Get database manager
+    db = DatabaseManager(global_ctx.db_path)
+
+    # Determine project ID
+    project_id = global_ctx.project_id
+    if not project_id:
+        # Try to get active project
+        projects = db.list_projects(status=ProjectStatus.ACTIVE, limit=1)
+        if not projects:
+            if json_output:
+                click.echo(json.dumps({
+                    "error": "No active project found",
+                    "message": "Use --project to specify a project or 'bob project use' to set an active project"
+                }))
+            else:
+                click.echo("Error: No active project found", err=True)
+                click.echo("Use --project to specify a project or 'bob project use' to set an active project", err=True)
+            ctx.exit(1)
+        project_id = projects[0].id
+
+    # Find task by spec_id
+    all_tasks = db.list_tasks(project_id=project_id, limit=1000)
+    task = None
+    for t in all_tasks:
+        if t.spec_id == spec_id:
+            task = t
+            break
+
+    if not task:
+        if json_output:
+            click.echo(json.dumps({
+                "error": "Task not found",
+                "spec_id": spec_id,
+                "project_id": project_id,
+            }))
+        else:
+            click.echo(f"Error: Task '{spec_id}' not found in project", err=True)
+        ctx.exit(1)
+
+    # Validate task can be skipped
+    # Allow skipping tasks in any status except deprecated
+    if task.status == TaskStatus.DEPRECATED:
+        if json_output:
+            click.echo(json.dumps({
+                "error": "Cannot skip deprecated task",
+                "spec_id": spec_id,
+                "status": task.status.value,
+            }))
+        else:
+            click.echo(f"Error: Cannot skip deprecated task '{spec_id}'", err=True)
+        ctx.exit(1)
+
+    # Update task in database
+    db.update_task(
+        task_id=task.id,
+        status=TaskStatus.SKIPPED,
+        skip_reason=reason,
+    )
+
+    # Get updated task for display
+    task = db.get_task(task.id)
+
+    # Output result
+    if json_output:
+        click.echo(json.dumps({
+            "status": "success",
+            "message": "Task skipped",
+            "task": {
+                "id": task.id,
+                "spec_id": task.spec_id,
+                "title": task.title,
+                "status": task.status.value,
+                "skip_reason": task.skip_reason,
+            },
+        }, indent=2))
+    else:
+        console = Console()
+        console.print(f"✓ Task [cyan]{spec_id}[/cyan] marked as [yellow]SKIPPED[/yellow]")
+        console.print(f"  Title: {task.title}")
+        console.print(f"  Reason: {task.skip_reason}")
+        console.print()
+        console.print("This task will not be executed during 'bob run'")
+        console.print("To unskip, use: bob task retry " + spec_id)

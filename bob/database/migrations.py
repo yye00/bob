@@ -10,7 +10,7 @@ from typing import Optional
 
 
 # Current schema version
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -92,6 +92,22 @@ def apply_migration_2(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def apply_migration_3(conn: sqlite3.Connection) -> None:
+    """Add skip_reason field to tasks table.
+
+    Args:
+        conn: Database connection
+    """
+    # Add skip_reason column to tasks table
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN skip_reason TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
+    conn.commit()
+
+
 def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> None:
     """Apply database migrations.
 
@@ -126,6 +142,16 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
             conn.commit()
             print(f"✓ Migrated to schema version 2", file=sys.stderr)
             current_version = 2
+
+        if current_version < 3:
+            apply_migration_3(conn)
+            conn.execute(
+                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                (3, "Add skip_reason field to tasks"),
+            )
+            conn.commit()
+            print(f"✓ Migrated to schema version 3", file=sys.stderr)
+            current_version = 3
 
         if current_version < target_version:
             print(f"✓ Database now at version {current_version}", file=sys.stderr)
