@@ -106,6 +106,15 @@ class TestWorkspaceStructure:
         assert state_dir.exists()
         assert state_dir.is_dir()
 
+    def test_creates_prompts_directory(self, tmp_path: Path) -> None:
+        """Test that prompts directory is created."""
+        workspace = tmp_path / "workspace"
+        create_workspace_structure(workspace, "proj-123", "test-app")
+
+        prompts_dir = workspace / ".bob" / "prompts"
+        assert prompts_dir.exists()
+        assert prompts_dir.is_dir()
+
     def test_creates_project_yaml(self, tmp_path: Path) -> None:
         """Test that project.yaml is created."""
         workspace = tmp_path / "workspace"
@@ -129,6 +138,7 @@ class TestWorkspaceStructure:
         # Check top-level keys
         assert "project" in config
         assert "agent" in config
+        assert "prompts" in config
         assert "escalation" in config
         assert "cost_limits" in config
 

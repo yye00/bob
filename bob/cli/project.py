@@ -52,7 +52,8 @@ def create_workspace_structure(workspace_dir: Path, project_id: str, project_nam
         ├── .bob/
         │   ├── project.yaml    # Project configuration
         │   ├── logs/           # Session logs
-        │   └── state/          # Temporary state files
+        │   ├── state/          # Temporary state files
+        │   └── prompts/        # Custom prompt overrides (optional)
     """
     # Create main workspace directory
     workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -64,6 +65,7 @@ def create_workspace_structure(workspace_dir: Path, project_id: str, project_nam
     # Create subdirectories
     (bob_dir / "logs").mkdir(exist_ok=True)
     (bob_dir / "state").mkdir(exist_ok=True)
+    (bob_dir / "prompts").mkdir(exist_ok=True)
 
     # Create project.yaml config file
     project_config = {
@@ -82,6 +84,12 @@ def create_workspace_structure(workspace_dir: Path, project_id: str, project_nam
                 "model": "claude-sonnet-4-5-20250929",
                 "max_turns": 20,
             },
+        },
+        "prompts": {
+            # Custom prompts can be placed in .bob/prompts/ directory
+            # They will override global prompts with the same name
+            # Example: .bob/prompts/coding_prompt.md
+            "custom_enabled": True,
         },
         "escalation": {
             "enabled": True,
