@@ -1259,3 +1259,197 @@ class TestProjectStatusCommand:
 
             assert result.exit_code == 1
             assert "Project not found: nonexistent" in result.output
+
+
+class TestProjectDeleteCommand:
+    """Test project delete command."""
+
+    def setup_method(self) -> None:
+        """Set up test runner."""
+        self.runner = CliRunner()
+
+    def test_delete_help(self) -> None:
+        """Test delete command help text."""
+        result = self.runner.invoke(cli, ["project", "delete", "--help"])
+
+        assert result.exit_code == 0
+        assert "Delete a project and all associated data" in result.output
+        assert "--yes" in result.output
+        assert "--delete-workspace" in result.output
+
+    def test_delete_nonexistent_project(self, tmp_path: Path) -> None:
+        """Test deleting a project that doesn't exist."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "delete", "nonexistent", "--yes"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 1
+            assert "Project not found: nonexistent" in result.output
+
+    def test_delete_with_confirmation_skip(self, tmp_path: Path) -> None:
+        """Test deleting a project with --yes flag."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project first
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            # Delete with --yes flag
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "delete", "test-app", "--yes"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Project deletion complete" in result.output
+            assert "Deleted project from database: test-app" in result.output
+
+    def test_delete_with_confirmation_prompt(self, tmp_path: Path) -> None:
+        """Test deleting a project with confirmation prompt."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project first
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            # Delete with confirmation (input matches)
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "delete", "test-app"],
+                input="test-app\n",
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Project deletion complete" in result.output
+
+    def test_delete_cancels_on_wrong_confirmation(self, tmp_path: Path) -> None:
+        """Test that deletion is cancelled if confirmation doesn't match."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project first
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            # Delete with wrong confirmation
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "delete", "test-app"],
+                input="wrong-name\n",
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Deletion cancelled" in result.output
+
+            # Verify project still exists
+            list_result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "list"],
+                env={"HOME": str(tmp_path)}
+            )
+            assert "test-app" in list_result.output
+
+    def test_delete_with_workspace(self, tmp_path: Path) -> None:
+        """Test deleting a project with workspace directory deletion."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project first
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            # Verify workspace exists
+            assert workspace.exists()
+
+            # Delete with --delete-workspace
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "delete", "test-app", "--yes", "--delete-workspace"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Deleted workspace directory" in result.output
+
+            # Verify workspace was deleted
+            assert not workspace.exists()
+
+    def test_delete_displays_project_details(self, tmp_path: Path) -> None:
+        """Test that delete command displays project details before deletion."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml", "-d", "Test description"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            # Delete and check output
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "delete", "test-app", "--yes"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Project to delete: test-app" in result.output
+            assert "Description: Test description" in result.output
+            assert "Tasks: 0" in result.output
+            assert "Sessions: 0" in result.output
+
+    def test_delete_by_project_id(self, tmp_path: Path) -> None:
+        """Test deleting a project by ID instead of name."""
+        with self.runner.isolated_filesystem(temp_dir=tmp_path):
+            db_path = Path(".bob-test.db")
+            workspace = Path("workspace")
+            db = DatabaseManager(db_path)
+
+            # Create a project
+            self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "create", "test-app", str(workspace), "file://spec.yaml"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            # Get the project ID
+            projects = db.list_projects()
+            project_id = projects[0].id
+
+            # Delete by ID
+            result = self.runner.invoke(
+                cli,
+                ["--db", str(db_path), "project", "delete", project_id, "--yes"],
+                env={"HOME": str(tmp_path)}
+            )
+
+            assert result.exit_code == 0
+            assert "Project deletion complete" in result.output

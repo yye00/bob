@@ -291,8 +291,8 @@
       "Display deletion summary",
       "Test with various deletion scenarios"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T20:00:00Z",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,

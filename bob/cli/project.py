@@ -623,3 +623,172 @@ def status(ctx: click.Context, name: Optional[str], json_output: bool) -> None:
 
     click.echo()
     click.echo("=" * 80)
+
+
+@click.command()
+@click.argument("name")
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+@click.option(
+    "--delete-workspace",
+    is_flag=True,
+    help="Also delete the workspace directory on disk",
+)
+@click.pass_context
+def delete(
+    ctx: click.Context,
+    name: str,
+    yes: bool,
+    delete_workspace: bool,
+) -> None:
+    """Delete a project and all associated data.
+
+    \b
+    WARNING: This action cannot be undone!
+    Deletes:
+        - Project record from database
+        - All tasks associated with the project
+        - All sessions and execution logs
+        - Optionally: workspace directory (with --delete-workspace)
+
+    \b
+    Arguments:
+        NAME  Project name or ID to delete
+
+    \b
+    Examples:
+        bob project delete my-app                    # Delete project (with confirmation)
+        bob project delete my-app --yes              # Skip confirmation
+        bob project delete my-app --delete-workspace # Also delete workspace dir
+    """
+    import shutil
+
+    # Get database path from context
+    db_path = ctx.obj.db_path
+
+    # Initialize database manager
+    db = DatabaseManager(db_path)
+
+    # Find the project
+    project = None
+    if name.startswith("proj-"):
+        project = db.get_project(name)
+
+    # If not found, try by name
+    if not project:
+        projects = db.list_projects()
+        matching_projects = [p for p in projects if p.name == name]
+        if matching_projects:
+            project = matching_projects[0]
+
+    # If still not found, error
+    if not project:
+        click.echo(f"✗ Project not found: {name}", err=True)
+        click.echo()
+        click.echo("Available projects:")
+        all_projects = db.list_projects()
+        if all_projects:
+            for p in all_projects:
+                click.echo(f"  {p.name} ({p.id})")
+        else:
+            click.echo("  (none)")
+        sys.exit(1)
+
+    # Get task and session counts
+    tasks = db.list_tasks(project_id=project.id, limit=10000)
+    sessions = db.list_sessions(project_id=project.id, limit=10000)
+
+    # Show project details
+    click.echo()
+    click.echo("=" * 80)
+    click.echo(f"Project to delete: {project.name}")
+    click.echo("=" * 80)
+    click.echo(f"  ID: {project.id}")
+    click.echo(f"  Description: {project.description}")
+    click.echo(f"  Workspace: {project.workspace_dir}")
+    click.echo(f"  Spec source: {project.spec_source}")
+    click.echo(f"  Status: {project.status.value}")
+    click.echo()
+    click.echo(f"  Tasks: {len(tasks)}")
+    click.echo(f"  Sessions: {len(sessions)}")
+    click.echo()
+
+    # Check if workspace exists
+    workspace_exists = Path(project.workspace_dir).exists()
+    if delete_workspace:
+        if workspace_exists:
+            click.echo(f"  Workspace directory will be DELETED: {project.workspace_dir}")
+        else:
+            click.echo(f"  Workspace directory not found (will skip): {project.workspace_dir}")
+    else:
+        if workspace_exists:
+            click.echo(f"  Workspace directory will be KEPT: {project.workspace_dir}")
+        else:
+            click.echo(f"  Workspace directory does not exist: {project.workspace_dir}")
+    click.echo()
+    click.echo("=" * 80)
+    click.echo()
+
+    # Confirmation prompt
+    if not yes:
+        click.echo("⚠️  WARNING: This action cannot be undone!")
+        click.echo()
+        if delete_workspace:
+            click.echo("This will:")
+            click.echo("  - Delete the project from the database")
+            click.echo("  - Delete all tasks and sessions")
+            click.echo("  - DELETE the workspace directory from disk")
+        else:
+            click.echo("This will delete the project from the database,")
+            click.echo("including all tasks and sessions.")
+        click.echo()
+
+        confirm = click.prompt(
+            f"Type the project name '{project.name}' to confirm deletion",
+            type=str,
+        )
+
+        if confirm != project.name:
+            click.echo()
+            click.echo("✗ Deletion cancelled (name did not match)")
+            sys.exit(0)
+
+    # Delete from database
+    click.echo()
+    click.echo("Deleting project from database...")
+    success = db.delete_project(project.id)
+
+    if not success:
+        click.echo("✗ Failed to delete project from database", err=True)
+        sys.exit(1)
+
+    click.echo(f"✓ Deleted project from database: {project.name}")
+    click.echo(f"  - Removed {len(tasks)} tasks")
+    click.echo(f"  - Removed {len(sessions)} sessions")
+
+    # Delete workspace if requested
+    if delete_workspace and workspace_exists:
+        try:
+            click.echo()
+            click.echo(f"Deleting workspace directory: {project.workspace_dir}")
+            shutil.rmtree(project.workspace_dir)
+            click.echo(f"✓ Deleted workspace directory")
+        except Exception as e:
+            click.echo(f"✗ Failed to delete workspace directory: {e}", err=True)
+            click.echo("  (Project was deleted from database, but workspace remains)")
+
+    # Clear active project if this was it
+    state = StateManager()
+    active_project_id = state.get_active_project()
+    if active_project_id == project.id:
+        state.clear_active_project()
+        click.echo()
+        click.echo("✓ Cleared active project (this project was active)")
+
+    click.echo()
+    click.echo("✓ Project deletion complete")
+    click.echo()
