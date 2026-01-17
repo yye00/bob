@@ -2825,3 +2825,86 @@ TECHNICAL NOTES:
 - All database CRUD operations properly handle skip_reason field
 - TaskStatus.SKIPPED already existed in enum (line 31 of models/base.py)
 - The skip feature integrates cleanly with existing task management
+
+
+=============================================================================
+SESSION 24 (CONTINUED) - 2026-01-16
+=============================================================================
+
+COMPLETED: F024 - Port security.py with configurable allowlist
+Status: 40/75 features passing (53.3%)
+
+IMPLEMENTATION DETAILS:
+
+1. Module Structure
+   - Created bob/security/ package
+   - Copied security.py from autonomous-coding quickstart
+   - Added __init__.py with exports
+   - Maintained all original security logic
+
+2. Configurable Allowlist System
+   - Renamed ALLOWED_COMMANDS to DEFAULT_ALLOWED_COMMANDS
+   - Created get_allowed_commands(project_config) function
+   - Supports three configuration options:
+     * security.allowed_commands: Add custom commands
+     * security.blocked_commands: Remove default commands
+     * security.use_defaults: Include/exclude defaults (default: True)
+
+3. Enhanced bash_security_hook
+   - Added project_config parameter
+   - Uses get_allowed_commands() for validation
+   - Maintains backward compatibility (None config = defaults)
+   - All original validations preserved:
+     * pkill (dev processes only)
+     * chmod (+x only)
+     * init.sh (./init.sh only)
+
+4. Test Coverage (6 new tests)
+   - test_no_config_returns_defaults
+   - test_additional_commands
+   - test_blocked_commands
+   - test_allowed_command
+   - test_blocked_command
+   - test_custom_config_allows_command
+
+5. Test Results
+   - All 667 tests passing (661 previous + 6 new)
+   - No regressions
+   - Security validation working correctly
+
+CONFIGURATION EXAMPLES:
+
+# Add custom commands
+{
+  "security": {
+    "allowed_commands": ["custom-tool", "my-script"]
+  }
+}
+
+# Block dangerous commands
+{
+  "security": {
+    "blocked_commands": ["rm", "dd"]
+  }
+}
+
+# Use only specific commands (no defaults)
+{
+  "security": {
+    "use_defaults": false,
+    "allowed_commands": ["ls", "cat", "grep"]
+  }
+}
+
+SESSION SUMMARY:
+- Implemented 2 features (F018, F024)
+- Added 16 tests total (10 + 6)
+- All 667 tests passing
+- Progress: 38/75 → 40/75 (50.7% → 53.3%)
+- +2.6% completion this session
+
+NEXT SESSION PRIORITIES:
+- F025: Port client.py (Claude SDK setup)
+- F035: Cost limits (budget enforcement)
+- F043: Config show command
+- F050: Init command
