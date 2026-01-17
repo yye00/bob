@@ -898,3 +898,226 @@ class TestEndToEndWorkflow:
         assert status_counts[TaskStatus.COMPLETED.value] == 2  # F001, F003
         assert status_counts[TaskStatus.PENDING.value] == 4    # F002, F004, F006, F007
         assert status_counts[TaskStatus.DEPRECATED.value] == 1 # F005
+
+    def test_e2e_checkpoint_and_resume(self, tmp_path):
+        """Test checkpoint creation and resume workflow.
+
+        This test covers F056 requirements:
+        1. Create test project with tasks
+        2. Start a session and create checkpoint
+        3. Verify checkpoint is saved
+        4. List checkpoints
+        5. Restore from checkpoint
+        6. Verify session state is preserved (conversation, task, metadata)
+
+        Note: Cannot test actual Ctrl+C interrupt in automated tests,
+        so we simulate checkpoint creation programmatically.
+        """
+        runner = CliRunner()
+
+        # Setup database and workspace
+        db_path = tmp_path / "test.db"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Create spec with task
+        spec_path = tmp_path / "spec.yaml"
+        spec_data = {
+            "spec_version": 1,
+            "tasks": [
+                {
+                    "id": "F001",
+                    "title": "Long Running Task",
+                    "description": "Task that would take multiple iterations",
+                    "spec_version": 1,
+                },
+            ],
+        }
+
+        import yaml
+        with open(spec_path, "w") as f:
+            yaml.dump(spec_data, f)
+
+        # Step 1: Create project
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "project", "create",
+            "test-checkpoint",
+            str(workspace),
+            f"file://{spec_path}",
+        ])
+        assert result.exit_code == 0
+
+        # Get project and sync tasks
+        db = DatabaseManager(db_path)
+        projects = db.list_projects()
+        project = next((p for p in projects if p.name == "test-checkpoint"), None)
+        assert project is not None
+        project_id = project.id
+
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "--project", project_id,
+            "sync",
+        ])
+        assert result.exit_code == 0
+
+        # Get task
+        tasks = db.list_tasks(project_id=project_id)
+        assert len(tasks) == 1
+        task = tasks[0]
+
+        # Step 2: Create a session and checkpoint programmatically
+        # (Simulates what would happen during 'bob run' with checkpointing)
+        from bob.orchestrator.checkpoint import CheckpointManager
+        from bob.models.base import AgentType, SessionStatus
+        import uuid
+
+        checkpoint_manager = CheckpointManager(db, workspace)
+
+        # Create a session
+        session = Session(
+            id=f"sess-{uuid.uuid4().hex[:8]}",
+            project_id=project_id,
+            task_id=task.id,
+            agent_type=AgentType.CODING,
+            model="claude-sonnet-4-5-20250929",
+            status=SessionStatus.RUNNING,
+        )
+        session_id = db.create_session(session)
+
+        # Simulate some conversation history
+        conversation = [
+            {
+                "role": "user",
+                "content": "Please implement the feature"
+            },
+            {
+                "role": "assistant",
+                "content": "I'll start by reading the code..."
+            },
+            {
+                "role": "user",
+                "content": "Tool result: file contents..."
+            },
+        ]
+
+        # Step 3: Save checkpoint
+        checkpoint_id = checkpoint_manager.save_checkpoint(
+            session_id=session_id,
+            conversation_history=conversation,
+            metadata={
+                "agent_type": "coding",
+                "model": "claude-sonnet-4-5-20250929",
+                "current_step": "reading_code",
+                "iteration": 5,
+                "task_id": task.id,
+            }
+        )
+        assert checkpoint_id is not None
+
+        # Verify checkpoint file was created
+        checkpoint_dir = workspace / ".bob" / "checkpoints"
+        assert checkpoint_dir.exists()
+        checkpoint_files = list(checkpoint_dir.glob("*.json"))
+        assert len(checkpoint_files) >= 1
+
+        # Step 4: List checkpoints
+        checkpoints = checkpoint_manager.list_checkpoints(session_id=session_id)
+        assert len(checkpoints) >= 1
+
+        checkpoint_found = False
+        for cp in checkpoints:
+            if cp["checkpoint_id"] == checkpoint_id:
+                checkpoint_found = True
+                assert cp["session_id"] == session_id
+                assert "timestamp" in cp
+                assert "turn_count" in cp
+                break
+        assert checkpoint_found, f"Checkpoint {checkpoint_id} not found in list"
+
+        # Step 5: Restore from checkpoint
+        restored_data = checkpoint_manager.restore_checkpoint(checkpoint_id)
+        assert restored_data is not None
+
+        # Step 6: Verify session state is preserved
+        # Check conversation history
+        assert "conversation_history" in restored_data
+        restored_conversation = restored_data["conversation_history"]
+        assert len(restored_conversation) == len(conversation)
+        assert restored_conversation[0]["role"] == "user"
+        assert restored_conversation[0]["content"] == "Please implement the feature"
+        assert restored_conversation[1]["role"] == "assistant"
+        assert restored_conversation[2]["role"] == "user"
+
+        # Check session data
+        assert "session" in restored_data
+        session_data = restored_data["session"]
+        assert restored_data["session_id"] == session_id
+        assert session_data["task_id"] == task.id
+
+        # Check metadata (stored at top level if provided)
+        assert restored_data.get("metadata", {}).get("iteration") == 5
+        assert restored_data.get("metadata", {}).get("agent_type") == "coding"
+        assert restored_data.get("metadata", {}).get("model") == "claude-sonnet-4-5-20250929"
+        assert restored_data.get("metadata", {}).get("current_step") == "reading_code"
+
+        # Step 7: Verify we can list checkpoints with filters
+        # Filter by session
+        session_checkpoints = checkpoint_manager.list_checkpoints(
+            session_id=session_id
+        )
+        assert len(session_checkpoints) >= 1
+        assert all(cp["session_id"] == session_id for cp in session_checkpoints)
+
+        # Step 8: Test checkpoint cleanup (optional but good to verify)
+        # Delete the checkpoint
+        checkpoint_manager.delete_checkpoint(checkpoint_id)
+
+        # Verify it's gone
+        remaining_checkpoints = checkpoint_manager.list_checkpoints(
+            session_id=session_id
+        )
+        checkpoint_ids = [cp["id"] for cp in remaining_checkpoints]
+        assert checkpoint_id not in checkpoint_ids
+
+        # Step 9: Test multiple checkpoints (different iterations)
+        # Create multiple checkpoints for the same session
+        checkpoint_id_1 = checkpoint_manager.save_checkpoint(
+            session_id=session_id,
+            conversation_history=conversation[:2],
+            metadata={
+                "iteration": 1,
+                "task_id": task.id,
+            }
+        )
+
+        checkpoint_id_2 = checkpoint_manager.save_checkpoint(
+            session_id=session_id,
+            conversation_history=conversation,
+            metadata={
+                "iteration": 3,
+                "task_id": task.id,
+            }
+        )
+
+        # List and verify both are there
+        all_checkpoints = checkpoint_manager.list_checkpoints(
+            session_id=session_id
+        )
+        checkpoint_ids = [cp["checkpoint_id"] for cp in all_checkpoints]
+        assert checkpoint_id_1 in checkpoint_ids
+        assert checkpoint_id_2 in checkpoint_ids
+
+        # Verify they're sorted by timestamp (most recent first)
+        assert all_checkpoints[0]["timestamp"] >= all_checkpoints[-1]["timestamp"]
+
+        # Restore from earlier checkpoint
+        restored_early = checkpoint_manager.restore_checkpoint(checkpoint_id_1)
+        assert len(restored_early["conversation_history"]) == 2  # Earlier iteration
+        assert restored_early.get("metadata", {}).get("iteration") == 1
+
+        # Restore from later checkpoint
+        restored_late = checkpoint_manager.restore_checkpoint(checkpoint_id_2)
+        assert len(restored_late["conversation_history"]) == 3  # Later iteration
+        assert restored_late.get("metadata", {}).get("iteration") == 3
