@@ -42,6 +42,11 @@ from .client import (
     PERPLEXITY_TOOLS as CLIENT_PERPLEXITY_TOOLS,
     BUILTIN_TOOLS,
 )
+from .engine import (
+    Orchestrator,
+    OrchestratorConfig,
+    create_orchestrator,
+)
 
 __all__ = [
     "EscalationController",
@@ -77,4 +82,7 @@ __all__ = [
     "PUPPETEER_TOOLS",
     "CLIENT_PERPLEXITY_TOOLS",
     "BUILTIN_TOOLS",
+    "Orchestrator",
+    "OrchestratorConfig",
+    "create_orchestrator",
 ]
