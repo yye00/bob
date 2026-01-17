@@ -3229,3 +3229,85 @@ NEXT SESSION PRIORITIES:
 - F052: Research-first integration test (HIGH, depends on F026 ✓, F027 ✓)
 - F035: Cost limits - Implement budget enforcement (MEDIUM, depends on F033 ✓)
 
+
+=== SESSION 28 (2026-01-16) ===
+
+FEATURES IMPLEMENTED:
+- F035: Cost limits - Implement budget enforcement ✓
+
+IMPLEMENTATION DETAILS:
+
+F035: Cost Limits - Budget Enforcement
+---------------------------------------
+Added comprehensive cost limit checking to the Orchestrator engine to prevent runaway API costs.
+
+Key Components:
+1. OrchestratorConfig extensions:
+   - max_cost_per_project: Optional[float] - Maximum USD cost per project
+   - max_cost_per_session: Optional[float] - Maximum USD cost per session
+   - warn_at_percent: int - Warning threshold percentage (default: 80%)
+
+2. Orchestrator methods:
+   - check_project_cost_limit() -> (bool, Optional[str])
+     * Checks total project cost against limit
+     * Returns (can_continue, message)
+     * Uses stored cost values for accuracy
+     
+   - check_session_cost_limit(session_id) -> (bool, Optional[str])
+     * Checks session cost against limit
+     * Returns (can_continue, message)
+     * Uses stored cost values for accuracy
+
+3. Task execution flow:
+   - execute_task() checks limits before starting
+   - Project limit checked first
+   - Session limit checked if session_id present
+   - Task blocked (TaskStatus.BLOCKED) if limit exceeded
+   - Warning messages when at threshold (e.g., 80% of limit)
+
+4. CostTracker enhancements:
+   - Added use_stored_cost parameter to get_project_costs()
+   - Added use_stored_cost parameter to get_session_cost()
+   - When True, uses session.cost field instead of recalculating from tokens
+   - Ensures accurate cost tracking for limit enforcement
+
+5. Configuration integration:
+   - Reads from global config ~/.bob/config.yaml
+   - limits.max_cost_per_project: 100.0 (default)
+   - limits.max_cost_per_session: 5.0 (default)
+   - limits.warn_at_percent: 80 (default)
+
+Test Coverage (12 new tests):
+- Config with/without cost limits
+- Project cost checking (no limit, under limit, at warning, exceeded)
+- Session cost checking (no limit, under limit, exceeded)
+- Task execution blocking on project limit
+- Task execution blocking on session limit
+- Task execution continuing under limits
+
+TECHNICAL DECISIONS:
+- Used stored cost values (session.cost) for limit checking instead of recalculating
+  from tokens to ensure accuracy and consistency with actual API charges
+- Limits are optional (None = no limit) for flexibility
+- Warning threshold percentage configurable for different risk tolerances
+- Tasks blocked (not failed) when limits exceeded to allow user intervention
+- Clear, informative error messages with exact costs and percentages
+
+TEST RESULTS:
+- All 848 tests passing (836 original + 12 new)
+- 100% test coverage for cost limit functionality
+- Tests verify both project-level and session-level enforcement
+
+NEXT SESSION PRIORITIES:
+- F059: Cost tracking accuracy test (HIGH) - depends on F033 ✓, F035 ✓
+- F051: Integration test - End-to-end (HIGH) - depends on F026 ✓
+- F052: Research-first integration test (HIGH) - depends on F026 ✓, F027 ✓
+- F053: Escalation integration test (HIGH) - depends on F020 ✓, F026 ✓
+- F050: Init command (MEDIUM) - depends on F004 ✓
+
+PROGRESS:
+- 48/75 features passing (64.0%)
+- +1 feature this session (F035)
+- 28 features remaining
+- 12 new tests added
+
