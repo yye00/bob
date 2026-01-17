@@ -3360,3 +3360,80 @@ PROGRESS:
 - +1 feature this session (F050)
 - 24 features remaining
 - 13 new tests added
+
+
+=== SESSION 32 (2026-01-17) ===
+
+FEATURES IMPLEMENTED:
+- F052: Research-first integration test - Test research workflow end-to-end
+- F053: Escalation integration test - Test full escalation flow
+
+IMPLEMENTATION DETAILS:
+
+F052: Research-First Integration Test
+--------------------------------------
+Created comprehensive integration tests for research workflow.
+
+Test Coverage (6 new tests in test_integration_research.py):
+1. test_research_workflow_with_api_key - Full workflow with PERPLEXITY_API_KEY
+2. test_research_workflow_without_api_key - Graceful handling without API key
+3. test_research_findings_persistence - Database persistence verification
+4. test_research_skipped_when_complete - Skip when research already done
+5. test_task_without_research_queries - Handle empty queries edge case
+6. test_research_implementation_context - Context formatting for implementation
+
+Key Test Scenarios:
+- Research phase execution before implementation
+- Research findings documentation in task database
+- Behavior with/without PERPLEXITY_API_KEY environment variable
+- Research persistence across database reconnections
+- Research completion tracking (research_complete flag)
+- Implementation context generation from findings
+
+F053: Escalation Integration Test
+----------------------------------
+Created comprehensive integration tests for escalation workflow.
+
+Test Coverage (7 new tests in test_integration_escalation.py):
+1. test_escalation_from_sonnet_to_opus - Model escalation after failures
+2. test_escalation_triggers_diagnosis_after_opus_failures - Diagnosis trigger
+3. test_escalation_action_after_diagnosis - Action based on failure type
+4. test_escalation_state_persistence - Database persistence verification
+5. test_escalation_reset_on_success - State reset on task success
+6. test_escalation_skips_when_deps_not_met - Skip when deps not satisfied
+7. test_error_history_tracking - Error history with metadata
+
+Key Test Scenarios:
+- Escalation from Sonnet to Opus after MAX_ATTEMPTS_PER_MODEL failures
+- Diagnosis triggered after Opus failures
+- Appropriate actions for different failure types:
+  * TOO_BIG → DECOMPOSE
+  * MISSING_INFO → RESEARCH
+  * WRONG_INFRA → REQUEST_USER
+  * BAD_ASSUMPTIONS → RESTRUCTURE
+  * NEEDS_RESEARCH → RESEARCH
+- Escalation state persistence (tier, model, attempts, error history)
+- Error history tracking with timestamps and model info
+- Reset behavior on task success
+- Skip behavior when dependencies not met
+
+TEST RESULTS:
+- All 892 tests passing (879 original + 6 research + 7 escalation)
+- 100% test coverage for research workflow integration
+- 100% test coverage for escalation workflow integration
+- No regressions in existing tests
+
+NEXT SESSION PRIORITIES:
+- F039: CheckpointManager - Implement session checkpointing for resume (MEDIUM)
+- F044: Config set command - Implement 'bob config set' to update configuration (MEDIUM)
+- F047: Custom prompts per project - Allow project-specific prompt overrides (MEDIUM)
+- F055: Spec sync integration test - Test spec synchronization (MEDIUM)
+- F058: Dependency graph validation - Test complex DAG handling (MEDIUM)
+
+PROGRESS:
+- 53/75 features passing (70.7%)
+- +2 features this session (F052, F053)
+- 22 features remaining
+- 13 new tests added (6 research + 7 escalation)
+
+Both high-priority integration tests are now complete!
