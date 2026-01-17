@@ -3061,3 +3061,37 @@ NEXT SESSION PRIORITIES:
 - F029: Run command - CRITICAL
 - F036: Structured logging - HIGH
 - F037: Logs command - HIGH
+
+=============================================================================
+SESSION 26 - 2026-01-16
+=============================================================================
+
+REGRESSION FIXES COMPLETED
+Status: Still 42/75 features passing (56.0%)
+
+CRITICAL REGRESSIONS FIXED:
+
+Previous session (25) implemented F026 (Orchestrator engine) but introduced
+API mismatches that broke 5 tests. All regressions now fixed.
+
+Issues Fixed:
+1. orchestrator calling determine_action() -> fixed to get_next_action()
+2. orchestrator calling escalate_task() -> fixed to escalate_model()
+3. update_task() called with Task object -> fixed to use (task_id, **kwargs)
+4. Tests using non-persisted fixtures -> fixed to persist to database
+5. Tests missing SDK mocks -> added create_client() mocks
+6. Tests checking stale objects -> fixed to reload from DB
+
+Changes Made:
+- bob/orchestrator/engine.py: Updated all EscalationController API calls
+- bob/orchestrator/engine.py: Fixed all database update calls
+- bob/orchestrator/engine.py: Added proper record_attempt() tracking
+- tests/test_orchestrator_engine.py: Updated fixtures and assertions
+
+Verification:
+- All 713 tests passing
+- No regressions remaining
+- Orchestrator properly integrated with escalation controller
+
+NEXT: Implement F029 - Run command (CRITICAL priority)
+

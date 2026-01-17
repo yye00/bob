@@ -328,6 +328,26 @@ class DatabaseManager:
                 return self._row_to_task(row)
             return None
 
+    def get_task_by_spec_id(self, project_id: str, spec_id: str) -> Optional[Task]:
+        """Get a task by spec ID within a project.
+
+        Args:
+            project_id: Project ID
+            spec_id: Spec ID (e.g., "F001", issue number, etc.)
+
+        Returns:
+            Task object or None if not found
+        """
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM tasks WHERE project_id = ? AND spec_id = ?",
+                (project_id, spec_id),
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_task(row)
+            return None
+
     def list_tasks(
         self,
         project_id: Optional[str] = None,

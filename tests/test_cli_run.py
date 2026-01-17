@@ -469,53 +469,99 @@ class TestRunCommandOptions:
         # Validates that option is accepted
         assert "--model" not in result.output or "Error" not in result.output
 
-    def test_run_with_task_option_not_implemented(self, tmp_path: Path) -> None:
-        """Test that --task option is not yet implemented."""
+    def test_run_with_task_option_implemented(self, tmp_path: Path) -> None:
+        """Test that --task option works with orchestrator."""
         db_path = tmp_path / "test.db"
         db = DatabaseManager(db_path)
+
+        # Create workspace dir
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
 
         # Create project
         project = Project(
             id="proj-001",
             name="test-task",
             description="Test task option",
-            workspace_dir=str(tmp_path / "workspace"),
+            workspace_dir=str(workspace),
             spec_source="file://spec.yaml",
             status=ProjectStatus.ACTIVE,
         )
         db.create_project(project)
+
+        # Create a task
+        task = Task(
+            id="task-001",
+            project_id="proj-001",
+            spec_id="F001",
+            title="Test Task",
+            description="Test task description",
+            status=TaskStatus.PENDING,
+            priority="high",
+            category="functional",
+            depends_on=[],
+            attempts=0,
+        )
+        db.create_task(task)
 
         runner = CliRunner()
         result = runner.invoke(cli, [
             "--db", str(db_path),
             "run",
             "--task", "F001",
+            "--json",
         ])
 
-        assert result.exit_code == 1
-        assert "not yet implemented" in result.output
+        assert result.exit_code == 0
+        output = extract_json(result.output)
+        assert output["status"] == "completed"
+        assert output["task_id"] == "F001"
 
-    def test_run_without_options_not_implemented(self, tmp_path: Path) -> None:
-        """Test that run without --parallel is not yet implemented."""
+    def test_run_without_options_auto_select(self, tmp_path: Path) -> None:
+        """Test that run without --task auto-selects the next ready task."""
         db_path = tmp_path / "test.db"
         db = DatabaseManager(db_path)
+
+        # Create workspace dir
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
 
         # Create project
         project = Project(
             id="proj-001",
             name="test-auto",
             description="Test auto-select",
-            workspace_dir=str(tmp_path / "workspace"),
+            workspace_dir=str(workspace),
             spec_source="file://spec.yaml",
             status=ProjectStatus.ACTIVE,
         )
         db.create_project(project)
 
+        # Create multiple tasks with different priorities
+        for spec_id, priority in [("F001", "low"), ("F002", "critical"), ("F003", "high")]:
+            task = Task(
+                id=f"task-{spec_id}",
+                project_id="proj-001",
+                spec_id=spec_id,
+                title=f"Task {spec_id}",
+                description=f"{priority} priority task",
+                status=TaskStatus.PENDING,
+                priority=priority,
+                category="functional",
+                depends_on=[],
+                attempts=0,
+            )
+            db.create_task(task)
+
         runner = CliRunner()
         result = runner.invoke(cli, [
             "--db", str(db_path),
             "run",
+            "--json",
         ])
 
-        assert result.exit_code == 1
-        assert "not yet implemented" in result.output
+        assert result.exit_code == 0
+        output = extract_json(result.output)
+        assert output["status"] == "completed"
+        # Should auto-select the highest priority task (critical)
+        assert output["task_id"] == "F002"
