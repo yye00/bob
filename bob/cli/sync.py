@@ -15,6 +15,7 @@ from bob.database.manager import DatabaseManager
 from bob.models.base import Task, TaskStatus, AgentType, ModelTier
 from bob.spec_sources import get_registry
 from bob.state import StateManager
+from bob.utils.sync_check import update_sync_hash
 
 
 def get_active_project(db: DatabaseManager, project_id: Optional[str]) -> Optional[str]:
@@ -312,6 +313,9 @@ def sync(
                 click.echo(f"  - Deprecated: {spec_id} - {existing_task.title}")
         except Exception as e:
             click.echo(f"  ✗ Failed to deprecate task {spec_id}: {e}", err=True)
+
+    # Update last sync hash after successful sync
+    update_sync_hash(db, project)
 
     # Display summary
     if json_output:

@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS projects (
     config TEXT NOT NULL DEFAULT '{}',  -- JSON
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status TEXT NOT NULL DEFAULT 'active',
+    last_sync_hash TEXT,  -- Hash of spec source at last sync
+    last_sync_at TIMESTAMP,  -- Timestamp of last sync
     CONSTRAINT valid_status CHECK (status IN ('active', 'paused', 'completed', 'archived'))
 );
 

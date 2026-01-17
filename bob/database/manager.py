@@ -119,8 +119,8 @@ class DatabaseManager:
                 """
                 INSERT INTO projects (
                     id, name, description, workspace_dir, spec_source,
-                    config, created_at, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    config, created_at, status, last_sync_hash, last_sync_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project.id,
@@ -131,6 +131,8 @@ class DatabaseManager:
                     json.dumps(project.config),
                     project.created_at.isoformat(),
                     project.status.value,
+                    project.last_sync_hash,
+                    project.last_sync_at.isoformat() if project.last_sync_at else None,
                 ),
             )
         return project.id
@@ -195,6 +197,8 @@ class DatabaseManager:
         description: Optional[str] = None,
         status: Optional[ProjectStatus] = None,
         config: Optional[dict[str, Any]] = None,
+        last_sync_hash: Optional[str] = None,
+        last_sync_at: Optional[datetime] = None,
     ) -> bool:
         """Update project fields.
 
@@ -204,6 +208,8 @@ class DatabaseManager:
             description: New description (optional)
             status: New status (optional)
             config: New config (optional)
+            last_sync_hash: Hash of spec source at last sync (optional)
+            last_sync_at: Timestamp of last sync (optional)
 
         Returns:
             True if project was updated, False if not found
@@ -223,6 +229,12 @@ class DatabaseManager:
         if config is not None:
             updates.append("config = ?")
             params.append(json.dumps(config))
+        if last_sync_hash is not None:
+            updates.append("last_sync_hash = ?")
+            params.append(last_sync_hash)
+        if last_sync_at is not None:
+            updates.append("last_sync_at = ?")
+            params.append(last_sync_at.isoformat())
 
         if not updates:
             return False
@@ -775,6 +787,8 @@ class DatabaseManager:
             config=json.loads(row["config"]),
             created_at=datetime.fromisoformat(row["created_at"]),
             status=ProjectStatus(row["status"]),
+            last_sync_hash=row["last_sync_hash"] if row["last_sync_hash"] else None,
+            last_sync_at=datetime.fromisoformat(row["last_sync_at"]) if row["last_sync_at"] else None,
         )
 
     def _row_to_task(self, row: sqlite3.Row) -> Task:

@@ -132,6 +132,8 @@ class Project:
     config: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     status: ProjectStatus = ProjectStatus.ACTIVE
+    last_sync_hash: Optional[str] = None  # Hash of spec source at last sync
+    last_sync_at: Optional[datetime] = None  # Timestamp of last sync
 
 
 @dataclass

@@ -1449,8 +1449,8 @@
       "Add --no-sync flag to skip sync check",
       "Test with modified and unmodified specs"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T00:23:07.012135+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
