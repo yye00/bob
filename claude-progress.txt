@@ -3607,3 +3607,81 @@ Ready features (dependencies satisfied):
 - F065: Unit tests for CostTracker - Test cost calculations (MEDIUM)
 - F066: Unit tests for ResearchController - Test research workflow (MEDIUM)
 
+
+================================================================================
+SESSION 34 - 2026-01-16
+================================================================================
+
+FEATURE COMPLETED:
+1. F047: Custom prompts per project - Allow project-specific prompt overrides
+
+F047: Custom Prompts Per Project
+---------------------------------
+Implemented project-specific prompt override functionality to allow projects
+to customize agent prompts.
+
+Features:
+- PromptLoader class for loading prompts with fallback logic
+- Searches project's .bob/prompts/ directory first
+- Falls back to global bob/prompts/ if not found
+- Supports all prompt templates (coding, research, diagnosis, task)
+- Factory function create_prompt_loader() for easy instantiation
+- Helper methods for introspection:
+  * get_prompt_source() - determine if prompt is project or global
+  * list_available_prompts() - list all available prompts with sources
+
+Project Configuration:
+- Added 'prompts' section to project.yaml config
+- Automatically creates .bob/prompts/ directory on project creation
+- Updated workspace structure documentation
+
+Implementation Details:
+- bob/prompts/loader.py: New module (169 lines)
+  * PromptLoader class with project/global directory support
+  * Integration with existing TemplateEngine
+  * Priority-based loading (project overrides global)
+  
+- bob/cli/project.py: Updated
+  * create_workspace_structure() creates .bob/prompts/ directory
+  * project.yaml includes prompts section with custom_enabled flag
+  * Updated docstring to document prompts directory
+
+Tests Added (23 new tests):
+- tests/test_prompt_loader.py: Comprehensive test coverage
+  * Initialization with various configurations
+  * Loading from global directory
+  * Project overrides and fallback behavior
+  * Prompt existence checking
+  * Source location detection
+  * Listing available prompts
+  * Factory function
+  * Full integration workflow test
+
+- tests/test_cli_project.py: Updated workspace tests
+  * test_creates_prompts_directory
+  * test_project_yaml_structure (validates prompts section)
+
+Test Results:
+- All 955 tests passing (932 existing + 23 new)
+- 100% test coverage for PromptLoader
+- No regressions
+
+PROGRESS:
+- 57/75 features passing (76.0%)
+- +1 feature this session (F047)
+- 18 features remaining
+- 23 new tests added
+
+All tests passing. Clean codebase state.
+
+NEXT SESSION PRIORITIES:
+Ready features (dependencies satisfied):
+- F055: Spec sync integration test - Test spec synchronization (MEDIUM)
+- F056: Checkpoint resume integration test - Test session checkpointing (MEDIUM)
+- F058: Dependency graph validation - Test complex DAG handling (MEDIUM)
+- F060: Structured logging test - Verify JSON logging works correctly (MEDIUM)
+- F064: Unit tests for TaskQueue - Test dependency resolution (MEDIUM)
+- F065: Unit tests for CostTracker - Test cost calculations (MEDIUM)
+- F066: Unit tests for ResearchController - Test research workflow (MEDIUM)
+- F069: CLI output formatting - Ensure consistent and readable output (MEDIUM)
+- F071: Documentation - Create docs/ directory with detailed guides (MEDIUM)
