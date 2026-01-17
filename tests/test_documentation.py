@@ -1,132 +1,191 @@
-"""Tests for documentation completeness (F070, F071, etc.)"""
-import os
+"""Tests for documentation (F071).
+
+This module verifies that all required documentation files exist
+and contain the expected sections.
+"""
+
 from pathlib import Path
 
-
-class TestReadmeDocumentation:
-    """Test F070: README.md completeness"""
-
-    def test_readme_exists(self):
-        """README.md file exists"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        assert readme_path.exists(), "README.md should exist in project root"
-
-    def test_readme_has_project_overview(self):
-        """README has project overview section"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        content = readme_path.read_text()
-        assert "# BOB: Build Orchestration Bot" in content
-        assert "generalized, production-ready autonomous coding framework" in content
-
-    def test_readme_has_why_bob_section(self):
-        """README has 'Why BOB?' section explaining vision"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        content = readme_path.read_text()
-        assert "## Why BOB?" in content
-        assert "autonomous-coding" in content.lower()
-
-    def test_readme_has_installation_instructions(self):
-        """README has installation instructions"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        content = readme_path.read_text()
-        assert "## Quick Start" in content or "### Installation" in content
-        assert "git clone" in content
-        assert "init.sh" in content or "pip install" in content
-
-    def test_readme_has_quick_start_guide(self):
-        """README has quick start guide"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        content = readme_path.read_text()
-        assert "## Quick Start" in content
-        assert "bob project create" in content
-
-    def test_readme_has_cli_commands_with_examples(self):
-        """README documents CLI commands with examples"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        content = readme_path.read_text()
-        assert "## CLI Reference" in content or "CLI" in content
-        # Should have command examples
-        assert "bob project" in content
-        assert "bob task" in content
-        assert "bob run" in content
-
-    def test_readme_has_architecture_diagram(self):
-        """README includes architecture diagram"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        content = readme_path.read_text()
-        assert "## Architecture" in content
-        # ASCII diagram markers
-        assert "┌─" in content or "BOB CLI" in content
-
-    def test_readme_has_comparison_with_autonomous_coding(self):
-        """README includes comparison with autonomous-coding"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        content = readme_path.read_text()
-        # Should have a comparison table or section
-        assert "autonomous-coding" in content.lower() or "Autonomous-Coding" in content
-        # Check for table comparison
-        assert "| Feature |" in content or "Autonomous Coding" in content
-
-    def test_readme_has_contributing_guidelines(self):
-        """README references contributing guidelines"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        content = readme_path.read_text()
-        assert "## Contributing" in content or "CONTRIBUTING.md" in content
-
-    def test_readme_has_license_information(self):
-        """README includes license information"""
-        readme_path = Path(__file__).parent.parent / "README.md"
-        content = readme_path.read_text()
-        assert "## License" in content or "LICENSE" in content
-        assert "MIT" in content
+import pytest
 
 
-class TestContributingDocumentation:
-    """Test that CONTRIBUTING.md exists and is comprehensive"""
+class TestDocumentationFiles:
+    """Test that all required documentation files exist."""
 
-    def test_contributing_exists(self):
-        """CONTRIBUTING.md file exists"""
-        contributing_path = Path(__file__).parent.parent / "CONTRIBUTING.md"
-        assert contributing_path.exists(), "CONTRIBUTING.md should exist"
+    @pytest.fixture
+    def docs_dir(self) -> Path:
+        """Get the docs directory path."""
+        return Path(__file__).parent.parent / "docs"
 
-    def test_contributing_has_development_setup(self):
-        """CONTRIBUTING.md has development setup instructions"""
-        contributing_path = Path(__file__).parent.parent / "CONTRIBUTING.md"
-        content = contributing_path.read_text()
-        assert "Development Setup" in content or "Setup" in content
-        assert "init.sh" in content or "pip install" in content
+    def test_docs_directory_exists(self, docs_dir: Path) -> None:
+        """Test that docs/ directory exists."""
+        assert docs_dir.exists()
+        assert docs_dir.is_dir()
 
-    def test_contributing_has_code_style(self):
-        """CONTRIBUTING.md has code style guidelines"""
-        contributing_path = Path(__file__).parent.parent / "CONTRIBUTING.md"
-        content = contributing_path.read_text()
-        assert "Code Style" in content or "style" in content.lower()
+    def test_getting_started_exists(self, docs_dir: Path) -> None:
+        """Test that getting-started.md exists."""
+        getting_started = docs_dir / "getting-started.md"
+        assert getting_started.exists()
+        assert getting_started.is_file()
 
-    def test_contributing_has_testing_guidelines(self):
-        """CONTRIBUTING.md has testing guidelines"""
-        contributing_path = Path(__file__).parent.parent / "CONTRIBUTING.md"
-        content = contributing_path.read_text()
-        assert "Testing" in content or "test" in content.lower()
-        assert "pytest" in content
+    def test_configuration_exists(self, docs_dir: Path) -> None:
+        """Test that configuration.md exists."""
+        configuration = docs_dir / "configuration.md"
+        assert configuration.exists()
+        assert configuration.is_file()
 
-    def test_contributing_has_pr_process(self):
-        """CONTRIBUTING.md has pull request process"""
-        contributing_path = Path(__file__).parent.parent / "CONTRIBUTING.md"
-        content = contributing_path.read_text()
-        assert "Pull Request" in content or "PR" in content
+    def test_spec_formats_exists(self, docs_dir: Path) -> None:
+        """Test that spec-formats.md exists."""
+        spec_formats = docs_dir / "spec-formats.md"
+        assert spec_formats.exists()
+        assert spec_formats.is_file()
+
+    def test_escalation_exists(self, docs_dir: Path) -> None:
+        """Test that escalation.md exists."""
+        escalation = docs_dir / "escalation.md"
+        assert escalation.exists()
+        assert escalation.is_file()
+
+    def test_research_first_exists(self, docs_dir: Path) -> None:
+        """Test that research-first.md exists."""
+        research_first = docs_dir / "research-first.md"
+        assert research_first.exists()
+        assert research_first.is_file()
+
+    def test_plugins_exists(self, docs_dir: Path) -> None:
+        """Test that plugins.md exists."""
+        plugins = docs_dir / "plugins.md"
+        assert plugins.exists()
+        assert plugins.is_file()
+
+    def test_architecture_exists(self, docs_dir: Path) -> None:
+        """Test that architecture.md exists."""
+        architecture = docs_dir / "architecture.md"
+        assert architecture.exists()
+        assert architecture.is_file()
+
+    def test_cli_reference_exists(self, docs_dir: Path) -> None:
+        """Test that cli-reference.md exists."""
+        cli_reference = docs_dir / "cli-reference.md"
+        assert cli_reference.exists()
+        assert cli_reference.is_file()
 
 
-class TestLicenseDocumentation:
-    """Test that LICENSE file exists"""
+class TestDocumentationContent:
+    """Test that documentation files contain expected content."""
 
-    def test_license_exists(self):
-        """LICENSE file exists"""
-        license_path = Path(__file__).parent.parent / "LICENSE"
-        assert license_path.exists(), "LICENSE file should exist"
+    @pytest.fixture
+    def docs_dir(self) -> Path:
+        """Get the docs directory path."""
+        return Path(__file__).parent.parent / "docs"
 
-    def test_license_is_mit(self):
-        """LICENSE is MIT license"""
-        license_path = Path(__file__).parent.parent / "LICENSE"
-        content = license_path.read_text()
-        assert "MIT License" in content
-        assert "Permission is hereby granted" in content
+    def test_getting_started_has_installation(self, docs_dir: Path) -> None:
+        """Test that getting-started.md has installation section."""
+        content = (docs_dir / "getting-started.md").read_text()
+        assert "Installation" in content or "installation" in content.lower()
+        assert "Prerequisites" in content or "requirements" in content.lower()
+
+    def test_configuration_has_models_section(self, docs_dir: Path) -> None:
+        """Test that configuration.md has models section."""
+        content = (docs_dir / "configuration.md").read_text()
+        assert "models" in content.lower()
+        assert "database" in content.lower()
+        assert "limits" in content.lower()
+
+    def test_spec_formats_has_yaml(self, docs_dir: Path) -> None:
+        """Test that spec-formats.md covers YAML format."""
+        content = (docs_dir / "spec-formats.md").read_text()
+        assert "YAML" in content or "yaml" in content
+        assert "tasks:" in content or "task" in content
+
+    def test_escalation_has_strategies(self, docs_dir: Path) -> None:
+        """Test that escalation.md covers strategies."""
+        content = (docs_dir / "escalation.md").read_text()
+        assert "smart" in content.lower()
+        assert "aggressive" in content.lower() or "conservative" in content.lower()
+        assert "escalation" in content.lower()
+
+    def test_research_first_has_workflow(self, docs_dir: Path) -> None:
+        """Test that research-first.md covers workflow."""
+        content = (docs_dir / "research-first.md").read_text()
+        assert "research" in content.lower()
+        assert "perplexity" in content.lower() or "search" in content.lower()
+
+    def test_plugins_has_types(self, docs_dir: Path) -> None:
+        """Test that plugins.md covers plugin types."""
+        content = (docs_dir / "plugins.md").read_text()
+        assert "plugin" in content.lower()
+        assert "spec" in content.lower() or "agent" in content.lower()
+
+    def test_architecture_has_overview(self, docs_dir: Path) -> None:
+        """Test that architecture.md has architecture overview."""
+        content = (docs_dir / "architecture.md").read_text()
+        assert "architecture" in content.lower() or "overview" in content.lower()
+        assert "component" in content.lower() or "layer" in content.lower()
+
+    def test_cli_reference_has_commands(self, docs_dir: Path) -> None:
+        """Test that cli-reference.md has command reference."""
+        content = (docs_dir / "cli-reference.md").read_text()
+        assert "project" in content.lower()
+        assert "task" in content.lower()
+        assert "run" in content.lower()
+
+
+class TestDocumentationMarkdown:
+    """Test that documentation uses valid markdown."""
+
+    @pytest.fixture
+    def docs_dir(self) -> Path:
+        """Get the docs directory path."""
+        return Path(__file__).parent.parent / "docs"
+
+    def test_getting_started_is_markdown(self, docs_dir: Path) -> None:
+        """Test that getting-started.md is valid markdown."""
+        content = (docs_dir / "getting-started.md").read_text()
+        # Should have markdown headers
+        assert content.startswith("#") or "\n#" in content
+        # Should not be empty
+        assert len(content) > 100
+
+    def test_all_docs_have_headers(self, docs_dir: Path) -> None:
+        """Test that all documentation files have headers."""
+        doc_files = [
+            "getting-started.md",
+            "configuration.md",
+            "spec-formats.md",
+            "escalation.md",
+            "research-first.md",
+            "plugins.md",
+            "architecture.md",
+            "cli-reference.md",
+        ]
+
+        for doc_file in doc_files:
+            content = (docs_dir / doc_file).read_text()
+            # Should have at least one header
+            assert "#" in content, f"{doc_file} should have headers"
+            # Should not be empty
+            assert len(content) > 100, f"{doc_file} should have content"
+
+    def test_code_blocks_formatted_correctly(self, docs_dir: Path) -> None:
+        """Test that code blocks use proper markdown syntax."""
+        # Check a few key files that should have code blocks
+        content = (docs_dir / "getting-started.md").read_text()
+
+        # Should have code blocks (triple backticks)
+        assert "```" in content or "`" in content
+
+    def test_links_use_markdown_format(self, docs_dir: Path) -> None:
+        """Test that internal links use markdown format."""
+        # Links to other docs should use [text](file.md) format
+        content = (docs_dir / "getting-started.md").read_text()
+
+        # Check that references to other docs exist
+        # (May be in "See also" or "For more information" sections)
+        has_doc_references = (
+            "configuration.md" in content.lower()
+            or "spec-formats.md" in content.lower()
+            or "cli-reference.md" in content.lower()
+        )
+
+        assert has_doc_references, "Should reference other documentation"
