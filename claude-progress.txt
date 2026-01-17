@@ -2590,3 +2590,142 @@ include comprehensive testing and are fully functional.
 Next recommended features: F018 (task skip), F014 (GitHub issues source)
 
 =================================================================
+
+=================================================================
+BOB (Build Orchestration Bot) - Session 23 Progress Summary
+=================================================================
+Date: 2026-01-16
+Session: Coding Agent (Session 23)
+Agent Role: Core Feature Implementation
+Previous Session: Session 22 (F054 - Parallel execution integration test, F017 - Task retry)
+
+OVERALL PROGRESS:
+- Total features: 75
+- Passing: 38 (50.7% complete) ⭐ REACHED 50% MILESTONE!
+- Failing: 37
+- Tests passing: 651 (added 34 new tests)
+
+SESSION 23 COMPLETED:
+- F014: GitHubIssuesSource - Implement GitHub issues as spec source ✅
+=================================================================
+
+✅ COMPLETED TASKS:
+
+SESSION 23 ACHIEVEMENTS:
+
+1. ✅ F014: GitHubIssuesSource - Implement GitHub issues as spec source (PASSING)
+   - Created bob/spec_sources/github_source.py (586 lines)
+     * Full GitHub Issues API integration
+     * URI format: github://owner/repo/issues?labels=...&state=...
+     * Async HTTP client using httpx
+     * Authentication via Bearer token (from config)
+     * Fetches issues from GitHub API with pagination support
+     * Filters out pull requests (they appear in issues API)
+     * Parses issue body for structured information:
+       - Description (main text)
+       - ## Acceptance Criteria sections
+       - ## Steps sections
+       - Metadata: "Depends on: #123, #124"
+       - Metadata: "Priority: high/medium/low/critical"
+       - Metadata: "Category: functional/infrastructure/etc"
+     * Extracts metadata from issue labels:
+       - priority:high, priority:critical, etc.
+       - category:infrastructure, category:functional, etc.
+       - research-required, needs-research flags
+     * Converts GitHub issues to TaskSpec objects:
+       - Issue number → spec_id (e.g., "#42")
+       - Title → task title
+       - Body → parsed description, criteria, steps
+       - Labels → task labels (excluding metadata labels)
+       - State (open/closed) → deprecated flag
+       - Stores GitHub metadata (ID, URL, timestamps, user)
+     * Implements sync() to detect changes:
+       - Added issues (new issues created)
+       - Modified issues (updated_at timestamp changed)
+       - Removed issues (deleted - rare)
+       - Closed issues (marked as deprecated)
+       - Caches known issues for change detection
+     * Implements mark_completed() to close issues:
+       - Posts completion comment with metadata
+       - Closes the GitHub issue
+       - Returns success/failure status
+     * Async context manager for client cleanup
+     * Comprehensive error handling for API errors
+   
+   - Created tests/test_github_source.py (34 tests, all passing)
+     * TestGitHubIssuesSourceInit (7 tests)
+       - URI parsing and validation
+       - Query parameter extraction
+       - Config overrides
+       - Error handling for invalid URIs
+     * TestGitHubIssuesSourceParsing (8 tests)
+       - Issue body parsing with sections
+       - Metadata extraction from body
+       - Label metadata extraction
+       - TaskSpec conversion
+       - Handling empty/minimal bodies
+     * TestGitHubIssuesSourceFetch (6 tests)
+       - Successful fetch with mocked API
+       - Label filtering
+       - Pagination handling
+       - Pull request filtering
+       - API error handling
+       - Network error handling
+     * TestGitHubIssuesSourceSync (6 tests)
+       - No changes detection
+       - New issue detection
+       - Removed issue detection
+       - Modified issue detection (via updated_at)
+       - Closed issue detection
+       - API error handling
+     * TestGitHubIssuesSourceMarkCompleted (3 tests)
+       - Successful issue closure
+       - Invalid spec_id handling
+       - API error handling
+     * TestGitHubIssuesSourceClientManagement (4 tests)
+       - Client creation with auth headers
+       - Client creation without token
+       - Client reuse
+       - Context manager cleanup
+   
+   - Registered GitHubIssuesSource in bob/spec_sources/__init__.py
+     * Auto-registered with 'github' URI scheme
+     * Added to __all__ exports
+     * Available through get_registry()
+   
+   - Updated tests/test_sync_check.py
+     * Fixed test that assumed github:// was unsupported
+     * Changed to use jira:// (truly unsupported) for testing
+   
+   - All existing tests still passing (651 total)
+   - No regressions introduced
+
+MILESTONE: 50% COMPLETION REACHED! 🎉
+- Started at 37/75 (49.3%)
+- Now at 38/75 (50.7%)
+- First time crossing the 50% threshold
+- 37 features remaining
+
+NEXT PRIORITIES:
+Based on dependency analysis, ready features include:
+- F018: Task skip command (medium priority)
+- F024: Port security.py (bash command allowlist)
+- F025: Port client.py (Claude SDK client setup)
+- F035: Cost limits (budget enforcement)
+- F043: Config show command
+- F050: Init command
+- F055: Spec sync integration test
+- F058: Dependency graph validation test
+- F064: Unit tests for TaskQueue
+
+TECHNICAL NOTES:
+- GitHubIssuesSource provides a production-ready GitHub integration
+- Supports all standard GitHub issue features
+- Properly handles pagination for large issue sets
+- Metadata can be specified in labels OR issue body
+- Labels take precedence over body metadata
+- Issues marked closed are automatically deprecated
+- Full async/await support throughout
+- Comprehensive test coverage with mocked HTTP requests
+- Ready for real-world use with GitHub repositories
+
