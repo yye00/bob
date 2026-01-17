@@ -1930,3 +1930,76 @@ Session Quality:
 - Clean git history with descriptive commits
 
 =================================================================
+
+=================================================================
+SESSION 18 PROGRESS - F034 Complete
+=================================================================
+
+Feature Implemented: F034 - Costs Command
+Status: ✅ PASSING (all 505 tests passing)
+
+Implementation Details:
+1. Created bob/cli/costs.py with costs command
+   - Supports viewing costs for all projects or specific project
+   - Added --project flag to filter by project name or ID
+   - Added --json-output flag for structured output
+   - Displays:
+     * Total cost in USD with color coding (green < $1, yellow < $10, red > $10)
+     * Session count and total tokens
+     * Average cost per session
+     * Breakdown by model (sorted by cost)
+     * Breakdown by agent type (sorted by cost)
+     * Daily cost trend (last 7 days)
+     * Visual progress bars for breakdowns
+
+2. Updated bob/cli/main.py
+   - Added costs_commands import
+   - Replaced costs command group with direct command
+   - Command now accessible via `bob costs`
+
+3. Created comprehensive test suite
+   - tests/test_cli_costs.py with 7 test cases
+   - Tests cover:
+     * No projects scenario
+     * Single project with sessions
+     * Project filtering by name and ID
+     * Nonexistent project error handling
+     * JSON output format
+     * Breakdown by model
+     * Multiple projects aggregation
+
+4. Fixed test_cli.py
+   - Updated costs command test to match new implementation
+   - Changed from group test to command test
+
+Key Technical Details:
+- Uses CostTracker.get_project_costs() and get_total_costs()
+- Costs are calculated from token usage, not stored cost field
+- Token counts follow pricing: Sonnet ($3/$15 per 1M), Haiku ($0.80/$4 per 1M)
+- JSON output includes project, costs, statistics sections
+- Handles database status messages in JSON output by stripping
+
+Test Results:
+- 7 new tests in test_cli_costs.py: ALL PASSING ✅
+- All existing tests: 498 PASSING ✅
+- Total: 505 tests passing
+
+Current Status:
+- Features passing: 28/75 (37.3%)
+- Features added this session: 1 (F034)
+- No regressions
+
+Next High-Priority Features (dependencies satisfied):
+- F031: Parallel execution (run_parallel)
+- F038: Global status command
+- F042: Auto-sync on run
+- F070: README.md
+- F072: Requirements and dependencies
+
+Session Quality:
+- Clean implementation with proper error handling
+- Comprehensive test coverage
+- No regressions
+- Good user experience with color coding and visual bars
+
+=================================================================
