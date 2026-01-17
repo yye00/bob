@@ -1007,7 +1007,35 @@
       "sub_features": [],
       "created_at": "2026-01-16T23:14:11.029768",
       "updated_at": "2026-01-16T23:14:11.029773"
+    },
+    "F045": {
+      "feature_id": "F045",
+      "current_model": "claude-sonnet-4-5-20250929",
+      "attempts_at_current_model": 0,
+      "total_attempts": 1,
+      "failure_type": null,
+      "diagnosis_done": false,
+      "research_queries": [],
+      "error_history": [],
+      "decomposed": false,
+      "sub_features": [],
+      "created_at": "2026-01-16T23:28:38.478002",
+      "updated_at": "2026-01-16T23:28:38.478007"
+    },
+    "F075": {
+      "feature_id": "F075",
+      "current_model": "claude-sonnet-4-5-20250929",
+      "attempts_at_current_model": 0,
+      "total_attempts": 1,
+      "failure_type": null,
+      "diagnosis_done": false,
+      "research_queries": [],
+      "error_history": [],
+      "decomposed": false,
+      "sub_features": [],
+      "created_at": "2026-01-16T23:28:38.509656",
+      "updated_at": "2026-01-16T23:28:38.509661"
     }
   },
-  "updated_at": "2026-01-16T23:14:11.029858"
+  "updated_at": "2026-01-16T23:28:38.509720"
 }
