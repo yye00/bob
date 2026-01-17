@@ -128,7 +128,7 @@ features:
             name="test",
             description="test",
             workspace_dir="/tmp/test",
-            spec_source="github://org/repo/issues",
+            spec_source="jira://project/issues",  # Jira not yet implemented
             status=ProjectStatus.ACTIVE,
         )
 

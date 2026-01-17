@@ -464,8 +464,8 @@
       "Test with mock GitHub API responses",
       "Test with real GitHub repository (if API key available)"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T19:53:58",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,

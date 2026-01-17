@@ -13,10 +13,12 @@ from bob.spec_sources.base import (
     get_registry,
 )
 from bob.spec_sources.file_source import FileSpecSource
+from bob.spec_sources.github_source import GitHubIssuesSource
 
-# Auto-register file spec source
+# Auto-register spec sources
 _registry = get_registry()
 _registry.register("file", FileSpecSource)
+_registry.register("github", GitHubIssuesSource)
 
 __all__ = [
     "SpecSource",
@@ -26,4 +28,5 @@ __all__ = [
     "TaskSpec",
     "get_registry",
     "FileSpecSource",
+    "GitHubIssuesSource",
 ]
