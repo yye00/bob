@@ -2082,8 +2082,8 @@
       "Test 'bob logs --follow' streams logs in real-time",
       "Test log filtering by session, level, and event type"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T03:10:02.551273+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
@@ -2232,8 +2232,8 @@
       "Test priority ordering",
       "Achieve 80%+ code coverage on TaskQueue"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T03:04:15.971673+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
@@ -2267,8 +2267,8 @@
       "Test cost breakdown by model, agent, day",
       "Achieve 80%+ code coverage on CostTracker"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T03:04:41.108271+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
@@ -2302,8 +2302,8 @@
       "Test get_implementation_context() with research",
       "Achieve 80%+ code coverage on ResearchController"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T03:05:03.756528+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
