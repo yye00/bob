@@ -276,8 +276,23 @@
     {
       "session_num": 20,
       "started_at": "2026-01-16T19:24:11.341502",
-      "ended_at": null,
+      "ended_at": "2026-01-16T19:38:21.829605",
       "passing_at_start": 33,
+      "passing_at_end": 35,
+      "features_completed": [
+        "F009",
+        "F032"
+      ],
+      "features_attempted": [
+        "F009",
+        "F032"
+      ]
+    },
+    {
+      "session_num": 21,
+      "started_at": "2026-01-16T19:38:25.835731",
+      "ended_at": null,
+      "passing_at_start": 35,
       "passing_at_end": null,
       "features_completed": [],
       "features_attempted": []
@@ -547,9 +562,25 @@
         "success": true,
         "error_msg": null
       }
+    ],
+    "F009": [
+      {
+        "timestamp": "2026-01-16T19:38:21.814676",
+        "session_num": 20,
+        "success": true,
+        "error_msg": null
+      }
+    ],
+    "F032": [
+      {
+        "timestamp": "2026-01-16T19:38:21.815079",
+        "session_num": 20,
+        "success": true,
+        "error_msg": null
+      }
     ]
   },
-  "last_passing_count": 33,
+  "last_passing_count": 35,
   "sessions_without_progress": 0,
   "stuck_features": [],
   "created_at": "2026-01-16T16:05:38.208430"
