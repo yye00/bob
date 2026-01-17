@@ -3164,3 +3164,68 @@ NEXT SESSION PRIORITIES:
 - F051: Integration test - End-to-end test with simple project (HIGH, depends on F026 ✓)
 - F052: Research-first integration test (HIGH, depends on F026 ✓, F027 ✓)
 
+
+=============================================================================
+SESSION 27 (CONTINUED) - 2026-01-16
+=============================================================================
+
+COMPLETED: F037 - Logs command (bob logs to view structured logs)
+Status: 44/75 features passing (58.7%)
+
+IMPLEMENTATION DETAILS:
+
+1. Log Viewing Command (bob/cli/logs.py)
+   - Read JSON logs from project .bob/logs/ directory
+   - Parse and filter log entries by various criteria
+   - Human-readable formatted output with colors
+   - Raw JSON output option
+   
+2. Filtering Options
+   - --session: Filter by session ID
+   - --level: Filter by log level (DEBUG/INFO/WARNING/ERROR)
+   - --event: Filter by event type (task_started, etc.)
+   - --tail N: Show last N entries (default: 100)
+   - Multiple filters can be combined
+
+3. Real-Time Streaming
+   - --follow flag for tail -f style streaming
+   - Follows most recent log file
+   - Applies filters in real-time
+   - Clean exit on Ctrl+C
+
+4. Output Formatting
+   - Human-readable: Colored timestamps, levels, events
+   - Includes context (project_id, task_id, session_id)
+   - Shows exception traces when present
+   - --json flag for raw JSON (one entry per line)
+
+5. Integration
+   - Uses StateManager to get active project
+   - Reads logs from project workspace .bob/logs/
+   - Handles missing directories gracefully
+   - Error messages for no active project / no logs
+
+6. Test Coverage (11 new tests, all passing)
+   - No active project error handling
+   - No log directory handling
+   - Basic log display
+   - Filter by session, level, event type
+   - JSON output
+   - --tail option
+   - Exception display
+   - Multiple filters combined
+   - Empty results handling
+
+SESSION SUMMARY:
+- Implemented 2 features (F036, F037)
+- Added 42 tests total (31 + 11)
+- All 755 tests passing (713 → 755)
+- Progress: 42/75 → 44/75 (56.0% → 58.7%)
+- +2.7% completion this session
+
+NEXT SESSION PRIORITIES:
+- F046: Prompt templates - Create template engine for prompts (HIGH, depends on F026 ✓)
+- F051: Integration test - End-to-end test with simple project (HIGH, depends on F026 ✓)
+- F052: Research-first integration test (HIGH, depends on F026 ✓, F027 ✓)
+- F035: Cost limits - Implement budget enforcement (MEDIUM, depends on F033 ✓)
+
