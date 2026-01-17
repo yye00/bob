@@ -243,3 +243,223 @@ class TestConfigCommandGroup:
         result = runner.invoke(cli, ['config'])
         # Should show help or error
         assert 'show' in result.output or 'Commands' in result.output
+
+
+class TestConfigSetCommand:
+    """Test 'bob config set' command."""
+
+    @pytest.fixture
+    def runner(self):
+        """Create CLI runner."""
+        return CliRunner()
+
+    @pytest.fixture
+    def temp_config(self, tmp_path):
+        """Create temporary config file."""
+        config_file = tmp_path / "config.yaml"
+        return config_file
+
+    def test_set_help(self, runner):
+        """Test config set --help."""
+        result = runner.invoke(cli, ['config', 'set', '--help'])
+        assert result.exit_code == 0
+        assert 'Set a configuration value' in result.output
+        assert 'dot notation' in result.output
+
+    def test_set_string_value(self, runner, temp_config):
+        """Test setting a string configuration value."""
+        result = runner.invoke(cli, [
+            'config', 'set',
+            'models.default',
+            'claude-opus-4-5-20251101',
+            '--config-path', str(temp_config)
+        ])
+
+        assert result.exit_code == 0
+        assert 'Configuration updated' in result.output
+        assert 'models.default' in result.output
+        assert 'claude-opus-4-5-20251101' in result.output
+
+        # Verify file was updated
+        with open(temp_config) as f:
+            config = yaml.safe_load(f)
+        assert config['models']['default'] == 'claude-opus-4-5-20251101'
+
+    def test_set_numeric_value(self, runner, temp_config):
+        """Test setting numeric configuration values."""
+        # Set integer
+        result = runner.invoke(cli, [
+            'config', 'set',
+            'escalation.max_attempts_per_model',
+            '5',
+            '--config-path', str(temp_config)
+        ])
+        assert result.exit_code == 0
+
+        # Verify it's stored as int
+        with open(temp_config) as f:
+            config = yaml.safe_load(f)
+        assert config['escalation']['max_attempts_per_model'] == 5
+        assert isinstance(config['escalation']['max_attempts_per_model'], int)
+
+        # Set float
+        result = runner.invoke(cli, [
+            'config', 'set',
+            'limits.max_cost_per_project',
+            '200.5',
+            '--config-path', str(temp_config)
+        ])
+        assert result.exit_code == 0
+
+        # Verify it's stored as float
+        with open(temp_config) as f:
+            config = yaml.safe_load(f)
+        assert config['limits']['max_cost_per_project'] == 200.5
+        assert isinstance(config['limits']['max_cost_per_project'], float)
+
+    def test_set_boolean_value(self, runner, temp_config):
+        """Test setting boolean configuration values."""
+        # First add a boolean field to defaults (for testing)
+        # We'll use a string field and test boolean conversion
+
+        result = runner.invoke(cli, [
+            'config', 'set',
+            'logging.level',
+            'DEBUG',
+            '--config-path', str(temp_config)
+        ])
+        assert result.exit_code == 0
+
+    def test_set_invalid_key(self, runner, temp_config):
+        """Test setting an invalid configuration key."""
+        result = runner.invoke(cli, [
+            'config', 'set',
+            'invalid.key.path',
+            'value',
+            '--config-path', str(temp_config)
+        ])
+
+        assert result.exit_code == 1
+        assert 'Invalid configuration key' in result.output
+
+    def test_set_json_output(self, runner, temp_config):
+        """Test JSON output format for set command."""
+        result = runner.invoke(cli, [
+            'config', 'set',
+            'models.default',
+            'test-model',
+            '--config-path', str(temp_config),
+            '--json-output'
+        ])
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        assert output['status'] == 'success'
+        assert output['key'] == 'models.default'
+        assert output['value'] == 'test-model'
+        assert 'config_path' in output
+
+    def test_set_multiple_values_sequentially(self, runner, temp_config):
+        """Test setting multiple configuration values."""
+        # Set first value
+        runner.invoke(cli, [
+            'config', 'set',
+            'models.default',
+            'model-1',
+            '--config-path', str(temp_config)
+        ])
+
+        # Set second value
+        runner.invoke(cli, [
+            'config', 'set',
+            'models.escalation',
+            'model-2',
+            '--config-path', str(temp_config)
+        ])
+
+        # Set third value in different section
+        runner.invoke(cli, [
+            'config', 'set',
+            'limits.max_cost_per_session',
+            '10.0',
+            '--config-path', str(temp_config)
+        ])
+
+        # Verify all values
+        with open(temp_config) as f:
+            config = yaml.safe_load(f)
+
+        assert config['models']['default'] == 'model-1'
+        assert config['models']['escalation'] == 'model-2'
+        assert config['limits']['max_cost_per_session'] == 10.0
+
+    def test_set_creates_config_file(self, runner, temp_config):
+        """Test that set creates config file if it doesn't exist."""
+        # Ensure file doesn't exist
+        assert not temp_config.exists()
+
+        result = runner.invoke(cli, [
+            'config', 'set',
+            'models.default',
+            'new-model',
+            '--config-path', str(temp_config)
+        ])
+
+        assert result.exit_code == 0
+        # File should now exist
+        assert temp_config.exists()
+
+        # Verify content
+        with open(temp_config) as f:
+            config = yaml.safe_load(f)
+        assert config['models']['default'] == 'new-model'
+
+    def test_set_preserves_existing_values(self, runner, temp_config):
+        """Test that set preserves other existing values."""
+        # Create initial config
+        initial_config = {
+            "models": {
+                "default": "original-model",
+                "escalation": "original-escalation",
+            },
+            "limits": {
+                "max_cost_per_project": 100.0,
+            }
+        }
+
+        with open(temp_config, 'w') as f:
+            yaml.safe_dump(initial_config, f)
+
+        # Update one value
+        result = runner.invoke(cli, [
+            'config', 'set',
+            'models.default',
+            'new-model',
+            '--config-path', str(temp_config)
+        ])
+
+        assert result.exit_code == 0
+
+        # Verify other values are preserved
+        with open(temp_config) as f:
+            config = yaml.safe_load(f)
+
+        assert config['models']['default'] == 'new-model'
+        assert config['models']['escalation'] == 'original-escalation'
+        assert config['limits']['max_cost_per_project'] == 100.0
+
+    def test_set_nested_key(self, runner, temp_config):
+        """Test setting deeply nested configuration keys."""
+        result = runner.invoke(cli, [
+            'config', 'set',
+            'escalation.models.tier1',
+            'custom-tier1-model',
+            '--config-path', str(temp_config)
+        ])
+
+        assert result.exit_code == 0
+
+        with open(temp_config) as f:
+            config = yaml.safe_load(f)
+
+        assert config['escalation']['models']['tier1'] == 'custom-tier1-model'

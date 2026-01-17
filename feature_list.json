@@ -1514,8 +1514,8 @@
       "Display confirmation message",
       "Test setting various config keys"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T22:00:00Z",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,

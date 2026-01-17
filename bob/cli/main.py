@@ -232,6 +232,7 @@ def config() -> None:
 
 # Add config subcommands
 config.add_command(config_commands.show)
+config.add_command(config_commands.set_config)
 
 
 # ============================================================================

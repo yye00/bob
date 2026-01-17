@@ -188,3 +188,148 @@ def _display_escalation_section(escalation: dict):
 
     console.print(table)
     console.print()
+
+
+@config.command('set')
+@click.argument('key')
+@click.argument('value')
+@click.option(
+    '--config-path',
+    type=click.Path(path_type=Path),
+    help='Custom config file path'
+)
+@click.option(
+    '--json-output',
+    is_flag=True,
+    help='Output result as JSON'
+)
+def set_config(key: str, value: str, config_path: Path | None, json_output: bool):
+    """
+    Set a configuration value.
+
+    Uses dot notation for nested keys (e.g., 'models.default').
+    The value is automatically converted to the appropriate type
+    (int, float, bool, or string).
+
+    Examples:
+        bob config set models.default claude-opus-4-5-20251101
+        bob config set limits.max_cost_per_project 200.0
+        bob config set escalation.max_attempts_per_model 5
+        bob config set logging.level DEBUG
+    """
+    manager = get_config_manager(config_path)
+
+    # Validate key exists in default schema
+    if not _validate_key(key):
+        if json_output:
+            output = {
+                "error": f"Invalid configuration key: {key}",
+                "valid_keys": _get_valid_keys()
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            console.print(f"[red]✗ Invalid configuration key:[/] {key}")
+            console.print()
+            console.print("Valid keys:")
+            for valid_key in _get_valid_keys():
+                console.print(f"  - {valid_key}")
+            console.print()
+        raise click.Exit(1)
+
+    # Convert value to appropriate type
+    converted_value = _convert_value(value)
+
+    # Load existing config (or defaults)
+    current_config = manager.load()
+
+    # Set the value
+    manager.set(key, converted_value)
+
+    # Save to file
+    manager.save(manager.get_all())
+
+    if json_output:
+        output = {
+            "status": "success",
+            "key": key,
+            "value": converted_value,
+            "config_path": str(manager.config_path)
+        }
+        click.echo(json.dumps(output, indent=2))
+    else:
+        console.print()
+        console.print(f"[green]✓ Configuration updated[/]")
+        console.print()
+        console.print(f"  Key: [cyan]{key}[/]")
+        console.print(f"  Value: [yellow]{converted_value}[/]")
+        console.print(f"  Config: {manager.config_path}")
+        console.print()
+
+
+def _validate_key(key: str) -> bool:
+    """
+    Validate that a config key exists in the default schema.
+
+    Args:
+        key: Dot-notation config key
+
+    Returns:
+        True if valid, False otherwise
+    """
+    valid_keys = _get_valid_keys()
+    return key in valid_keys
+
+
+def _get_valid_keys() -> list[str]:
+    """
+    Get list of all valid configuration keys.
+
+    Returns:
+        List of valid keys in dot notation
+    """
+    from bob.config import DEFAULT_CONFIG
+
+    def _flatten_keys(d: dict, prefix: str = "") -> list[str]:
+        """Recursively flatten nested dict keys."""
+        keys = []
+        for k, v in d.items():
+            full_key = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, dict):
+                keys.extend(_flatten_keys(v, full_key))
+            else:
+                keys.append(full_key)
+        return keys
+
+    return _flatten_keys(DEFAULT_CONFIG)
+
+
+def _convert_value(value: str) -> int | float | bool | str:
+    """
+    Convert string value to appropriate type.
+
+    Args:
+        value: String value to convert
+
+    Returns:
+        Converted value (int, float, bool, or str)
+    """
+    # Try boolean
+    if value.lower() in ('true', 'yes', '1'):
+        return True
+    if value.lower() in ('false', 'no', '0'):
+        return False
+
+    # Try integer
+    try:
+        return int(value)
+    except ValueError:
+        pass
+
+    # Try float
+    try:
+        return float(value)
+    except ValueError:
+        pass
+
+    # Return as string
+    return value
