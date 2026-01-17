@@ -3883,3 +3883,82 @@ Lower priority (still ready):
 - F048: Plugin architecture base - Create Plugin base class (LOW)
 - F049: Plugin commands - Implement 'bob plugin list/install/uninstall' (LOW)
 - F057: GitHub issues integration test - Test GitHub as spec source (LOW)
+
+F056: Checkpoint Resume Integration Test
+-----------------------------------------
+**Status:** ✓ COMPLETE - All tests passing
+
+Implementation:
+- Added comprehensive checkpoint/resume integration test (test_e2e_checkpoint_and_resume)
+- Test file: tests/test_integration_e2e.py (~225 lines)
+- Tests full checkpoint lifecycle programmatically
+
+Test Coverage (All Steps):
+1. ✓ Create test project with tasks
+   - YAML spec with single task
+   - Project creation via CLI
+
+2. ✓ Create session and save checkpoint
+   - Creates Session object programmatically
+   - Uses CheckpointManager.save_checkpoint()
+   - Includes conversation history and metadata
+
+3. ✓ Verify checkpoint is saved to disk
+   - Checks .bob/checkpoints/ directory exists
+   - Verifies JSON checkpoint files created
+
+4. ✓ List checkpoints with filters
+   - Tests list_checkpoints(session_id=...)
+   - Verifies checkpoint metadata structure
+   - Checks checkpoint_id, session_id, timestamp, turn_count
+
+5. ✓ Restore from checkpoint
+   - Uses restore_checkpoint(checkpoint_id)
+   - Returns full checkpoint data
+
+6. ✓ Verify session state preservation
+   - Conversation history preserved (3 messages)
+   - Session data preserved (task_id, agent_type, model)
+   - Metadata preserved (iteration, custom fields)
+
+7. ✓ Test checkpoint cleanup
+   - delete_checkpoint() operation
+   - Verify checkpoint removed from list
+
+8. ✓ Test multiple checkpoints (different iterations)
+   - Creates 2 checkpoints for same session
+   - Different conversation lengths (iteration 1 vs 3)
+   - Verifies both can be listed and restored
+
+9. ✓ Verify checkpoint sorting
+   - Checkpoints sorted by timestamp (newest first)
+   - Can restore from any checkpoint
+
+Key Implementation Details:
+- Cannot test actual Ctrl+C interrupt in automated tests
+- Simulates interrupt by creating checkpoints programmatically
+- Tests CheckpointManager directly (bob/orchestrator/checkpoint.py)
+- Uses Session objects from bob.models.base
+- Tests conversation_history preservation
+- Tests metadata as optional dict parameter
+- Validates checkpoint file structure (.json in .bob/checkpoints/)
+
+Checkpoint Data Structure:
+- checkpoint_id: unique ID with timestamp
+- session_id: associated session
+- session: full session object serialized
+- conversation_history: list of messages
+- metadata: optional custom data
+- turn_count: number of conversation turns
+- timestamp: ISO format timestamp
+
+Test Results:
+- All 968 tests passing (967 existing + 1 new)
+- New test: test_e2e_checkpoint_and_resume
+- Test runtime: ~0.11s
+- No regressions
+
+PROGRESS:
+- 63/75 features passing (84.0%)
+- +2 features this session (F055, F056)
+- 12 features remaining
