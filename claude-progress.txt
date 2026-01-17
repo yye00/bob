@@ -2908,3 +2908,103 @@ NEXT SESSION PRIORITIES:
 - F035: Cost limits (budget enforcement)
 - F043: Config show command
 - F050: Init command
+
+
+=============================================================================
+SESSION 25 - 2026-01-16
+=============================================================================
+
+COMPLETED: F025 - Port client.py (Claude SDK client setup)
+Status: 41/75 features passing (54.7%)
+
+IMPLEMENTATION DETAILS:
+
+1. Module Structure
+   - Created bob/orchestrator/client.py
+   - Adapted from autonomous-coding quickstart
+   - Made claude_code_sdk import optional for testing
+   - Integrated with bob.security module
+
+2. Client Creation Functions
+   - create_client(): Main client factory
+     * Configurable model selection
+     * Optional research mode (Perplexity)
+     * Custom system prompts
+     * Project config integration (for future use)
+   - create_research_client(): Research-focused variant
+     * Enables Perplexity tools automatically
+     * Research-optimized system prompt
+
+3. Multi-Layered Security
+   - Layer 1: OS-level sandbox (bash isolation)
+   - Layer 2: File permissions (project directory only)
+   - Layer 3: Security hooks (bash command allowlist)
+   - Settings file created in project directory
+
+4. Tool Configuration
+   - BUILTIN_TOOLS: 6 core tools (Read, Write, Edit, Glob, Grep, Bash)
+   - PUPPETEER_TOOLS: 7 browser automation tools
+   - PERPLEXITY_TOOLS: 4 research/search tools
+   - Configurable tool inclusion based on mode
+
+5. MCP Server Integration
+   - Puppeteer MCP for browser automation (always included)
+   - Perplexity MCP for research (optional)
+   - Server configuration passed to ClaudeSDKClient
+
+6. Test Coverage (23 new tests)
+   - Tool constant validation (3 tests)
+   - Client creation with various configurations (14 tests)
+   - Research client creation (4 tests)
+   - Integration workflows (2 tests)
+   - All tests mock claude_code_sdk appropriately
+
+7. Graceful Degradation
+   - claude_code_sdk import is optional
+   - Raises ImportError with clear message when SDK unavailable
+   - Tests work without actual SDK installed
+   - ProjectConfig import is optional
+
+8. Test Results
+   - All 690 tests passing (667 previous + 23 new)
+   - No regressions
+   - Full test suite runs in 3.67s
+
+CONFIGURATION EXAMPLES:
+
+# Basic client
+client = create_client(
+    project_dir=Path("/path/to/project"),
+    model="claude-sonnet-4-20250514"
+)
+
+# Research client with Perplexity
+client = create_research_client(
+    project_dir=Path("/path/to/project"),
+    model="claude-opus-4-20250514"
+)
+
+# Custom client with research
+client = create_client(
+    project_dir=Path("/path/to/project"),
+    model="claude-sonnet-4-20250514",
+    enable_research=True,
+    system_prompt="Custom prompt for specialized task"
+)
+
+DEPENDENCY IMPACT:
+- F025 was blocking F026 (Orchestrator engine)
+- F026 can now be implemented (all dependencies satisfied)
+
+SESSION SUMMARY:
+- Implemented 1 feature (F025)
+- Added 23 tests
+- All 690 tests passing
+- Progress: 40/75 → 41/75 (53.3% → 54.7%)
+- +1.4% completion this session
+
+NEXT SESSION PRIORITIES:
+- F026: Create Orchestrator (Main orchestration engine) - CRITICAL, all deps satisfied
+- F029: Run command (Implement 'bob run') - CRITICAL
+- F036: Structured logging - HIGH
+- F037: Logs command - HIGH
