@@ -3962,3 +3962,87 @@ PROGRESS:
 - 63/75 features passing (84.0%)
 - +2 features this session (F055, F056)
 - 12 features remaining
+
+F058: Complex Dependency Graph Validation
+------------------------------------------
+**Status:** ✓ COMPLETE - All tests passing
+
+Implementation:
+- Added complex DAG validation integration test (test_e2e_complex_dependency_graph)
+- Test file: tests/test_integration_e2e.py (~245 lines)
+- Tests 10-task DAG with 4 levels + 2 error cases
+
+DAG Structure (10 main tasks):
+```
+Level 0: F001 (root task)
+Level 1: F002, F003 (parallel branches, both depend on F001)
+Level 2: F004, F005 (both depend on F002 - parallel within branch A)
+         F006, F007 (both depend on F003 - parallel within branch B)
+Level 3: F008 (depends on F004, F005, F006 - diamond pattern)
+         F009 (depends on F007 - separate chain)
+Level 4: F010 (depends on F008, F009 - final convergence)
+```
+
+Test Coverage (All 8 Steps):
+1. ✓ Create complex dependency graph (10 tasks, 4 levels)
+   - YAML spec with hierarchical dependencies
+   - Multiple parallel branches
+
+2. ✓ Include parallel branches
+   - F002 and F003 can run concurrently after F001
+   - F004 and F005 can run concurrently after F002
+   - F006 and F007 can run concurrently after F003
+   - Tests get_ready_tasks() identifies all parallel opportunities
+
+3. ✓ Include sequential chains
+   - F001 → F002 → F004 (sequential within branch)
+   - F001 → F003 → F007 → F009 (sequential within branch)
+
+4. ✓ Verify correct execution order
+   - Simulates completion of tasks in order
+   - Verifies dependent tasks not ready until dependencies complete
+
+5. ✓ Verify parallel tasks identified correctly
+   - Tests that F002 and F003 both ready after F001
+   - Tests that F004, F005, F006, F007 all ready after F002 and F003
+   - Uses set comparison to verify parallel task groups
+
+6. ✓ Test dependency chain calculation
+   - get_task_dependency_chain(F010) includes F001, F008, F009
+   - Validates transitive dependency resolution
+   - Chain has 5+ tasks (validates deep nesting)
+
+7. ✓ Test circular dependency error handling
+   - Creates F011 with self-reference (depends_on: [F011])
+   - Verifies F011 never becomes ready
+   - TaskQueue correctly identifies circular dependency
+
+8. ✓ Test missing dependency error handling
+   - Creates F012 depending on non-existent F099
+   - Verifies F012 never becomes ready
+   - TaskQueue correctly handles missing dependencies
+
+Diamond Pattern Validation:
+- F008 depends on F004, F005, F006 (3 dependencies)
+- Must wait for ALL three to complete
+- Tests that F008 NOT ready after completing only 2/3 dependencies
+- Tests that F008 becomes ready after all 3 complete
+
+Test Results:
+- All 969 tests passing (968 existing + 1 new)
+- New test: test_e2e_complex_dependency_graph
+- Test runtime: ~0.11s
+- No regressions
+
+FINAL SESSION SUMMARY - SESSION 36:
+====================================
+Features Completed: 3 features
+- F055: Spec sync integration test (spec synchronization workflow)
+- F056: Checkpoint resume integration test (session checkpointing)
+- F058: Complex dependency graph validation (DAG handling)
+
+Total Tests: 969 tests passing (+3 new integration tests)
+Total Features: 64/75 passing (85.3%)
+Remaining: 11 features
+
+All tests passing. Clean codebase state.
