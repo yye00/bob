@@ -653,3 +653,248 @@ class TestEndToEndWorkflow:
             assert status_output["tasks"]["completed"] == 1
             assert status_output["tasks"]["running"] == 1
             assert status_output["tasks"]["pending"] == 3
+
+    def test_e2e_spec_synchronization(self, tmp_path):
+        """Test complete spec synchronization workflow.
+
+        This test covers F055 requirements:
+        1. Create test project from initial spec with 5 tasks
+        2. Complete 2 tasks (simulate 'bob run')
+        3. Modify spec: add 2 new tasks, modify 1 existing task, remove 1 task
+        4. Run 'bob sync'
+        5. Verify new tasks are added to database
+        6. Verify modified task is updated (preserving status)
+        7. Verify removed task is marked deprecated (not deleted)
+        8. Verify completed tasks are not affected
+        9. Run 'bob task list' and verify all tasks are present
+        """
+        runner = CliRunner()
+
+        # Setup database and workspace
+        db_path = tmp_path / "test.db"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Create initial spec with 5 tasks
+        spec_path = tmp_path / "spec.yaml"
+        initial_spec = {
+            "spec_version": 1,
+            "tasks": [
+                {
+                    "id": "F001",
+                    "title": "Task 1",
+                    "description": "First task",
+                    "spec_version": 1,
+                },
+                {
+                    "id": "F002",
+                    "title": "Task 2",
+                    "description": "Second task",
+                    "depends_on": ["F001"],
+                    "spec_version": 1,
+                },
+                {
+                    "id": "F003",
+                    "title": "Task 3",
+                    "description": "Third task",
+                    "priority": "high",
+                    "spec_version": 1,
+                },
+                {
+                    "id": "F004",
+                    "title": "Task 4",
+                    "description": "Fourth task",
+                    "depends_on": ["F002", "F003"],
+                    "spec_version": 1,
+                },
+                {
+                    "id": "F005",
+                    "title": "Task 5",
+                    "description": "Fifth task",
+                    "priority": "low",
+                    "spec_version": 1,
+                },
+            ],
+        }
+
+        import yaml
+        with open(spec_path, "w") as f:
+            yaml.dump(initial_spec, f)
+
+        # Step 1: Create project
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "project", "create",
+            "test-sync",
+            str(workspace),
+            f"file://{spec_path}",
+        ])
+        assert result.exit_code == 0
+
+        # Get project
+        db = DatabaseManager(db_path)
+        projects = db.list_projects()
+        project = next((p for p in projects if p.name == "test-sync"), None)
+        assert project is not None
+        project_id = project.id
+
+        # Initial sync to populate tasks
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "--project", project_id,
+            "sync",
+        ])
+        assert result.exit_code == 0
+        assert "Added: 5" in result.output
+
+        # Verify 5 tasks were created
+        tasks = db.list_tasks(project_id=project_id)
+        assert len(tasks) == 5
+        task_by_spec_id = {t.spec_id: t for t in tasks}
+
+        # Step 2: Complete 2 tasks (simulate 'bob run')
+        # Mark F001 and F003 as completed
+        task_f001 = task_by_spec_id["F001"]
+        task_f003 = task_by_spec_id["F003"]
+        db.update_task(task_f001.id, status=TaskStatus.COMPLETED)
+        db.update_task(task_f003.id, status=TaskStatus.COMPLETED)
+
+        # Verify tasks are completed
+        tasks = db.list_tasks(project_id=project_id)
+        task_by_spec_id = {t.spec_id: t for t in tasks}
+        assert task_by_spec_id["F001"].status == TaskStatus.COMPLETED
+        assert task_by_spec_id["F003"].status == TaskStatus.COMPLETED
+
+        # Step 3: Modify spec
+        # - Add 2 new tasks (F006, F007)
+        # - Modify F002 (change description and add priority)
+        # - Remove F005
+        modified_spec = {
+            "spec_version": 2,
+            "tasks": [
+                {
+                    "id": "F001",
+                    "title": "Task 1",
+                    "description": "First task",
+                    "spec_version": 1,
+                },
+                {
+                    "id": "F002",
+                    "title": "Task 2 - Updated",
+                    "description": "Second task - modified description",
+                    "depends_on": ["F001"],
+                    "priority": "high",  # NEW: added priority
+                    "spec_version": 2,  # Updated version
+                },
+                {
+                    "id": "F003",
+                    "title": "Task 3",
+                    "description": "Third task",
+                    "priority": "high",
+                    "spec_version": 1,
+                },
+                {
+                    "id": "F004",
+                    "title": "Task 4",
+                    "description": "Fourth task",
+                    "depends_on": ["F002", "F003"],
+                    "spec_version": 1,
+                },
+                # F005 REMOVED
+                {
+                    "id": "F006",
+                    "title": "Task 6",
+                    "description": "Sixth task - NEW",
+                    "priority": "medium",
+                    "spec_version": 2,
+                },
+                {
+                    "id": "F007",
+                    "title": "Task 7",
+                    "description": "Seventh task - NEW",
+                    "depends_on": ["F006"],
+                    "spec_version": 2,
+                },
+            ],
+        }
+
+        with open(spec_path, "w") as f:
+            yaml.dump(modified_spec, f)
+
+        # Step 4: Run 'bob sync'
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "--project", project_id,
+            "sync",
+        ])
+        assert result.exit_code == 0
+
+        # Step 5: Verify new tasks are added (F006, F007)
+        assert "Added: 2" in result.output
+        tasks = db.list_tasks(project_id=project_id)
+        task_by_spec_id = {t.spec_id: t for t in tasks}
+
+        assert "F006" in task_by_spec_id
+        assert "F007" in task_by_spec_id
+        assert task_by_spec_id["F006"].title == "Task 6"
+        assert task_by_spec_id["F006"].description == "Sixth task - NEW"
+        assert task_by_spec_id["F006"].priority == "medium"
+        assert task_by_spec_id["F007"].title == "Task 7"
+        assert task_by_spec_id["F007"].depends_on == ["F006"]
+
+        # Step 6: Verify modified task is updated (preserving status)
+        assert "Modified: 1" in result.output
+        task_f002 = task_by_spec_id["F002"]
+        assert task_f002.title == "Task 2 - Updated"
+        assert task_f002.description == "Second task - modified description"
+        assert task_f002.priority == "high"
+        # Status should still be PENDING (not COMPLETED)
+        assert task_f002.status == TaskStatus.PENDING
+
+        # Step 7: Verify removed task is marked deprecated (not deleted)
+        assert "Deprecated: 1" in result.output
+        assert "F005" in task_by_spec_id
+        task_f005 = task_by_spec_id["F005"]
+        assert task_f005.status == TaskStatus.DEPRECATED
+        # Task still exists in database with all original data
+        assert task_f005.title == "Task 5"
+        assert task_f005.description == "Fifth task"
+
+        # Step 8: Verify completed tasks are not affected
+        task_f001 = task_by_spec_id["F001"]
+        task_f003 = task_by_spec_id["F003"]
+        assert task_f001.status == TaskStatus.COMPLETED
+        assert task_f003.status == TaskStatus.COMPLETED
+        # Unchanged tasks should keep their original data
+        assert task_f001.title == "Task 1"
+        assert task_f003.title == "Task 3"
+
+        # Step 9: Run 'bob task list' and verify all tasks are present
+        result = runner.invoke(cli, [
+            "--db", str(db_path),
+            "--project", project_id,
+            "task", "list",
+            "--json",
+        ])
+        assert result.exit_code == 0
+        task_list_response = extract_json(result.output)
+
+        # Should have 7 tasks total (5 original - 0 deleted + 2 new)
+        # Note: F005 is deprecated but still in database
+        assert task_list_response["count"] == 7
+        task_list = task_list_response["tasks"]
+        assert len(task_list) == 7
+
+        # Verify all task IDs are present
+        task_ids = {t["spec_id"] for t in task_list}
+        assert task_ids == {"F001", "F002", "F003", "F004", "F005", "F006", "F007"}
+
+        # Verify status distribution
+        status_counts = {}
+        for task in task_list:
+            status = task["status"]
+            status_counts[status] = status_counts.get(status, 0) + 1
+
+        assert status_counts[TaskStatus.COMPLETED.value] == 2  # F001, F003
+        assert status_counts[TaskStatus.PENDING.value] == 4    # F002, F004, F006, F007
+        assert status_counts[TaskStatus.DEPRECATED.value] == 1 # F005

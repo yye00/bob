@@ -1900,8 +1900,8 @@
       "Verify completed tasks are not affected",
       "Run 'bob task list' and verify all tasks are present"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T03:16:10.327213+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
