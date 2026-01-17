@@ -329,13 +329,12 @@ class TestEndToEndWorkflow:
         db.create_session(session)
 
         # Verify cost calculation
-        from bob.orchestrator.cost_tracker import CostTracker
+        from bob.observability.cost_tracker import CostTracker
         cost_tracker = CostTracker(db)
         project_costs = cost_tracker.get_project_costs(project_id)
 
-        assert project_costs["total_cost"] > 0
-        assert project_costs["total_input_tokens"] == 1000
-        assert project_costs["total_output_tokens"] == 500
+        assert project_costs.total_cost > 0
+        assert project_costs.total_tokens == 1500  # 1000 input + 500 output
 
         # Step 8: Verify logs are created
         # Logs should be in workspace/.bob/logs/
@@ -371,11 +370,11 @@ class TestEndToEndWorkflow:
         assert result.exit_code == 0, f"Costs command failed: {result.output}"
         costs_output = extract_json(result.output)
 
-        assert costs_output["project"] == "test-app"
-        assert "total_cost" in costs_output
-        assert costs_output["total_cost"] > 0
-        assert "sessions" in costs_output
-        assert len(costs_output["sessions"]) >= 1
+        assert costs_output["project"]["name"] == "test-app"
+        assert "costs" in costs_output
+        assert costs_output["costs"]["total"] > 0
+        assert "statistics" in costs_output
+        assert costs_output["statistics"]["session_count"] >= 1
 
     def test_e2e_dependency_ordering(self, setup_e2e_environment):
         """Test that tasks execute in correct dependency order.
@@ -530,14 +529,16 @@ class TestEndToEndWorkflow:
         assert result.exit_code == 0
         costs_output = extract_json(result.output)
 
-        # Total tokens should be sum of all sessions
-        expected_input = 1000 + 2000 + 1500
-        expected_output = 500 + 1000 + 750
+        # Total tokens should be sum of all sessions (input + output + cache_write + cache_read)
+        expected_input = 1000 + 2000 + 1500  # 4500
+        expected_output = 500 + 1000 + 750   # 2250
+        expected_cache_write = 100 + 200 + 150  # 450
+        expected_cache_read = 50 + 100 + 75  # 225
+        expected_total_tokens = expected_input + expected_output + expected_cache_write + expected_cache_read  # 7425
 
-        assert costs_output["total_input_tokens"] == expected_input
-        assert costs_output["total_output_tokens"] == expected_output
-        assert costs_output["total_cost"] > 0
-        assert len(costs_output["sessions"]) == 3
+        assert costs_output["statistics"]["total_tokens"] == expected_total_tokens
+        assert costs_output["costs"]["total"] > 0
+        assert costs_output["statistics"]["session_count"] == 3
 
     def test_e2e_logs_creation(self, setup_e2e_environment):
         """Test that log files are created and contain expected content."""
@@ -571,7 +572,7 @@ class TestEndToEndWorkflow:
             "--db", str(db_path),
             "--project", project_id,
             "logs",
-            "--json-output",
+            "--json",
         ])
 
         # Logs command should work even with no log entries yet
@@ -637,7 +638,7 @@ class TestEndToEndWorkflow:
 
         if all_tasks:
             db.update_task(all_tasks[0].id, status=TaskStatus.COMPLETED)
-            db.update_task(all_tasks[1].id, status=TaskStatus.RUNNING)
+            db.update_task(all_tasks[1].id, status=TaskStatus.IN_PROGRESS)
 
             # Status after partial completion
             result = runner.invoke(cli, [

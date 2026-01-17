@@ -534,6 +534,16 @@ def status(ctx: click.Context, name: Optional[str], json_output: bool) -> None:
 
     # JSON output
     if json_output:
+        # Build tasks object with status counts at top level
+        tasks_output = {
+            "total": len(tasks),
+            "pending": task_breakdown["pending"],
+            "running": task_breakdown["in_progress"],
+            "completed": task_breakdown["completed"],
+            "failed": task_breakdown["failed"],
+            "blocked": task_breakdown["blocked"],
+        }
+
         output = {
             "project": {
                 "id": project.id,
@@ -544,10 +554,7 @@ def status(ctx: click.Context, name: Optional[str], json_output: bool) -> None:
                 "spec_source": project.spec_source,
                 "created_at": project.created_at.isoformat(),
             },
-            "tasks": {
-                "total": len(tasks),
-                "breakdown": task_breakdown,
-            },
+            "tasks": tasks_output,
             "costs": {
                 "total": round(total_cost, 2),
                 "by_model": {k: round(v, 2) for k, v in cost_by_model.items()},

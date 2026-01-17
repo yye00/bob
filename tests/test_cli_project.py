@@ -1217,7 +1217,8 @@ class TestProjectStatusCommand:
             assert output["project"]["description"] == "Test app"
             assert "tasks" in output
             assert "total" in output["tasks"]
-            assert "breakdown" in output["tasks"]
+            assert "pending" in output["tasks"]
+            assert "completed" in output["tasks"]
             assert "costs" in output
             assert "total" in output["costs"]
             assert "recent_sessions" in output

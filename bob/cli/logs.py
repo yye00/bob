@@ -269,22 +269,27 @@ def logs(
     # Get database path from context
     db_path = ctx.obj.db_path
 
-    # Initialize state manager to get active project
-    # StateManager expects a directory - use parent of db file
-    state_dir = db_path.parent
-    state = StateManager(state_dir)
-    active_project = state.get_active_project()
-
-    if not active_project:
-        click.echo("✗ No active project. Use 'bob project use <name>' first.", err=True)
-        sys.exit(1)
-
     # Initialize database manager
     db = DatabaseManager(db_path)
-    project = db.get_project(active_project)
+
+    # Check for project from global --project flag first, then fall back to active project
+    project_id = ctx.obj.project_id
+    if not project_id:
+        # Initialize state manager to get active project
+        # StateManager expects a directory - use parent of db file
+        state_dir = db_path.parent
+        state = StateManager(state_dir)
+        project_id = state.get_active_project()
+
+    if not project_id:
+        click.echo("✗ No active project. Use 'bob project use <name>' or --project flag.", err=True)
+        sys.exit(1)
+
+    # Get project from database
+    project = db.get_project(project_id)
 
     if not project:
-        click.echo(f"✗ Project not found: {active_project}", err=True)
+        click.echo(f"✗ Project not found: {project_id}", err=True)
         sys.exit(1)
 
     # Get log directory
