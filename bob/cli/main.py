@@ -10,6 +10,7 @@ from typing import Optional
 import click
 
 # Import project commands
+from bob.cli import config as config_commands
 from bob.cli import costs as costs_commands
 from bob.cli import logs as logs_commands
 from bob.cli import project as project_commands
@@ -221,6 +222,10 @@ def config() -> None:
       bob config set agent.coding.max_turns 100
     """
     pass
+
+
+# Add config subcommands
+config.add_command(config_commands.show)
 
 
 # ============================================================================
