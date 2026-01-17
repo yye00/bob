@@ -479,3 +479,348 @@ class TestCreateOrchestrator:
 
         assert orchestrator.config == config
         assert orchestrator.config.default_model == "claude-opus-4-20250514"
+
+
+class TestCostLimits:
+    """Test cost limit enforcement."""
+
+    def test_config_with_cost_limits(self):
+        """Test that cost limits can be configured."""
+        config = OrchestratorConfig(
+            max_cost_per_project=50.0,
+            max_cost_per_session=2.0,
+            warn_at_percent=75,
+        )
+
+        assert config.max_cost_per_project == 50.0
+        assert config.max_cost_per_session == 2.0
+        assert config.warn_at_percent == 75
+
+    def test_config_without_cost_limits(self):
+        """Test default config has no cost limits."""
+        config = OrchestratorConfig()
+
+        assert config.max_cost_per_project is None
+        assert config.max_cost_per_session is None
+        assert config.warn_at_percent == 80
+
+    def test_check_project_cost_limit_no_limit(self, db_manager, temp_project_dir):
+        """Test cost check when no limit is set."""
+        config = OrchestratorConfig(max_cost_per_project=None)
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+
+        can_continue, message = orchestrator.check_project_cost_limit()
+
+        assert can_continue is True
+        assert message is None
+
+    def test_check_project_cost_limit_under_limit(self, db_manager, temp_project_dir):
+        """Test cost check when under limit."""
+        # Create project first
+        from bob.models.base import Project, ProjectStatus
+        project = Project(
+            id="proj-1",
+            name="test-project",
+            description="Test",
+            workspace_dir="/tmp/test",
+            spec_source="/tmp/spec.txt",
+            status=ProjectStatus.ACTIVE,
+        )
+        db_manager.create_project(project)
+
+        # Create a session with low cost
+        from bob.models.base import Session, SessionStatus, AgentType
+        from datetime import datetime
+        session = Session(
+            id="session-1",
+            project_id="proj-1",
+            task_id=None,
+            agent_type=AgentType.CODING,
+            status=SessionStatus.RUNNING,
+            started_at=datetime.now(),
+            model="claude-sonnet-4",
+            input_tokens=1000,
+            output_tokens=500,
+            cost=0.01,  # Very low cost
+        )
+        db_manager.create_session(session)
+
+        # Set limit much higher
+        config = OrchestratorConfig(max_cost_per_project=10.0)
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+
+        can_continue, message = orchestrator.check_project_cost_limit()
+
+        assert can_continue is True
+        assert message is None
+
+    def test_check_project_cost_limit_at_warning_threshold(self, db_manager, temp_project_dir):
+        """Test cost check at warning threshold."""
+        # Create project
+        from bob.models.base import Project, ProjectStatus, Session, SessionStatus, AgentType
+        from datetime import datetime
+        project = Project(
+            id="proj-1",
+            name="test-project",
+            description="Test",
+            workspace_dir="/tmp/test",
+            spec_source="/tmp/spec.txt",
+            status=ProjectStatus.ACTIVE,
+        )
+        db_manager.create_project(project)
+
+        # Create session with cost at 85% of limit (above 80% warning threshold)
+        session = Session(
+            id="session-1",
+            project_id="proj-1",
+            task_id=None,
+            agent_type=AgentType.CODING,
+            status=SessionStatus.RUNNING,
+            started_at=datetime.now(),
+            model="claude-sonnet-4",
+            input_tokens=100000,
+            output_tokens=50000,
+            cost=8.5,  # 85% of 10.0 limit
+        )
+        db_manager.create_session(session)
+
+        config = OrchestratorConfig(max_cost_per_project=10.0, warn_at_percent=80)
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+
+        can_continue, message = orchestrator.check_project_cost_limit()
+
+        assert can_continue is True
+        assert message is not None
+        assert "Warning" in message
+        assert "85.0%" in message or "85%" in message
+        assert "$8.5" in message or "$8.50" in message
+
+    def test_check_project_cost_limit_exceeded(self, db_manager, temp_project_dir):
+        """Test cost check when limit is exceeded."""
+        # Create project
+        from bob.models.base import Project, ProjectStatus, Session, SessionStatus, AgentType
+        from datetime import datetime
+        project = Project(
+            id="proj-1",
+            name="test-project",
+            description="Test",
+            workspace_dir="/tmp/test",
+            spec_source="/tmp/spec.txt",
+            status=ProjectStatus.ACTIVE,
+        )
+        db_manager.create_project(project)
+
+        # Create session with cost over limit
+        session = Session(
+            id="session-1",
+            project_id="proj-1",
+            task_id=None,
+            agent_type=AgentType.CODING,
+            status=SessionStatus.RUNNING,
+            started_at=datetime.now(),
+            model="claude-sonnet-4",
+            input_tokens=1000000,
+            output_tokens=500000,
+            cost=15.0,  # Over 10.0 limit
+        )
+        db_manager.create_session(session)
+
+        config = OrchestratorConfig(max_cost_per_project=10.0)
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+
+        can_continue, message = orchestrator.check_project_cost_limit()
+
+        assert can_continue is False
+        assert message is not None
+        assert "exceeded" in message.lower()
+        assert "$15" in message
+        assert "$10" in message
+
+    def test_check_session_cost_limit_no_limit(self, db_manager, temp_project_dir):
+        """Test session cost check when no limit is set."""
+        config = OrchestratorConfig(max_cost_per_session=None)
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+
+        can_continue, message = orchestrator.check_session_cost_limit("session-123")
+
+        assert can_continue is True
+        assert message is None
+
+    def test_check_session_cost_limit_under_limit(self, db_manager, temp_project_dir):
+        """Test session cost check when under limit."""
+        # Create project
+        from bob.models.base import Project, ProjectStatus, Session, SessionStatus, AgentType
+        from datetime import datetime
+        project = Project(
+            id="proj-1",
+            name="test-project",
+            description="Test",
+            workspace_dir="/tmp/test",
+            spec_source="/tmp/spec.txt",
+            status=ProjectStatus.ACTIVE,
+        )
+        db_manager.create_project(project)
+
+        # Create session with low cost
+        session = Session(
+            id="session-1",
+            project_id="proj-1",
+            task_id=None,
+            agent_type=AgentType.CODING,
+            status=SessionStatus.RUNNING,
+            started_at=datetime.now(),
+            model="claude-sonnet-4",
+            input_tokens=1000,
+            output_tokens=500,
+            cost=0.01,
+        )
+        db_manager.create_session(session)
+
+        config = OrchestratorConfig(max_cost_per_session=2.0)
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+
+        can_continue, message = orchestrator.check_session_cost_limit("session-1")
+
+        assert can_continue is True
+        assert message is None
+
+    def test_check_session_cost_limit_exceeded(self, db_manager, temp_project_dir):
+        """Test session cost check when limit is exceeded."""
+        # Create project
+        from bob.models.base import Project, ProjectStatus, Session, SessionStatus, AgentType
+        from datetime import datetime
+        project = Project(
+            id="proj-1",
+            name="test-project",
+            description="Test",
+            workspace_dir="/tmp/test",
+            spec_source="/tmp/spec.txt",
+            status=ProjectStatus.ACTIVE,
+        )
+        db_manager.create_project(project)
+
+        # Create session with cost over limit
+        session = Session(
+            id="session-1",
+            project_id="proj-1",
+            task_id=None,
+            agent_type=AgentType.CODING,
+            status=SessionStatus.RUNNING,
+            started_at=datetime.now(),
+            model="claude-sonnet-4",
+            input_tokens=100000,
+            output_tokens=50000,
+            cost=3.0,  # Over 2.0 limit
+        )
+        db_manager.create_session(session)
+
+        config = OrchestratorConfig(max_cost_per_session=2.0)
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+
+        can_continue, message = orchestrator.check_session_cost_limit("session-1")
+
+        assert can_continue is False
+        assert message is not None
+        assert "exceeded" in message.lower()
+        assert "$3" in message
+        assert "$2" in message
+
+    @pytest.mark.asyncio
+    async def test_execute_task_blocks_on_project_cost_limit(self, db_manager, temp_project_dir, sample_task):
+        """Test that execute_task blocks when project cost limit is exceeded."""
+        # Create session with cost over limit
+        from bob.models.base import Session, SessionStatus, AgentType
+        from datetime import datetime
+        session = Session(
+            id="session-1",
+            project_id="proj-1",
+            task_id=None,
+            agent_type=AgentType.CODING,
+            status=SessionStatus.RUNNING,
+            started_at=datetime.now(),
+            model="claude-sonnet-4",
+            input_tokens=1000000,
+            output_tokens=500000,
+            cost=15.0,  # Over 10.0 limit
+        )
+        db_manager.create_session(session)
+
+        config = OrchestratorConfig(max_cost_per_project=10.0)
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+
+        status, error = await orchestrator.execute_task(sample_task, "Test prompt")
+
+        assert status == TaskStatus.BLOCKED
+        assert error is not None
+        assert "exceeded" in error.lower()
+        # Reload task to check status
+        updated_task = db_manager.get_task("task-123")
+        assert updated_task.status == TaskStatus.BLOCKED
+
+    @pytest.mark.asyncio
+    async def test_execute_task_blocks_on_session_cost_limit(self, db_manager, temp_project_dir, sample_task):
+        """Test that execute_task blocks when session cost limit is exceeded."""
+        # Create session with cost over limit
+        from bob.models.base import Session, SessionStatus, AgentType
+        from datetime import datetime
+        session = Session(
+            id="session-1",
+            project_id="proj-1",
+            task_id=None,
+            agent_type=AgentType.CODING,
+            status=SessionStatus.RUNNING,
+            started_at=datetime.now(),
+            model="claude-sonnet-4",
+            input_tokens=100000,
+            output_tokens=50000,
+            cost=3.0,  # Over 2.0 limit
+        )
+        db_manager.create_session(session)
+
+        config = OrchestratorConfig(max_cost_per_session=2.0)
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+        orchestrator.session_id = "session-1"
+
+        status, error = await orchestrator.execute_task(sample_task, "Test prompt")
+
+        assert status == TaskStatus.BLOCKED
+        assert error is not None
+        assert "exceeded" in error.lower()
+        # Reload task to check status
+        updated_task = db_manager.get_task("task-123")
+        assert updated_task.status == TaskStatus.BLOCKED
+
+    @pytest.mark.asyncio
+    async def test_execute_task_continues_under_limits(self, db_manager, temp_project_dir, sample_task):
+        """Test that execute_task continues when under cost limits."""
+        # Create session with low cost
+        from bob.models.base import Session, SessionStatus, AgentType
+        from datetime import datetime
+        session = Session(
+            id="session-1",
+            project_id="proj-1",
+            task_id=None,
+            agent_type=AgentType.CODING,
+            status=SessionStatus.RUNNING,
+            started_at=datetime.now(),
+            model="claude-sonnet-4",
+            input_tokens=1000,
+            output_tokens=500,
+            cost=0.5,  # Well under limits
+        )
+        db_manager.create_session(session)
+
+        config = OrchestratorConfig(
+            max_cost_per_project=10.0,
+            max_cost_per_session=2.0,
+        )
+        orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir, config)
+        orchestrator.session_id = "session-1"
+
+        # Mock successful execution
+        with patch('bob.orchestrator.engine.create_client', return_value=MagicMock()):
+            with patch.object(orchestrator, '_execute_with_client', return_value=(True, None)):
+                status, error = await orchestrator.execute_task(sample_task, "Test prompt")
+
+        assert status == TaskStatus.COMPLETED
+        assert error is None

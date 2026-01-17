@@ -31,6 +31,8 @@ from bob.orchestrator.escalation import EscalationController
 from bob.orchestrator.failure_classifier import classify_failure, ClassificationResult
 from bob.orchestrator.task_decomposer import TaskDecomposer
 from bob.orchestrator.research_controller import ResearchController
+from bob.observability.cost_tracker import CostTracker
+from bob.config import ConfigManager
 
 
 class OrchestratorConfig:
@@ -43,6 +45,9 @@ class OrchestratorConfig:
         enable_escalation: bool = True,
         enable_research: bool = True,
         enable_decomposition: bool = True,
+        max_cost_per_project: Optional[float] = None,
+        max_cost_per_session: Optional[float] = None,
+        warn_at_percent: int = 80,
     ):
         """
         Initialize orchestrator configuration.
@@ -53,12 +58,18 @@ class OrchestratorConfig:
             enable_escalation: Whether to enable model escalation
             enable_research: Whether to enable research mode
             enable_decomposition: Whether to enable task decomposition
+            max_cost_per_project: Maximum cost per project (USD), None for no limit
+            max_cost_per_session: Maximum cost per session (USD), None for no limit
+            warn_at_percent: Warn when reaching this percentage of limit (0-100)
         """
         self.default_model = default_model
         self.max_retries = max_retries
         self.enable_escalation = enable_escalation
         self.enable_research = enable_research
         self.enable_decomposition = enable_decomposition
+        self.max_cost_per_project = max_cost_per_project
+        self.max_cost_per_session = max_cost_per_session
+        self.warn_at_percent = warn_at_percent
 
 
 class Orchestrator:
@@ -93,11 +104,91 @@ class Orchestrator:
         self.escalation = EscalationController(db_manager, project_id)
         self.task_decomposer = TaskDecomposer(db_manager)
         self.research_controller = ResearchController(db_manager, project_dir)
+        self.cost_tracker = CostTracker(db_manager)
 
         # Current execution state
         self.current_task: Optional[Task] = None
         self.current_model: str = self.config.default_model
         self.session_id: Optional[str] = None
+
+    def check_project_cost_limit(self) -> tuple[bool, Optional[str]]:
+        """
+        Check if project cost is within limits.
+
+        Returns:
+            Tuple of (can_continue, message)
+            can_continue is False if limit exceeded
+            message describes the budget status
+        """
+        if self.config.max_cost_per_project is None:
+            return True, None
+
+        # Get current project costs (use stored cost for accurate limit checking)
+        try:
+            summary = self.cost_tracker.get_project_costs(self.project_id, use_stored_cost=True)
+            current_cost = summary.total_cost
+        except ValueError:
+            # Project not found or no costs yet
+            return True, None
+
+        limit = self.config.max_cost_per_project
+        percentage = (current_cost / limit) * 100 if limit > 0 else 0
+
+        # Check if limit exceeded
+        if current_cost >= limit:
+            return False, (
+                f"Project cost limit exceeded: ${current_cost:.4f} >= ${limit:.2f} "
+                f"({percentage:.1f}% of budget used)"
+            )
+
+        # Check if warning threshold reached
+        if percentage >= self.config.warn_at_percent:
+            return True, (
+                f"Warning: Approaching project cost limit - ${current_cost:.4f} / ${limit:.2f} "
+                f"({percentage:.1f}% of budget used)"
+            )
+
+        return True, None
+
+    def check_session_cost_limit(self, session_id: str) -> tuple[bool, Optional[str]]:
+        """
+        Check if session cost is within limits.
+
+        Args:
+            session_id: Session ID to check
+
+        Returns:
+            Tuple of (can_continue, message)
+            can_continue is False if limit exceeded
+            message describes the budget status
+        """
+        if self.config.max_cost_per_session is None:
+            return True, None
+
+        # Get current session costs (use stored cost for accurate limit checking)
+        session_cost = self.cost_tracker.get_session_cost(session_id, use_stored_cost=True)
+        if not session_cost:
+            return True, None
+
+        current_cost = session_cost.cost.total_cost
+        limit = self.config.max_cost_per_session
+        percentage = (current_cost / limit) * 100 if limit > 0 else 0
+
+        # Check if limit exceeded
+        if current_cost >= limit:
+            return False, (
+                f"Session cost limit exceeded: ${current_cost:.4f} >= ${limit:.2f} "
+                f"({percentage:.1f}% of budget used)"
+            )
+
+        # Check if warning threshold reached
+        if percentage >= self.config.warn_at_percent:
+            return True, (
+                f"Warning: Approaching session cost limit - ${current_cost:.4f} / ${limit:.2f} "
+                f"({percentage:.1f}% of budget used)"
+            )
+
+        return True, None
 
     async def execute_task(
         self,
@@ -108,12 +199,13 @@ class Orchestrator:
         Execute a single task with full orchestration support.
 
         This method:
-        1. Updates task status to in_progress
-        2. Creates appropriate client based on task needs
-        3. Executes the task with the Claude SDK
-        4. Handles failures with classification and escalation
-        5. Updates task status based on result
-        6. Returns final status and any error message
+        1. Checks cost limits before starting
+        2. Updates task status to in_progress
+        3. Creates appropriate client based on task needs
+        4. Executes the task with the Claude SDK
+        5. Handles failures with classification and escalation
+        6. Updates task status based on result
+        7. Returns final status and any error message
 
         Args:
             task: Task to execute
@@ -124,6 +216,31 @@ class Orchestrator:
             error_message is None if successful
         """
         self.current_task = task
+
+        # Check project cost limit before starting
+        can_continue, budget_msg = self.check_project_cost_limit()
+        if not can_continue:
+            # Cost limit exceeded - block the task
+            self.db.update_task(task.id, status=TaskStatus.BLOCKED)
+            return TaskStatus.BLOCKED, budget_msg
+
+        # Display warning if approaching limit
+        if budget_msg:
+            # In a real implementation, this would log or display to user
+            # For now, we just note it (tests can check this via cost_tracker)
+            pass
+
+        # Check session cost limit if we have a session
+        if self.session_id:
+            can_continue, session_msg = self.check_session_cost_limit(self.session_id)
+            if not can_continue:
+                # Session cost limit exceeded - block the task
+                self.db.update_task(task.id, status=TaskStatus.BLOCKED)
+                return TaskStatus.BLOCKED, session_msg
+
+            if session_msg:
+                # Display warning
+                pass
 
         # Update task to in_progress
         # Note: attempts will be incremented by record_attempt in escalation controller

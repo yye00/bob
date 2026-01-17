@@ -219,11 +219,12 @@ class CostTracker:
             cost_usd=cost.total_cost,
         )
 
-    def get_session_cost(self, session_id: str) -> Optional[SessionCost]:
+    def get_session_cost(self, session_id: str, use_stored_cost: bool = False) -> Optional[SessionCost]:
         """Get cost details for a session.
 
         Args:
             session_id: Session ID
+            use_stored_cost: If True, use stored cost instead of recalculating from tokens
 
         Returns:
             Session cost details, or None if session not found
@@ -239,7 +240,20 @@ class CostTracker:
             cache_write_tokens=session.cache_write_tokens or 0,
         )
 
-        cost = self.calculate_cost(session.current_model, usage)
+        # Get cost breakdown
+        if use_stored_cost and session.cost > 0:
+            # Use stored cost, distributed evenly across token types
+            # This is a simplification - we don't know the exact breakdown
+            total_cost = session.cost
+            cost = CostBreakdown(
+                input_cost=total_cost * 0.5,  # Rough approximation
+                output_cost=total_cost * 0.5,
+                cache_read_cost=0.0,
+                cache_write_cost=0.0,
+            )
+        else:
+            # Calculate from tokens
+            cost = self.calculate_cost(session.current_model, usage)
 
         return SessionCost(
             session_id=session.id,
@@ -256,6 +270,7 @@ class CostTracker:
         project_id: str,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        use_stored_cost: bool = False,
     ) -> ProjectCostSummary:
         """Get cost breakdown for a project.
 
@@ -263,6 +278,7 @@ class CostTracker:
             project_id: Project ID
             start_date: Filter sessions after this date (inclusive)
             end_date: Filter sessions before this date (inclusive)
+            use_stored_cost: If True, use stored cost instead of recalculating from tokens
 
         Returns:
             Project cost summary
@@ -288,20 +304,33 @@ class CostTracker:
         by_day: Dict[str, float] = {}
 
         for session in sessions:
-            # Calculate cost for this session
+            # Get session cost
+            if use_stored_cost and session.cost > 0:
+                # Use the stored cost value
+                session_cost = session.cost
+            else:
+                # Calculate cost for this session from tokens
+                usage = TokenUsage(
+                    input_tokens=session.input_tokens or 0,
+                    output_tokens=session.output_tokens or 0,
+                    cache_read_tokens=session.cache_read_tokens or 0,
+                    cache_write_tokens=session.cache_write_tokens or 0,
+                )
+
+                cost = self.calculate_cost(session.current_model, usage)
+                session_cost = cost.total_cost
+
+            # Count tokens regardless of cost calculation method
             usage = TokenUsage(
                 input_tokens=session.input_tokens or 0,
                 output_tokens=session.output_tokens or 0,
                 cache_read_tokens=session.cache_read_tokens or 0,
                 cache_write_tokens=session.cache_write_tokens or 0,
             )
-
-            cost = self.calculate_cost(session.current_model, usage)
-            session_cost = cost.total_cost
+            total_tokens += usage.total_tokens
 
             # Accumulate totals
             total_cost += session_cost
-            total_tokens += usage.total_tokens
 
             # By model
             model = session.current_model

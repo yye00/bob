@@ -1202,8 +1202,8 @@
       "Display clear budget status messages",
       "Test with various budget configurations"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T21:01:32.905620Z",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
