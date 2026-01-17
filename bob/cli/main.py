@@ -13,6 +13,7 @@ import click
 from bob.cli import costs as costs_commands
 from bob.cli import project as project_commands
 from bob.cli import research as research_commands
+from bob.cli import run as run_commands
 from bob.cli import status as status_commands
 from bob.cli import sync as sync_commands
 from bob.cli import task as task_commands
@@ -183,25 +184,8 @@ def task() -> None:
 task.add_command(task_commands.list)
 task.add_command(task_commands.show)
 
-
-@cli.group()
-def run() -> None:
-    """Run the autonomous coding agent.
-
-    \b
-    Start an agent session to work on tasks. The agent will
-    automatically select and execute tasks based on priority
-    and dependencies.
-
-    \b
-    Examples:
-      bob run                    # Run on active project
-      bob run --task F001        # Run specific task
-      bob run --max-turns 50     # Limit turns per session
-      bob run --agent coding     # Use specific agent type
-    """
-    pass
-
+# Add run command
+cli.add_command(run_commands.run)
 
 # Add research command
 cli.add_command(research_commands.research)

@@ -1094,8 +1094,8 @@
       "Display parallel execution status",
       "Test with project having parallel-ready tasks"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-16T19:30:00Z",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
