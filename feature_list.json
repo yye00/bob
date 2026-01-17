@@ -2440,8 +2440,8 @@
       "Add contributing guidelines",
       "Add license information"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T00:04:10.759495+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
@@ -2508,8 +2508,8 @@
       "Add optional dependencies (perplexity, postgres driver)",
       "Test installation in fresh virtual environment"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T00:05:16.060539+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
