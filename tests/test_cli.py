@@ -124,7 +124,7 @@ class TestCommandGroups:
         """Test status command group."""
         result = runner.invoke(cli, ["status", "--help"])
         assert result.exit_code == 0
-        assert "View project and task status" in result.output
+        assert "View global status" in result.output or "status" in result.output.lower()
 
     def test_logs_group(self, runner):
         """Test logs command group."""

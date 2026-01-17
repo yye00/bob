@@ -13,6 +13,7 @@ import click
 from bob.cli import costs as costs_commands
 from bob.cli import project as project_commands
 from bob.cli import research as research_commands
+from bob.cli import status as status_commands
 from bob.cli import sync as sync_commands
 from bob.cli import task as task_commands
 
@@ -205,24 +206,10 @@ def run() -> None:
 # Add research command
 cli.add_command(research_commands.research)
 
+# Add status command
+cli.add_command(status_commands.status)
+
 # Sync command is added directly from sync_commands module
-
-
-@cli.group()
-def status() -> None:
-    """View project and task status.
-
-    \b
-    Show current status of projects, tasks, and recent sessions.
-    Provides overview of progress and blockers.
-
-    \b
-    Examples:
-      bob status                 # Overall status
-      bob status --project my-app
-      bob status --verbose       # Detailed status
-    """
-    pass
 
 
 @cli.group()

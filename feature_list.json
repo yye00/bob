@@ -1310,8 +1310,8 @@
       "Add --json flag for structured output",
       "Test with 0, 1, and multiple projects"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T00:11:57.427622+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
