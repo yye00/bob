@@ -1791,8 +1791,8 @@
       "Verify implementation uses research context",
       "Test with and without PERPLEXITY_API_KEY"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T02:37:33.515523+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,
