@@ -1547,8 +1547,8 @@
       "Display validation errors if any",
       "Test with valid and invalid YAML edits"
     ],
-    "passes": false,
-    "passed_at": null,
+    "passes": true,
+    "passed_at": "2026-01-17T04:19:22.247117+00:00",
     "needs_reverification": false,
     "reverification_reason": null,
     "deprecated": false,

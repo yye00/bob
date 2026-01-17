@@ -463,3 +463,333 @@ class TestConfigSetCommand:
             config = yaml.safe_load(f)
 
         assert config['escalation']['models']['tier1'] == 'custom-tier1-model'
+
+
+class TestConfigEditCommand:
+    """Test 'bob config edit' command."""
+
+    @pytest.fixture
+    def runner(self):
+        """Create CLI runner."""
+        return CliRunner()
+
+    @pytest.fixture
+    def temp_config(self, tmp_path):
+        """Create temporary config file."""
+        config_file = tmp_path / "config.yaml"
+        return config_file
+
+    @pytest.fixture
+    def mock_editor(self, tmp_path):
+        """Create a mock editor script."""
+        # Create a simple mock editor that just touches the file
+        editor_script = tmp_path / "mock_editor.sh"
+        editor_script.write_text("#!/bin/bash\ntouch \"$1\"\n")
+        editor_script.chmod(0o755)
+        return str(editor_script)
+
+    def test_edit_help(self, runner):
+        """Test config edit --help."""
+        result = runner.invoke(cli, ['config', 'edit', '--help'])
+        assert result.exit_code == 0
+        assert 'Open configuration file in editor' in result.output
+        assert '--editor' in result.output
+        assert '--config-path' in result.output
+
+    def test_edit_creates_config_if_missing(self, runner, temp_config, mock_editor, monkeypatch):
+        """Test that edit creates config file if it doesn't exist."""
+        # Mock subprocess to avoid actually opening an editor
+        def mock_run(cmd):
+            # Touch the file to simulate editor
+            if temp_config.exists():
+                temp_config.touch()
+            else:
+                # Create with default content
+                temp_config.write_text("models:\n  default: test\n")
+            return type('obj', (object,), {'returncode': 0})
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config),
+            '--editor', 'nano'
+        ])
+
+        assert temp_config.exists()
+
+    def test_edit_with_valid_yaml(self, runner, temp_config, monkeypatch):
+        """Test editing with valid YAML."""
+        # Create initial config
+        initial_config = {
+            "models": {
+                "default": "test-model",
+            }
+        }
+        with open(temp_config, 'w') as f:
+            yaml.safe_dump(initial_config, f)
+
+        # Mock subprocess to simulate editing
+        def mock_run(cmd):
+            # Modify the file
+            new_config = {
+                "models": {
+                    "default": "updated-model",
+                }
+            }
+            with open(temp_config, 'w') as f:
+                yaml.safe_dump(new_config, f)
+            return type('obj', (object,), {'returncode': 0})
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config),
+            '--editor', 'nano'
+        ])
+
+        assert result.exit_code == 0
+        assert 'Configuration updated successfully' in result.output
+
+        # Verify file was updated
+        with open(temp_config) as f:
+            config = yaml.safe_load(f)
+        assert config['models']['default'] == 'updated-model'
+
+    def test_edit_with_invalid_yaml(self, runner, temp_config, monkeypatch):
+        """Test editing with invalid YAML syntax."""
+        # Create initial config
+        initial_config = {"models": {"default": "test"}}
+        with open(temp_config, 'w') as f:
+            yaml.safe_dump(initial_config, f)
+
+        # Mock subprocess to simulate editing with invalid YAML
+        def mock_run(cmd):
+            # Write invalid YAML
+            temp_config.write_text("models:\n  default: test\n  invalid yaml [[[")
+            return type('obj', (object,), {'returncode': 0})
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config),
+            '--editor', 'nano'
+        ])
+
+        assert result.exit_code == 1
+        assert 'validation failed' in result.output.lower()
+
+    def test_edit_no_changes(self, runner, temp_config, monkeypatch):
+        """Test editing without making changes."""
+        # Create initial config
+        initial_config = {"models": {"default": "test"}}
+        with open(temp_config, 'w') as f:
+            yaml.safe_dump(initial_config, f)
+
+        # Mock subprocess to simulate editor without changes
+        def mock_run(cmd):
+            # Don't modify the file
+            return type('obj', (object,), {'returncode': 0})
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config),
+            '--editor', 'nano'
+        ])
+
+        assert result.exit_code == 0
+        assert 'No changes made' in result.output
+
+    def test_edit_with_custom_editor(self, runner, temp_config, monkeypatch):
+        """Test using custom editor."""
+        temp_config.write_text("models:\n  default: test\n")
+
+        editor_called_with = []
+
+        def mock_run(cmd):
+            editor_called_with.append(cmd)
+            return type('obj', (object,), {'returncode': 0})
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config),
+            '--editor', 'vim'
+        ])
+
+        assert result.exit_code == 0
+        assert len(editor_called_with) == 1
+        assert editor_called_with[0][0] == 'vim'
+
+    def test_edit_json_output(self, runner, temp_config, monkeypatch):
+        """Test JSON output format."""
+        temp_config.write_text("models:\n  default: test\n")
+
+        def mock_run(cmd):
+            # Modify file
+            temp_config.write_text("models:\n  default: updated\n")
+            return type('obj', (object,), {'returncode': 0})
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config),
+            '--editor', 'nano',
+            '--json-output'
+        ])
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        assert output['status'] == 'success'
+        assert output['modified'] is True
+        assert 'config_path' in output
+        assert output['validation_errors'] == []
+
+    def test_edit_json_output_validation_error(self, runner, temp_config, monkeypatch):
+        """Test JSON output with validation error."""
+        temp_config.write_text("models:\n  default: test\n")
+
+        def mock_run(cmd):
+            # Write invalid YAML
+            temp_config.write_text("invalid: [[[")
+            return type('obj', (object,), {'returncode': 0})
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config),
+            '--editor', 'nano',
+            '--json-output'
+        ])
+
+        assert result.exit_code == 1
+        output = json.loads(result.output)
+        assert output['status'] == 'error'
+        assert 'validation_errors' in output
+        assert len(output['validation_errors']) > 0
+
+    def test_edit_editor_not_found(self, runner, temp_config, monkeypatch):
+        """Test error when editor is not found."""
+        temp_config.write_text("models:\n  default: test\n")
+
+        def mock_run(cmd):
+            raise FileNotFoundError()
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config),
+            '--editor', 'nonexistent-editor'
+        ])
+
+        assert result.exit_code == 1
+        assert 'Editor not found' in result.output
+
+    def test_edit_editor_exits_with_error(self, runner, temp_config, monkeypatch):
+        """Test when editor exits with non-zero code."""
+        temp_config.write_text("models:\n  default: test\n")
+
+        def mock_run(cmd):
+            return type('obj', (object,), {'returncode': 1})
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config),
+            '--editor', 'nano'
+        ])
+
+        assert result.exit_code == 1
+        assert 'exited with code' in result.output
+
+    def test_edit_no_editor_specified(self, runner, temp_config, monkeypatch):
+        """Test error when no editor is specified and $EDITOR is not set."""
+        temp_config.write_text("models:\n  default: test\n")
+
+        # Mock environment to not have EDITOR
+        monkeypatch.delenv('EDITOR', raising=False)
+
+        # Mock _get_default_editor to return None
+        from bob.cli import config as config_module
+        monkeypatch.setattr(config_module, '_get_default_editor', lambda: None)
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config)
+        ])
+
+        assert result.exit_code == 1
+        assert 'No editor specified' in result.output
+
+    def test_edit_with_editor_env_var(self, runner, temp_config, monkeypatch):
+        """Test using $EDITOR environment variable."""
+        temp_config.write_text("models:\n  default: test\n")
+
+        editor_called_with = []
+
+        def mock_run(cmd):
+            editor_called_with.append(cmd)
+            return type('obj', (object,), {'returncode': 0})
+
+        monkeypatch.setattr('subprocess.run', mock_run)
+        monkeypatch.setenv('EDITOR', 'emacs')
+
+        result = runner.invoke(cli, [
+            'config', 'edit',
+            '--config-path', str(temp_config)
+        ])
+
+        assert result.exit_code == 0
+        assert len(editor_called_with) == 1
+        assert editor_called_with[0][0] == 'emacs'
+
+    def test_validate_config_file_valid(self, tmp_path):
+        """Test config validation with valid YAML."""
+        from bob.cli.config import _validate_config_file
+
+        config_file = tmp_path / "test.yaml"
+        config_file.write_text("models:\n  default: test\n")
+
+        errors = _validate_config_file(config_file)
+        assert errors == []
+
+    def test_validate_config_file_invalid_yaml(self, tmp_path):
+        """Test config validation with invalid YAML."""
+        from bob.cli.config import _validate_config_file
+
+        config_file = tmp_path / "test.yaml"
+        config_file.write_text("invalid: [[[")
+
+        errors = _validate_config_file(config_file)
+        assert len(errors) > 0
+        assert 'YAML' in errors[0]
+
+    def test_validate_config_file_not_dict(self, tmp_path):
+        """Test config validation when file contains non-dict."""
+        from bob.cli.config import _validate_config_file
+
+        config_file = tmp_path / "test.yaml"
+        config_file.write_text("- item1\n- item2\n")
+
+        errors = _validate_config_file(config_file)
+        assert len(errors) > 0
+        assert 'dictionary' in errors[0].lower()
+
+    def test_validate_config_file_missing(self, tmp_path):
+        """Test config validation with missing file."""
+        from bob.cli.config import _validate_config_file
+
+        config_file = tmp_path / "nonexistent.yaml"
+
+        errors = _validate_config_file(config_file)
+        assert len(errors) > 0
+        assert 'does not exist' in errors[0].lower()

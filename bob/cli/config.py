@@ -4,12 +4,16 @@ CLI commands for configuration management.
 
 Commands:
 - bob config show - Display current configuration
+- bob config edit - Open configuration file in editor
 """
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import click
+import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -333,3 +337,217 @@ def _convert_value(value: str) -> int | float | bool | str:
 
     # Return as string
     return value
+
+
+@config.command()
+@click.option(
+    '--config-path',
+    type=click.Path(path_type=Path),
+    help='Custom config file path'
+)
+@click.option(
+    '--editor',
+    envvar='EDITOR',
+    help='Editor to use (defaults to $EDITOR environment variable)'
+)
+@click.option(
+    '--json-output',
+    is_flag=True,
+    help='Output result as JSON'
+)
+def edit(config_path: Path | None, editor: str | None, json_output: bool):
+    """
+    Open configuration file in editor.
+
+    Opens ~/.bob/config.yaml in your preferred text editor.
+    Uses $EDITOR environment variable or falls back to sensible defaults.
+    After editing, validates the YAML syntax and structure.
+
+    Examples:
+        bob config edit
+        bob config edit --editor nano
+        bob config edit --config-path /path/to/config.yaml
+    """
+    manager = get_config_manager(config_path)
+    config_file = manager.config_path
+
+    # Ensure parent directory exists
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create config file with defaults if it doesn't exist
+    if not config_file.exists():
+        manager.save(manager.get_all())
+        if not json_output:
+            console.print(f"[yellow]Created new config file:[/] {config_file}")
+            console.print()
+
+    # Determine which editor to use
+    editor_cmd = editor or os.environ.get('EDITOR') or _get_default_editor()
+
+    if not editor_cmd:
+        error_msg = "No editor specified. Set $EDITOR environment variable or use --editor option."
+        if json_output:
+            output = {
+                "status": "error",
+                "error": error_msg,
+                "config_path": str(config_file)
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            console.print(f"[red]✗ {error_msg}[/]")
+            console.print()
+            console.print("Examples:")
+            console.print("  export EDITOR=nano")
+            console.print("  bob config edit --editor vim")
+            console.print()
+        raise click.Exit(1)
+
+    # Store original content for comparison
+    original_content = config_file.read_text() if config_file.exists() else ""
+
+    # Open editor
+    try:
+        if not json_output:
+            console.print(f"[cyan]Opening editor:[/] {editor_cmd}")
+            console.print(f"[cyan]Config file:[/] {config_file}")
+            console.print()
+
+        result = subprocess.run([editor_cmd, str(config_file)])
+
+        if result.returncode != 0:
+            error_msg = f"Editor exited with code {result.returncode}"
+            if json_output:
+                output = {
+                    "status": "error",
+                    "error": error_msg,
+                    "config_path": str(config_file)
+                }
+                click.echo(json.dumps(output, indent=2))
+            else:
+                console.print(f"[red]✗ {error_msg}[/]")
+                console.print()
+            raise click.Exit(1)
+
+    except FileNotFoundError:
+        error_msg = f"Editor not found: {editor_cmd}"
+        if json_output:
+            output = {
+                "status": "error",
+                "error": error_msg,
+                "config_path": str(config_file)
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            console.print(f"[red]✗ {error_msg}[/]")
+            console.print()
+            console.print("Try setting a different editor:")
+            console.print("  bob config edit --editor nano")
+            console.print("  bob config edit --editor vim")
+            console.print()
+        raise click.Exit(1)
+
+    # Check if file was modified
+    new_content = config_file.read_text() if config_file.exists() else ""
+    was_modified = new_content != original_content
+
+    # Validate YAML after editing
+    validation_errors = _validate_config_file(config_file)
+
+    if validation_errors:
+        if json_output:
+            output = {
+                "status": "error",
+                "error": "Configuration validation failed",
+                "validation_errors": validation_errors,
+                "config_path": str(config_file),
+                "modified": was_modified
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            console.print("[red]✗ Configuration validation failed:[/]")
+            console.print()
+            for error in validation_errors:
+                console.print(f"  [red]•[/] {error}")
+            console.print()
+            console.print(f"[yellow]Please fix the errors in:[/] {config_file}")
+            console.print()
+        raise click.Exit(1)
+
+    # Success
+    if json_output:
+        output = {
+            "status": "success",
+            "config_path": str(config_file),
+            "modified": was_modified,
+            "validation_errors": []
+        }
+        click.echo(json.dumps(output, indent=2))
+    else:
+        if was_modified:
+            console.print("[green]✓ Configuration updated successfully[/]")
+        else:
+            console.print("[dim]No changes made[/]")
+        console.print()
+        console.print(f"  Config file: {config_file}")
+        console.print()
+
+
+def _get_default_editor() -> str | None:
+    """
+    Get a sensible default editor based on platform.
+
+    Returns:
+        Default editor command or None if none found
+    """
+    # Try common editors in order of preference
+    common_editors = ['nano', 'vim', 'vi', 'emacs', 'code', 'subl']
+
+    for editor in common_editors:
+        # Check if editor exists in PATH
+        try:
+            result = subprocess.run(
+                ['which', editor],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                return editor
+        except (subprocess.SubprocessError, FileNotFoundError):
+            continue
+
+    return None
+
+
+def _validate_config_file(config_file: Path) -> list[str]:
+    """
+    Validate configuration file for YAML syntax and structure.
+
+    Args:
+        config_file: Path to config file
+
+    Returns:
+        List of validation error messages (empty if valid)
+    """
+    errors = []
+
+    if not config_file.exists():
+        errors.append("Config file does not exist")
+        return errors
+
+    # Try to parse YAML
+    try:
+        with open(config_file) as f:
+            config_data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        errors.append(f"Invalid YAML syntax: {e}")
+        return errors
+
+    # Check that it's a dictionary
+    if not isinstance(config_data, dict):
+        errors.append("Config file must contain a YAML dictionary")
+        return errors
+
+    # Validate structure (optional - basic checks)
+    # We could add more validation here, but for now just ensure it's valid YAML
+
+    return errors
