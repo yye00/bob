@@ -126,10 +126,8 @@ class Orchestrator:
         self.current_task = task
 
         # Update task to in_progress
-        task.status = TaskStatus.IN_PROGRESS
-        task.last_attempt_at = datetime.now()
-        task.attempts += 1
-        self.db.update_task(task)
+        # Note: attempts will be incremented by record_attempt in escalation controller
+        self.db.update_task(task.id, status=TaskStatus.IN_PROGRESS)
 
         try:
             # Determine if research is needed
@@ -161,9 +159,14 @@ class Orchestrator:
             success, error = await self._execute_with_client(client, prompt)
 
             if success:
-                # Task succeeded
-                task.status = TaskStatus.COMPLETED
-                self.db.update_task(task)
+                # Task succeeded - record success in escalation controller
+                self.escalation.record_attempt(
+                    task_id=task.id,
+                    success=True,
+                    deps_met=True,  # TODO: Check actual dependencies
+                )
+                # Update task status to completed
+                self.db.update_task(task.id, status=TaskStatus.COMPLETED)
                 return TaskStatus.COMPLETED, None
 
             else:
@@ -230,14 +233,25 @@ class Orchestrator:
             deps_status={},  # TODO: Get actual dependencies status
         )
 
-        task.failure_type = classification.failure_type
-        self.db.update_task(task)
+        # Record the attempt in escalation controller
+        self.escalation.record_attempt(
+            task_id=task.id,
+            success=False,
+            error_msg=error,
+            error_type=classification.failure_type.value if classification.failure_type else None,
+            deps_met=True,  # TODO: Check actual dependencies
+        )
+
+        # Reload task to get updated attempts count
+        task = self.db.get_task(task.id)
+        # Update failure type
+        self.db.update_task(task.id, failure_type=classification.failure_type)
 
         # Determine escalation action
         if self.config.enable_escalation:
-            action = self.escalation.determine_action(
-                task=task,
-                classification=classification,
+            action, context = self.escalation.get_next_action(
+                task_id=task.id,
+                deps_met=True,  # TODO: Check actual dependencies
             )
         else:
             # Without escalation, just mark as failed after max retries
@@ -268,24 +282,27 @@ class Orchestrator:
         """
         if action == EscalationAction.CONTINUE:
             # Retry with same model
-            task.status = TaskStatus.PENDING
-            self.db.update_task(task)
+            self.db.update_task(task.id, status=TaskStatus.PENDING)
             return TaskStatus.PENDING, "Retrying"
 
         elif action == EscalationAction.ESCALATE_MODEL:
             # Escalate to more powerful model
-            self.escalation.escalate_task(task)
-            task.status = TaskStatus.PENDING
-            self.current_model = self._get_model_for_tier(task.current_model)
-            self.db.update_task(task)
+            new_tier = self.escalation.escalate_model(task.id)
+            # Reload task to get updated model info
+            task = self.db.get_task(task.id)
+            self.current_model = task.current_model
+            # Status is already set to PENDING by escalate_model, update it explicitly
+            self.db.update_task(task.id, status=TaskStatus.PENDING)
             return TaskStatus.PENDING, "Escalated to better model"
 
         elif action == EscalationAction.RESEARCH:
             # Needs research before continuing
-            task.research_required = True
-            task.research_complete = False
-            task.status = TaskStatus.PENDING
-            self.db.update_task(task)
+            self.db.update_task(
+                task.id,
+                research_required=True,
+                research_complete=False,
+                status=TaskStatus.PENDING
+            )
             return TaskStatus.PENDING, "Needs research"
 
         elif action == EscalationAction.DECOMPOSE:
@@ -293,26 +310,22 @@ class Orchestrator:
             if self.config.enable_decomposition:
                 subtasks = await self._decompose_task(task)
                 if subtasks:
-                    task.status = TaskStatus.DECOMPOSED
-                    task.sub_task_ids = [st.id for st in subtasks]
-                    self.db.update_task(task)
+                    # Note: Task doesn't have sub_task_ids field, handle via research_findings
+                    self.db.update_task(task.id, status=TaskStatus.DECOMPOSED)
                     return TaskStatus.DECOMPOSED, f"Decomposed into {len(subtasks)} subtasks"
 
             # If decomposition fails or disabled, request user help
-            task.status = TaskStatus.FAILED
-            self.db.update_task(task)
+            self.db.update_task(task.id, status=TaskStatus.FAILED)
             return TaskStatus.FAILED, "Decomposition needed but unavailable"
 
         elif action == EscalationAction.REQUEST_USER:
             # Needs user intervention
-            task.status = TaskStatus.BLOCKED
-            self.db.update_task(task)
+            self.db.update_task(task.id, status=TaskStatus.BLOCKED)
             return TaskStatus.BLOCKED, "Requires user intervention"
 
         else:
             # Unknown action - mark as failed
-            task.status = TaskStatus.FAILED
-            self.db.update_task(task)
+            self.db.update_task(task.id, status=TaskStatus.FAILED)
             return TaskStatus.FAILED, f"Unknown escalation action: {action}"
 
     async def _decompose_task(self, task: Task) -> list[Task]:

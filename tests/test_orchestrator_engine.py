@@ -38,9 +38,22 @@ def db_manager(tmp_path):
 
 
 @pytest.fixture
-def sample_task():
-    """Create a sample task for testing."""
-    return Task(
+def sample_task(db_manager):
+    """Create a sample task for testing, persisted to database."""
+    # First create a project
+    from bob.models.base import Project, ProjectStatus
+    project = Project(
+        id="proj-1",
+        name="test-project",
+        description="Test project",
+        workspace_dir="/tmp/test",
+        spec_source="/tmp/test/spec.txt",
+        status=ProjectStatus.ACTIVE,
+    )
+    db_manager.create_project(project)
+
+    # Then create and persist the task
+    task = Task(
         id="task-123",
         project_id="proj-1",
         spec_id="F001",
@@ -51,6 +64,8 @@ def sample_task():
         attempts=0,
         escalation_tier=ModelTier.SONNET,
     )
+    db_manager.create_task(task)
+    return task
 
 
 class TestOrchestratorConfig:
@@ -130,13 +145,15 @@ class TestExecuteTask:
         """Test that task status is updated to in_progress."""
         orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir)
 
-        # Mock _execute_with_client to return success immediately
-        with patch.object(orchestrator, '_execute_with_client', return_value=(True, None)):
-            await orchestrator.execute_task(sample_task, "Test prompt")
+        # Mock client creation and execution
+        with patch('bob.orchestrator.engine.create_client', return_value=MagicMock()):
+            with patch.object(orchestrator, '_execute_with_client', return_value=(True, None)):
+                await orchestrator.execute_task(sample_task, "Test prompt")
 
-        # Task should have been attempted
-        assert sample_task.attempts == 1
-        assert sample_task.last_attempt_at is not None
+        # Task should have been reset after success (attempts = 0)
+        updated_task = db_manager.get_task("task-123")
+        assert updated_task.attempts == 0  # Reset on success
+        assert updated_task.status == TaskStatus.COMPLETED
 
     @pytest.mark.asyncio
     async def test_execute_task_success(
@@ -145,13 +162,16 @@ class TestExecuteTask:
         """Test successful task execution."""
         orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir)
 
-        # Mock successful execution
-        with patch.object(orchestrator, '_execute_with_client', return_value=(True, None)):
-            status, error = await orchestrator.execute_task(sample_task, "Test prompt")
+        # Mock client creation and successful execution
+        with patch('bob.orchestrator.engine.create_client', return_value=MagicMock()):
+            with patch.object(orchestrator, '_execute_with_client', return_value=(True, None)):
+                status, error = await orchestrator.execute_task(sample_task, "Test prompt")
 
         assert status == TaskStatus.COMPLETED
         assert error is None
-        assert sample_task.status == TaskStatus.COMPLETED
+        # Reload task to get updated status
+        updated_task = db_manager.get_task("task-123")
+        assert updated_task.status == TaskStatus.COMPLETED
 
     @pytest.mark.asyncio
     async def test_execute_task_failure(
@@ -162,9 +182,10 @@ class TestExecuteTask:
 
         # Mock failed execution
         error_msg = "Test error"
-        with patch.object(orchestrator, '_execute_with_client', return_value=(False, error_msg)):
-            with patch.object(orchestrator, '_handle_failure', return_value=(TaskStatus.PENDING, "Retrying")):
-                status, error = await orchestrator.execute_task(sample_task, "Test prompt")
+        with patch('bob.orchestrator.engine.create_client', return_value=MagicMock()):
+            with patch.object(orchestrator, '_execute_with_client', return_value=(False, error_msg)):
+                with patch.object(orchestrator, '_handle_failure', return_value=(TaskStatus.PENDING, "Retrying")):
+                    status, error = await orchestrator.execute_task(sample_task, "Test prompt")
 
         # _handle_failure should have been called
         assert status == TaskStatus.PENDING
@@ -234,12 +255,13 @@ class TestHandleFailure:
                 details={},
             )
 
-            with patch.object(orchestrator.escalation, 'determine_action', return_value=EscalationAction.CONTINUE):
+            with patch.object(orchestrator.escalation, 'get_next_action', return_value=(EscalationAction.CONTINUE, {})):
                 with patch.object(orchestrator, '_execute_escalation_action', return_value=(TaskStatus.PENDING, "Retry")):
                     await orchestrator._handle_failure(sample_task, error)
 
-        # Failure type should be set
-        assert sample_task.failure_type == FailureType.UNKNOWN
+        # Failure type should be set - reload to check
+        updated_task = db_manager.get_task("task-123")
+        assert updated_task.failure_type == FailureType.UNKNOWN
 
     @pytest.mark.asyncio
     async def test_handle_failure_classifies_error(
@@ -260,13 +282,15 @@ class TestHandleFailure:
                 details={}, # EscalationAction.RESEARCH,
             )
 
-            with patch.object(orchestrator.escalation, 'determine_action', return_value=EscalationAction.RESEARCH):
+            with patch.object(orchestrator.escalation, 'get_next_action', return_value=(EscalationAction.RESEARCH, {})):
                 with patch.object(orchestrator, '_execute_escalation_action', return_value=(TaskStatus.PENDING, "Research")):
                     await orchestrator._handle_failure(sample_task, error)
 
         # Classification should have been called
         mock_classify.assert_called_once()
-        assert sample_task.failure_type == FailureType.MISSING_INFO
+        # Reload to check updated failure type
+        updated_task = db_manager.get_task("task-123")
+        assert updated_task.failure_type == FailureType.MISSING_INFO
 
 
 class TestEscalationActions:
@@ -314,7 +338,7 @@ class TestEscalationActions:
                 details={}, # EscalationAction.ESCALATE_MODEL,
         )
 
-        with patch.object(orchestrator.escalation, 'escalate_task'):
+        with patch.object(orchestrator.escalation, 'escalate_model', return_value=ModelTier.OPUS):
             status, error = await orchestrator._execute_escalation_action(
                 sample_task, EscalationAction.ESCALATE_MODEL, classification
             )
@@ -346,8 +370,10 @@ class TestEscalationActions:
 
         assert status == TaskStatus.PENDING
         assert "research" in error.lower()
-        assert sample_task.research_required is True
-        assert sample_task.research_complete is False
+        # Reload to check updated fields
+        updated_task = db_manager.get_task("task-123")
+        assert updated_task.research_required is True
+        assert updated_task.research_complete is False
 
     @pytest.mark.asyncio
     async def test_execute_escalation_action_request_user(
@@ -372,7 +398,9 @@ class TestEscalationActions:
 
         assert status == TaskStatus.BLOCKED
         assert "user" in error.lower()
-        assert sample_task.status == TaskStatus.BLOCKED
+        # Reload to check updated status
+        updated_task = db_manager.get_task("task-123")
+        assert updated_task.status == TaskStatus.BLOCKED
 
 
 class TestGetModelForTier:
