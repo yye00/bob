@@ -2729,3 +2729,99 @@ TECHNICAL NOTES:
 - Comprehensive test coverage with mocked HTTP requests
 - Ready for real-world use with GitHub repositories
 
+
+=============================================================================
+SESSION 24 - 2026-01-16
+=============================================================================
+
+COMPLETED: F018 - Task skip command
+Status: 39/75 features passing (52.0%)
+
+IMPLEMENTATION DETAILS:
+
+1. Database Schema Changes (v3)
+   - Added skip_reason TEXT field to tasks table
+   - Created migration 3 in migrations.py
+   - Updated CURRENT_SCHEMA_VERSION to 3
+   - Applied migration handles new installations and upgrades
+
+2. Data Model Updates
+   - Added skip_reason: Optional[str] field to Task model
+   - Updated _row_to_task to handle skip_reason (with backward compatibility)
+   - Updated create_task to include skip_reason in INSERT
+   - Updated update_task to support skip_reason parameter
+
+3. CLI Command Implementation
+   - Created 'bob task skip' command in cli/task.py
+   - Required --reason/-r flag (mandatory)
+   - Validates task can be skipped (prevents deprecated tasks)
+   - Updates task status to SKIPPED
+   - Records skip reason in database
+   - Provides clear feedback and instructions to user
+   - Supports JSON output format
+   - Registered in main.py CLI router
+
+4. Comprehensive Test Coverage (10 new tests)
+   - test_skip_help: Verifies command help text
+   - test_skip_pending_task: Skip a pending task
+   - test_skip_with_short_flag: Test -r shorthand
+   - test_skip_in_progress_task: Skip running task
+   - test_skip_cannot_skip_deprecated: Validation prevents deprecated
+   - test_skip_nonexistent_task: Error handling
+   - test_skip_no_active_project: Error handling
+   - test_skip_json_output: JSON format output
+   - test_skip_missing_reason: Required flag validation
+   - test_skip_with_dependencies: Skip dependent tasks
+
+5. Test Results
+   - All 661 tests passing (651 previous + 10 new)
+   - No regressions introduced
+   - Database migration tested
+   - Backward compatibility verified
+
+FEATURE VERIFICATION:
+✓ Create skip command in cli/task.py
+✓ Mark task as skipped (new status)
+✓ Require confirmation or reason (--reason flag)
+✓ Update database with skip reason
+✓ Display confirmation message
+✓ Test skipping tasks with and without dependencies
+
+EXAMPLES:
+# Skip a task with reason
+bob task skip F001 --reason "Waiting for external dependency"
+bob task skip F042 -r "Feature postponed to v2.0"
+bob task skip F015 --reason "Blocked by infrastructure setup"
+
+# JSON output
+bob task skip F001 -r "Test" --json
+
+# Unskip a task
+bob task retry F001
+
+MILESTONE UPDATE:
+- Started: 38/75 (50.7%)
+- Now: 39/75 (52.0%)
+- Progress: +1 feature
+- Remaining: 36 features
+
+NEXT PRIORITIES:
+Based on dependency analysis, ready features include:
+- F024: Port security.py (bash command allowlist)
+- F025: Port client.py (Claude SDK client setup)
+- F035: Cost limits (budget enforcement)
+- F043: Config show command
+- F050: Init command
+- F055: Spec sync integration test
+- F058: Dependency graph validation test
+- F064: Unit tests for TaskQueue
+
+TECHNICAL NOTES:
+- Database migration system working well
+- Schema version 3 deployed successfully
+- Skip command follows same patterns as retry command
+- Used extract_json helper for test robustness
+- Migration messages on stderr don't interfere with JSON output
+- All database CRUD operations properly handle skip_reason field
+- TaskStatus.SKIPPED already existed in enum (line 31 of models/base.py)
+- The skip feature integrates cleanly with existing task management
