@@ -12,6 +12,7 @@ import click
 # Import project commands
 from bob.cli import config as config_commands
 from bob.cli import costs as costs_commands
+from bob.cli import init as init_commands
 from bob.cli import logs as logs_commands
 from bob.cli import project as project_commands
 from bob.cli import research as research_commands
@@ -127,8 +128,13 @@ def cli(
     else:
         # Default to ~/.bob/bob.db
         bob_dir = Path.home() / ".bob"
-        bob_dir.mkdir(exist_ok=True)
-        ctx.obj.db_path = bob_dir / "bob.db"
+        # Only create directory if not running init command
+        # (init will create it properly)
+        if bob_dir.exists():
+            ctx.obj.db_path = bob_dir / "bob.db"
+        else:
+            # Set path but don't create yet - init will handle it
+            ctx.obj.db_path = bob_dir / "bob.db"
 
 
 # ============================================================================
@@ -232,42 +238,8 @@ config.add_command(config_commands.show)
 # Standalone Commands
 # ============================================================================
 
-
-@cli.command()
-@pass_context
-def init(ctx: GlobalContext) -> None:
-    """Initialize BOB in the current directory.
-
-    \b
-    Creates a new BOB workspace with:
-      - .bob/ directory for configuration and state
-      - Default configuration files
-      - Database initialization
-
-    \b
-    Example:
-      cd my-project
-      bob init
-    """
-    click.echo("🤖 Initializing BOB workspace...")
-
-    # Create .bob directory
-    bob_dir = Path.cwd() / ".bob"
-    if bob_dir.exists():
-        click.echo(f"✗ BOB workspace already exists at {bob_dir}")
-        sys.exit(1)
-
-    bob_dir.mkdir()
-    click.echo(f"✓ Created {bob_dir}")
-
-    # TODO: Create default config files
-    # TODO: Initialize database
-
-    click.echo("✓ BOB workspace initialized")
-    click.echo()
-    click.echo("Next steps:")
-    click.echo("  1. Create a project: bob project create <name> <workspace> <spec-source>")
-    click.echo("  2. Run the agent: bob run")
+# Add init command
+cli.add_command(init_commands.init)
 
 
 @cli.command()

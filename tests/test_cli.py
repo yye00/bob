@@ -152,27 +152,31 @@ class TestInitCommand:
         """Test init command help."""
         result = runner.invoke(cli, ["init", "--help"])
         assert result.exit_code == 0
-        assert "Initialize BOB in the current directory" in result.output
+        assert "Initialize BOB environment" in result.output
 
-    def test_init_creates_directory(self, runner):
-        """Test that init creates .bob directory."""
-        with runner.isolated_filesystem():
-            result = runner.invoke(cli, ["init"])
-            assert result.exit_code == 0
-            assert "Initializing BOB workspace" in result.output
-            assert "BOB workspace initialized" in result.output
-            assert Path(".bob").exists()
+    def test_init_creates_directory(self, runner, tmp_path, monkeypatch):
+        """Test that init creates ~/.bob directory."""
+        # Set HOME to tmp_path
+        monkeypatch.setenv("HOME", str(tmp_path))
 
-    def test_init_fails_if_exists(self, runner):
-        """Test that init fails if .bob already exists."""
-        with runner.isolated_filesystem():
-            # Create .bob directory
-            Path(".bob").mkdir()
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
+        assert "Initializing BOB environment" in result.output
+        assert "BOB environment initialized successfully" in result.output
+        assert (tmp_path / ".bob").exists()
 
-            # Try to init again
-            result = runner.invoke(cli, ["init"])
-            assert result.exit_code == 1
-            assert "already exists" in result.output
+    def test_init_fails_if_exists(self, runner, tmp_path, monkeypatch):
+        """Test that init fails if ~/.bob already exists."""
+        # Set HOME to tmp_path
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Create .bob directory
+        (tmp_path / ".bob").mkdir()
+
+        # Try to init again
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code != 0
+        assert "already initialized" in result.output
 
 
 class TestCommandChaining:
