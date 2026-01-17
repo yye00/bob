@@ -3095,3 +3095,72 @@ Verification:
 
 NEXT: Implement F029 - Run command (CRITICAL priority)
 
+
+=============================================================================
+SESSION 27 - 2026-01-16
+=============================================================================
+
+COMPLETED: F036 - Structured logging (JSON structured logging)
+Status: 43/75 features passing (57.3%)
+
+IMPLEMENTATION DETAILS:
+
+1. StructuredLogger Class (bob/observability/logger.py)
+   - JSON-formatted logging with Python logging module
+   - JSONFormatter for structured JSON output
+   - LogContext dataclass for tracking contextual information
+   - EventType enum with 12 event types
+   - Console and file handlers with rotation
+
+2. Event Types Implemented
+   - TASK_STARTED, TASK_COMPLETED, TASK_FAILED
+   - SESSION_STARTED, SESSION_ENDED
+   - ESCALATION_TRIGGERED
+   - RESEARCH_STARTED, RESEARCH_COMPLETED
+   - DECOMPOSITION_STARTED, DECOMPOSITION_COMPLETED
+   - CHECKPOINT_CREATED, CHECKPOINT_RESTORED
+
+3. Context Tracking
+   - project_id, task_id, session_id
+   - model, agent_type
+   - Default context that can be set per logger
+   - Explicit context can override defaults
+   - Context automatically merged into log output
+
+4. Log Output
+   - JSON format with timestamp (UTC), level, message
+   - Event type, context, and extra fields
+   - Exception info when requested
+   - Logs to both console and file (if specified)
+
+5. Log Rotation
+   - RotatingFileHandler with configurable size
+   - Default: 10MB per file, 5 backups
+   - Logs written to project .bob/logs/ directory
+
+6. Factory Function
+   - create_logger() for easy logger creation
+   - Automatically creates .bob/logs/ in project workspace
+   - Configurable log level
+
+7. Test Coverage (31 new tests, all passing)
+   - LogContext: to_dict, partial fields, empty
+   - JSONFormatter: basic, event type, context, extra fields, exceptions
+   - StructuredLogger: init, context management, logging levels
+   - Log rotation, multiple event types
+   - Factory function tests
+   - EventType enum validation
+
+SESSION SUMMARY:
+- Implemented 1 feature (F036)
+- Added 31 tests
+- All 744 tests passing (713 → 744)
+- Progress: 42/75 → 43/75 (56.0% → 57.3%)
+- +1.3% completion this session
+
+NEXT SESSION PRIORITIES:
+- F037: Logs command - Implement 'bob logs' to view structured logs (HIGH, depends on F036 ✓)
+- F046: Prompt templates - Create template engine for prompts (HIGH, depends on F026 ✓)
+- F051: Integration test - End-to-end test with simple project (HIGH, depends on F026 ✓)
+- F052: Research-first integration test (HIGH, depends on F026 ✓, F027 ✓)
+

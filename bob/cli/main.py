@@ -11,6 +11,7 @@ import click
 
 # Import project commands
 from bob.cli import costs as costs_commands
+from bob.cli import logs as logs_commands
 from bob.cli import project as project_commands
 from bob.cli import research as research_commands
 from bob.cli import run as run_commands
@@ -198,24 +199,8 @@ cli.add_command(status_commands.status)
 
 # Sync command is added directly from sync_commands module
 
-
-@cli.group()
-def logs() -> None:
-    """View session logs.
-
-    \b
-    View logs from agent sessions, including turn-by-turn
-    output and any errors or warnings.
-
-    \b
-    Examples:
-      bob logs                   # Recent sessions
-      bob logs --session sess-123
-      bob logs --task F001       # All sessions for task
-      bob logs --tail            # Follow latest session
-    """
-    pass
-
+# Add logs command
+cli.add_command(logs_commands.logs)
 
 # Add costs command directly (not a group, just a command)
 cli.add_command(costs_commands.costs)

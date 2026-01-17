@@ -127,10 +127,10 @@ class TestCommandGroups:
         assert "View global status" in result.output or "status" in result.output.lower()
 
     def test_logs_group(self, runner):
-        """Test logs command group."""
+        """Test logs command."""
         result = runner.invoke(cli, ["logs", "--help"])
         assert result.exit_code == 0
-        assert "View session logs" in result.output
+        assert "View structured logs" in result.output
 
     def test_costs_group(self, runner):
         """Test costs command."""
