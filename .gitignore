@@ -59,3 +59,13 @@ htmlcov/
 tmp/
 temp/
 *.tmp
+temp_scripts/
+
+# Session summaries and progress tracking
+SESSION_*
+claude-progress.txt
+harness_logs/archives/
+harness_logs/summary.txt
+
+# Lock files
+.~lock.*

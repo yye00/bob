@@ -1,0 +1,654 @@
+================================================================================
+                    BOB: BUILD ORCHESTRATION BOT
+
+           A Production-Ready Autonomous Coding Framework
+================================================================================
+
+                         PRESENTATION SLIDES
+
+================================================================================
+
+
+
+
+================================================================================
+                           SLIDE 1: TITLE
+================================================================================
+
+                    ╔═══════════════════════════════════════╗
+                    ║                                       ║
+                    ║      BOB: Build Orchestration Bot     ║
+                    ║                                       ║
+                    ║  ─────────────────────────────────── ║
+                    ║                                       ║
+                    ║   A Production-Ready Framework for    ║
+                    ║   Autonomous AI-Assisted Software     ║
+                    ║          Development                  ║
+                    ║                                       ║
+                    ║                                       ║
+                    ║                                       ║
+                    ║          January 2026                 ║
+                    ║                                       ║
+                    ╚═══════════════════════════════════════╝
+
+
+
+
+================================================================================
+                        SLIDE 2: THE PROBLEM
+================================================================================
+
+    THE CHALLENGE: AI-Assisted Development at Scale
+    ════════════════════════════════════════════════
+
+    Current Pain Points:
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                                                                 │
+    │  [!] Single Project Focus                                       │
+    │      - Can only work on one project at a time                   │
+    │      - No way to manage multiple concurrent efforts             │
+    │                                                                 │
+    │  [!] No Visibility                                              │
+    │      - Unknown costs until the bill arrives                     │
+    │      - No progress tracking or metrics                          │
+    │      - Plain text logs hard to analyze                          │
+    │                                                                 │
+    │  [!] Fragile Execution                                          │
+    │      - Sequential task processing only                          │
+    │      - Manual intervention on every failure                     │
+    │      - No recovery from interruptions                           │
+    │                                                                 │
+    │  [!] Limited Intelligence                                       │
+    │      - Same approach regardless of problem type                 │
+    │      - No learning from failures                                │
+    │      - Expensive models used for simple tasks                   │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    "We need infrastructure, not just an agent."
+
+
+
+
+================================================================================
+                        SLIDE 3: THE SOLUTION
+================================================================================
+
+    BOB: Build Orchestration Bot
+    ════════════════════════════════════════════════
+
+    A complete framework for autonomous coding at production scale.
+
+
+    ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+    │                 │     │                 │     │                 │
+    │  MULTI-PROJECT  │     │   INTELLIGENT   │     │    FULL        │
+    │   MANAGEMENT    │     │   EXECUTION     │     │  OBSERVABILITY │
+    │                 │     │                 │     │                 │
+    │  Isolated state │     │  Parallel tasks │     │  Cost tracking │
+    │  Per-project    │     │  Auto-escalate  │     │  JSON logging  │
+    │  configs        │     │  Research-first │     │  Checkpointing │
+    │                 │     │                 │     │                 │
+    └─────────────────┘     └─────────────────┘     └─────────────────┘
+
+
+    Key Innovation: BOB doesn't just run agents - it ORCHESTRATES them.
+
+
+    Built on: Anthropic Claude Quickstarts - Autonomous Coding Demo
+    Enhanced: From demo to production-ready framework
+
+
+
+
+================================================================================
+                     SLIDE 4: KEY FEATURES OVERVIEW
+================================================================================
+
+    What BOB Provides
+    ════════════════════════════════════════════════
+
+
+    ┌──────────────────────────────────────────────────────────────────────┐
+    │                                                                      │
+    │  FEATURE                    CAPABILITY                               │
+    │  ═══════════════════════════════════════════════════════════════════│
+    │                                                                      │
+    │  Multi-Project Management   Create, switch, track multiple projects │
+    │                                                                      │
+    │  Flexible Spec Sources      YAML, JSON, Markdown, GitHub Issues     │
+    │                                                                      │
+    │  Intelligent Escalation     Sonnet → Opus → Diagnosis → Action      │
+    │                                                                      │
+    │  Research-First Workflow    Proactive research before coding        │
+    │                                                                      │
+    │  Parallel Execution         Run independent tasks concurrently      │
+    │                                                                      │
+    │  Cost Tracking              Per-project, per-session, per-task      │
+    │                                                                      │
+    │  Structured Logging         JSON events with full metadata          │
+    │                                                                      │
+    │  Checkpoint & Resume        Never lose progress to interruptions    │
+    │                                                                      │
+    │  Plugin Architecture        Extend with custom agents & sources     │
+    │                                                                      │
+    │  SQLite Persistence         Queryable, transactional data store     │
+    │                                                                      │
+    └──────────────────────────────────────────────────────────────────────┘
+
+
+
+
+================================================================================
+                      SLIDE 5: ARCHITECTURE
+================================================================================
+
+    System Architecture
+    ════════════════════════════════════════════════
+
+
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │                           BOB CLI                                    │
+    │   bob project | bob task | bob run | bob status | bob logs | costs  │
+    ├─────────────────────────────────────────────────────────────────────┤
+    │                                                                      │
+    │   ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐    │
+    │   │  Project    │    │    Spec     │    │   Agent Registry    │    │
+    │   │  Manager    │    │   Sources   │    │                     │    │
+    │   │             │    │             │    │  - Coding           │    │
+    │   │  - Create   │    │  - File     │    │  - Research         │    │
+    │   │  - List     │    │  - GitHub   │    │  - Diagnosis        │    │
+    │   │  - Delete   │    │  - Plugin   │    │  - Decomposition    │    │
+    │   └──────┬──────┘    └──────┬──────┘    └──────────┬──────────┘    │
+    │          │                  │                      │                │
+    │   ┌──────▼──────────────────▼──────────────────────▼──────────┐    │
+    │   │              ORCHESTRATION ENGINE                          │    │
+    │   │                                                            │    │
+    │   │  Task Queue  │  Escalation  │  Research  │  Checkpoint    │    │
+    │   │  (DAG-aware) │  Controller  │ Controller │   Manager      │    │
+    │   └────────────────────────────────────────────────────────────┘    │
+    │                                                                      │
+    │   ┌────────────────────────────────────────────────────────────┐    │
+    │   │  PERSISTENCE: SQLite  │  OBSERVABILITY: JSON Logs + Costs  │    │
+    │   └────────────────────────────────────────────────────────────┘    │
+    │                                                                      │
+    └─────────────────────────────────────────────────────────────────────┘
+
+
+
+
+================================================================================
+                    SLIDE 6: ESCALATION SYSTEM
+================================================================================
+
+    Intelligent Failure Handling
+    ════════════════════════════════════════════════
+
+    When a task fails, BOB doesn't give up - it escalates intelligently.
+
+
+                              Task Attempt
+                                   │
+                                   ▼
+                    ┌──────────────────────────┐
+                    │   SONNET (3 attempts)    │  Fast, $3/$15 per 1M
+                    └────────────┬─────────────┘
+                                 │ still failing
+                                 ▼
+                    ┌──────────────────────────┐
+                    │    OPUS (3 attempts)     │  Capable, $15/$75 per 1M
+                    └────────────┬─────────────┘
+                                 │ still failing
+                                 ▼
+                    ┌──────────────────────────┐
+                    │       DIAGNOSIS          │  Root cause analysis
+                    └────────────┬─────────────┘
+                                 │
+                                 ▼
+              ┌─────────────────────────────────────────┐
+              │                                         │
+              │  TOO_BIG ────────▶ Decompose subtasks  │
+              │  MISSING_INFO ───▶ Research first      │
+              │  WRONG_INFRA ────▶ Request user help   │
+              │  BAD_ASSUMPTIONS ▶ Restructure         │
+              │  NEEDS_RESEARCH ─▶ Targeted research   │
+              │                                         │
+              └─────────────────────────────────────────┘
+
+
+    Result: Automatic recovery from most failure modes
+
+
+
+
+================================================================================
+                   SLIDE 7: RESEARCH-FIRST WORKFLOW
+================================================================================
+
+    Proactive Research Before Implementation
+    ════════════════════════════════════════════════
+
+    Traditional Approach:
+
+        Code → Fail → Research → Code → Fail → Research → ... → Success
+
+        [Expensive: Multiple Opus escalations, wasted attempts]
+
+
+    BOB's Research-First:
+
+        Research → Code → Success
+
+        [Efficient: Research upfront, implement with knowledge]
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  Spec Definition:                                               │
+    │                                                                 │
+    │  tasks:                                                         │
+    │    - id: optimize-queries                                       │
+    │      title: Database Query Optimization                         │
+    │      description: |                                             │
+    │        Optimize slow queries in production.                     │
+    │        REQUIRES RESEARCH on PostgreSQL optimization.            │
+    │      research_required: true           ◄── Mark for research    │
+    │      research_queries:                 ◄── Guided queries       │
+    │        - "PostgreSQL EXPLAIN ANALYZE patterns"                  │
+    │        - "Index optimization for time-series data"              │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    Benefits:
+    • Proactive, not reactive
+    • Domain-specific query guidance
+    • Findings persist across sessions
+    • Avoids expensive Opus escalations
+
+
+
+
+================================================================================
+                     SLIDE 8: COST TRACKING
+================================================================================
+
+    Real-Time Cost Visibility & Control
+    ════════════════════════════════════════════════
+
+
+    $ bob costs
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  Project: my-web-app                                            │
+    │  ═══════════════════════════════════════════════════════════════│
+    │                                                                 │
+    │  Total Cost: $45.67                                             │
+    │                                                                 │
+    │  By Model:                                                      │
+    │    claude-sonnet-4-5:  $32.10  ████████████████░░░░  (70.3%)   │
+    │    claude-opus-4-5:    $13.57  ██████░░░░░░░░░░░░░░  (29.7%)   │
+    │                                                                 │
+    │  By Agent:                                                      │
+    │    coding:      $38.00  ████████████████████░░░░░░  (83.2%)    │
+    │    research:    $4.50   ██░░░░░░░░░░░░░░░░░░░░░░░░  (9.8%)     │
+    │    diagnosis:   $3.17   █░░░░░░░░░░░░░░░░░░░░░░░░░  (6.9%)     │
+    │                                                                 │
+    │  By Day:                                                        │
+    │    2026-01-18:  $23.45                                          │
+    │    2026-01-19:  $22.22                                          │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    Budget Controls:
+
+        limits:
+          max_cost_per_project: 100.0   # Hard stop at $100
+          max_cost_per_session: 5.0     # Per-session limit
+          warn_at_percent: 80           # Alert at 80%
+
+
+
+
+================================================================================
+                     SLIDE 9: CLI EXPERIENCE
+================================================================================
+
+    Developer-Friendly Command Line Interface
+    ════════════════════════════════════════════════
+
+
+    PROJECT MANAGEMENT
+    ──────────────────────────────────────────────
+    $ bob project create my-app ./workspace file://spec.yaml
+    $ bob project list
+    $ bob project use my-app
+    $ bob project status
+
+
+    TASK MANAGEMENT
+    ──────────────────────────────────────────────
+    $ bob task list
+    $ bob task list --status failed
+    $ bob task list --needs-research
+    $ bob task show F001 --escalation
+    $ bob task retry F001
+
+
+    EXECUTION
+    ──────────────────────────────────────────────
+    $ bob run                    # Run next ready task
+    $ bob run --parallel 3       # Run 3 tasks concurrently
+    $ bob run --dry-run          # Preview without executing
+    $ bob run --resume           # Continue from checkpoint
+
+
+    MONITORING
+    ──────────────────────────────────────────────
+    $ bob status                 # Overall status
+    $ bob logs --follow          # Real-time log stream
+    $ bob costs                  # Cost breakdown
+
+
+    All commands support --json for scripting integration
+
+
+
+
+================================================================================
+                    SLIDE 10: SPEC FLEXIBILITY
+================================================================================
+
+    Multiple Specification Formats
+    ════════════════════════════════════════════════
+
+
+    YAML (Recommended)                    JSON
+    ───────────────────                   ───────────────────
+    tasks:                                {
+      - id: auth-login                      "tasks": [{
+        title: User Login                     "id": "auth-login",
+        description: |                        "title": "User Login",
+          Implement login                     "depends_on": ["db-setup"]
+        depends_on:                         }]
+          - db-setup                        }
+        priority: critical
+
+
+    MARKDOWN                              GITHUB ISSUES
+    ───────────────────                   ───────────────────
+    ## auth-login: User Login             Issue #42: User Login
+    [priority:critical] [depends:db-setup] Labels: ai-implement
+
+    Implement login with...               Implement login with...
+
+    ### Acceptance Criteria               Acceptance Criteria:
+    - User can login                      - [ ] User can login
+    - Errors shown                        - [ ] Errors shown
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                                                                 │
+    │   $ bob project create app ./work github://org/repo?label=ai    │
+    │                                                                 │
+    │   Sync issues labeled "ai" directly as tasks!                   │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+
+================================================================================
+                   SLIDE 11: PARALLEL EXECUTION
+================================================================================
+
+    Concurrent Task Processing
+    ════════════════════════════════════════════════
+
+    BOB builds a dependency graph and runs independent tasks in parallel:
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                                                                 │
+    │  Dependency Graph:              Execution Timeline:             │
+    │                                                                 │
+    │       ┌─────────┐                                               │
+    │       │ setup   │              Time ──────────────────────▶     │
+    │       └────┬────┘                                               │
+    │            │                   ┌────────┐                       │
+    │     ┌──────┴──────┐            │ setup  │                       │
+    │     │             │            └────┬───┘                       │
+    │  ┌──▼──┐       ┌──▼──┐              │                           │
+    │  │ api │       │ ui  │         ┌────▼───┐  ┌───────┐            │
+    │  └──┬──┘       └──┬──┘         │  api   │  │  ui   │  PARALLEL  │
+    │     │             │            └────┬───┘  └───┬───┘            │
+    │     └──────┬──────┘                 │          │                │
+    │         ┌──▼──┐                ┌────▼──────────▼───┐            │
+    │         │tests│                │      tests        │            │
+    │         └─────┘                └───────────────────┘            │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    $ bob run --parallel 3     # Run up to 3 tasks concurrently
+
+
+    Benefits:
+    • Faster overall completion
+    • Better resource utilization
+    • Each task gets isolated session
+    • Failures don't block independent work
+
+
+
+
+================================================================================
+                    SLIDE 12: OBSERVABILITY
+================================================================================
+
+    Structured Logging & Monitoring
+    ════════════════════════════════════════════════
+
+    Every event is captured as structured JSON:
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  {                                                              │
+    │    "timestamp": "2026-01-20T10:30:00Z",                         │
+    │    "level": "INFO",                                             │
+    │    "event": "task_completed",                                   │
+    │    "project_id": "my-app",                                      │
+    │    "task_id": "auth-login",                                     │
+    │    "session_id": "sess_abc123",                                 │
+    │    "duration_ms": 45000,                                        │
+    │    "model": "claude-sonnet-4-5-20250929",                       │
+    │    "tokens": {                                                  │
+    │      "input": 15000,                                            │
+    │      "output": 3000,                                            │
+    │      "cache_read": 12000                                        │
+    │    },                                                           │
+    │    "cost_usd": 0.045                                            │
+    │  }                                                              │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+    Log Commands:
+
+    $ bob logs --follow              # Real-time streaming
+    $ bob logs --level ERROR         # Filter by level
+    $ bob logs --event task_failed   # Filter by event type
+    $ bob logs --json | jq '.'       # Pipe to analysis tools
+
+
+    Checkpoint & Resume:
+
+    $ bob run --resume               # Continue from last checkpoint
+    $ bob run --resume chkpt_123     # Resume specific checkpoint
+
+
+
+
+================================================================================
+                   SLIDE 13: COMPARISON TABLE
+================================================================================
+
+    BOB vs. Traditional Approaches
+    ════════════════════════════════════════════════
+
+
+    ┌──────────────────────┬─────────────────────┬─────────────────────┐
+    │      CAPABILITY      │     TRADITIONAL     │         BOB         │
+    ├──────────────────────┼─────────────────────┼─────────────────────┤
+    │                      │                     │                     │
+    │  Project Management  │  Single project     │  Multi-project      │
+    │                      │  Manual switching   │  Isolated state     │
+    │                      │                     │                     │
+    │  Data Storage        │  Flat JSON files    │  SQLite database    │
+    │                      │  No transactions    │  Indexed & queried  │
+    │                      │                     │                     │
+    │  Cost Visibility     │  None               │  Real-time tracking │
+    │                      │  Surprise bills     │  Budget enforcement │
+    │                      │                     │                     │
+    │  Task Execution      │  Sequential only    │  Parallel + DAG     │
+    │                      │  One at a time      │  Dependency-aware   │
+    │                      │                     │                     │
+    │  Failure Handling    │  Manual retry       │  Auto-escalation    │
+    │                      │  Same approach      │  Intelligent action │
+    │                      │                     │                     │
+    │  Recovery            │  Start over         │  Checkpoint/resume  │
+    │                      │  Context lost       │  Context preserved  │
+    │                      │                     │                     │
+    │  Logging             │  Plain text         │  Structured JSON    │
+    │                      │  Hard to analyze    │  Queryable events   │
+    │                      │                     │                     │
+    │  Configuration       │  Hardcoded          │  Per-project YAML   │
+    │                      │  One size fits all  │  Customizable       │
+    │                      │                     │                     │
+    └──────────────────────┴─────────────────────┴─────────────────────┘
+
+
+
+
+================================================================================
+                     SLIDE 14: GETTING STARTED
+================================================================================
+
+    Quick Start Guide
+    ════════════════════════════════════════════════
+
+
+    1. INSTALL
+    ──────────────────────────────────────────────
+
+       $ git clone https://github.com/yye00/bob.git
+       $ cd bob
+       $ ./init.sh
+       $ export ANTHROPIC_API_KEY='your-key'
+
+
+    2. CREATE PROJECT
+    ──────────────────────────────────────────────
+
+       $ bob init
+       $ bob project create my-app ./workspace file://spec.yaml
+       $ bob project use my-app
+
+
+    3. DEFINE SPEC
+    ──────────────────────────────────────────────
+
+       # spec.yaml
+       tasks:
+         - id: setup
+           title: Project Setup
+           priority: critical
+         - id: feature-1
+           title: First Feature
+           depends_on: [setup]
+
+
+    4. RUN
+    ──────────────────────────────────────────────
+
+       $ bob run                 # Start autonomous development
+       $ bob status              # Check progress
+       $ bob logs --follow       # Watch in real-time
+
+
+
+
+================================================================================
+                       SLIDE 15: SUMMARY
+================================================================================
+
+    BOB: The Complete Autonomous Coding Framework
+    ════════════════════════════════════════════════
+
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                                                                 │
+    │  CORE CAPABILITIES                                              │
+    │  ─────────────────                                              │
+    │                                                                 │
+    │  ✓ Multi-project management with isolated state                │
+    │  ✓ Intelligent escalation: Sonnet → Opus → Diagnosis           │
+    │  ✓ Research-first workflow for knowledge-heavy tasks           │
+    │  ✓ Parallel execution with dependency resolution               │
+    │  ✓ Real-time cost tracking with budget controls                │
+    │  ✓ Structured JSON logging and observability                   │
+    │  ✓ Checkpoint and resume for reliability                       │
+    │  ✓ Plugin architecture for extensibility                       │
+    │                                                                 │
+    │                                                                 │
+    │  PRODUCTION READY                                               │
+    │  ─────────────────                                              │
+    │                                                                 │
+    │  • 1,200+ tests passing                                         │
+    │  • SQLite persistence with transactions                         │
+    │  • Comprehensive CLI with JSON output                           │
+    │  • GitHub Issues integration                                    │
+    │                                                                 │
+    │                                                                 │
+    │  GET STARTED                                                    │
+    │  ─────────────────                                              │
+    │                                                                 │
+    │  $ git clone https://github.com/yye00/bob.git            │
+    │  $ cd bob && ./init.sh                                          │
+    │  $ bob project create my-app ./workspace file://spec.yaml       │
+    │  $ bob run                                                      │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+                    "Bob the Builder... Can we build it? Yes we can!"
+
+
+
+
+================================================================================
+                          END OF PRESENTATION
+================================================================================
+
+
+APPENDIX: Slide Index
+═════════════════════════════════════════════════════════════════════════════
+
+  Slide 1:  Title
+  Slide 2:  The Problem
+  Slide 3:  The Solution
+  Slide 4:  Key Features Overview
+  Slide 5:  Architecture
+  Slide 6:  Escalation System
+  Slide 7:  Research-First Workflow
+  Slide 8:  Cost Tracking
+  Slide 9:  CLI Experience
+  Slide 10: Spec Flexibility
+  Slide 11: Parallel Execution
+  Slide 12: Observability
+  Slide 13: Comparison Table
+  Slide 14: Getting Started
+  Slide 15: Summary
+
+═════════════════════════════════════════════════════════════════════════════

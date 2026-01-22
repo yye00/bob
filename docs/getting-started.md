@@ -17,7 +17,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/bob.git
+git clone https://github.com/yye00/bob.git
 cd bob
 
 # Run the setup script
@@ -31,7 +31,7 @@ source venv/bin/activate
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/bob.git
+git clone https://github.com/yye00/bob.git
 cd bob
 
 # Create virtual environment with uv
@@ -101,7 +101,7 @@ tasks:
       - Add shebang line
       - Add print statement
       - Make file executable
-    priority: 1
+    priority: critical
     category: functional
 ```
 
@@ -406,7 +406,7 @@ bob init
 
 - **CLI Help**: `bob --help` or `bob <command> --help`
 - **Documentation**: See `docs/` directory
-- **Issues**: https://github.com/yourusername/bob/issues
+- **Issues**: https://github.com/yye00/bob/issues
 - **Examples**: See `examples/` directory
 
 ## Quick Reference

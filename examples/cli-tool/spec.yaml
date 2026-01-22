@@ -5,7 +5,7 @@ name: File Analyzer CLI
 description: A command-line tool to analyze text files and generate statistics
 
 defaults:
-  priority: 2
+  priority: high
   category: functional
 
 tasks:
@@ -24,7 +24,7 @@ tasks:
       - Create src/file_analyzer/__init__.py
       - Create src/file_analyzer/__main__.py for CLI entry point
       - Test installation with pip install -e .
-    priority: 1
+    priority: critical
     labels: [setup, python]
 
   # CLI Framework
@@ -42,7 +42,7 @@ tasks:
       - Add --version option
       - Add --verbose flag for debug output
       - Test that file-analyzer --help works
-    priority: 1
+    priority: critical
     labels: [cli, framework]
 
   # File Reading
@@ -62,7 +62,7 @@ tasks:
       - Add check for binary files
       - Handle encoding errors with fallback
       - Write tests for various file types
-    priority: 1
+    priority: critical
     labels: [core, io]
 
   # Statistics Calculator
@@ -84,7 +84,7 @@ tasks:
       - Implement most_common_words() function
       - Implement average_word_length() function
       - Add tests for each statistic
-    priority: 1
+    priority: critical
     labels: [core, analysis]
 
   # Analyze Command
@@ -104,7 +104,7 @@ tasks:
       - Format output with Rich tables
       - Add progress bar for multi-file analysis
       - Test with single file and glob patterns
-    priority: 1
+    priority: critical
     labels: [cli, command]
 
   # Compare Command
@@ -124,7 +124,7 @@ tasks:
       - Create comparison table with Rich
       - Add --json flag for machine-readable output
       - Test with 2+ files
-    priority: 2
+    priority: high
     labels: [cli, command]
 
   # Export Functionality
@@ -144,7 +144,7 @@ tasks:
       - Implement export_markdown() function
       - Add --output and --format flags to analyze command
       - Test all export formats
-    priority: 2
+    priority: high
     labels: [feature, export]
 
   # Configuration File
@@ -164,7 +164,7 @@ tasks:
       - Merge config with CLI options
       - Add --config flag to specify custom config path
       - Test config precedence
-    priority: 3
+    priority: low
     labels: [feature, config]
 
   # Unit Tests
@@ -184,7 +184,7 @@ tasks:
       - Create tests/test_commands.py
       - Test error handling and edge cases
       - Run pytest --cov to verify coverage
-    priority: 2
+    priority: high
     category: test
     labels: [testing]
 
@@ -204,7 +204,7 @@ tasks:
       - Add usage examples for each command
       - Create docs/ directory with detailed guides
       - Add docstrings to all functions
-    priority: 3
+    priority: low
     category: docs
     labels: [documentation]
 
@@ -224,5 +224,5 @@ tasks:
       - Configure entry point for CLI
       - Test build with python -m build
       - Test installation from wheel
-    priority: 3
+    priority: low
     labels: [packaging, distribution]

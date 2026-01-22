@@ -5,7 +5,7 @@ name: Simple Todo Web App
 description: A basic todo list application with backend and frontend
 
 defaults:
-  priority: 3
+  priority: medium
   category: functional
 
 tasks:
@@ -26,7 +26,7 @@ tasks:
       - Add health check route at GET /health
       - Add start script to package.json
       - Test that server starts without errors
-    priority: 1
+    priority: critical
     labels: [backend, setup, mvp]
 
   # Database Setup
@@ -44,7 +44,7 @@ tasks:
       - Create database/db.ts with connection setup
       - Add initialization function to create tables
       - Test database connection
-    priority: 1
+    priority: critical
     labels: [backend, database, mvp]
 
   # API Endpoints
@@ -66,7 +66,7 @@ tasks:
       - Implement DELETE /api/todos/:id (delete)
       - Add error handling middleware
       - Test all endpoints with curl or Postman
-    priority: 1
+    priority: critical
     labels: [backend, api, mvp]
 
   # Frontend Setup
@@ -85,7 +85,7 @@ tasks:
       - Create basic component structure
       - Configure proxy to backend in vite.config.ts
       - Test that dev server runs
-    priority: 2
+    priority: high
     labels: [frontend, setup, mvp]
 
   # UI Components
@@ -106,7 +106,7 @@ tasks:
       - Connect components to backend API
       - Add loading and error states
       - Test all CRUD operations work
-    priority: 2
+    priority: high
     labels: [frontend, ui, mvp]
 
   # Styling
@@ -127,7 +127,7 @@ tasks:
       - Style AddTodo form
       - Add strikethrough for completed todos
       - Test responsive layout on different screen sizes
-    priority: 3
+    priority: medium
     category: style
     labels: [frontend, styling]
 
@@ -147,7 +147,7 @@ tasks:
       - Implement input validation
       - Add error state to React components
       - Test error scenarios (network failure, invalid data)
-    priority: 2
+    priority: high
     labels: [backend, frontend, polish]
 
   # Testing
@@ -165,7 +165,7 @@ tasks:
       - Write tests for each endpoint (GET, POST, PUT, DELETE)
       - Test error cases
       - Run tests and verify they pass
-    priority: 3
+    priority: medium
     category: test
     labels: [backend, testing]
 
@@ -185,7 +185,7 @@ tasks:
       - Document API endpoints with examples
       - Create simple architecture diagram
       - Add CONTRIBUTING.md
-    priority: 4
+    priority: low
     category: docs
     labels: [documentation]
 
@@ -204,5 +204,5 @@ tasks:
       - Create docker-compose.yml
       - Add .dockerignore
       - Test build and run with docker-compose up
-    priority: 4
+    priority: low
     labels: [devops, deployment]

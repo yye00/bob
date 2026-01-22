@@ -5,7 +5,7 @@ name: Microservices Platform
 description: Build a microservices platform with independent services
 
 defaults:
-  priority: 2
+  priority: high
   category: functional
 
 tasks:
@@ -23,7 +23,7 @@ tasks:
       - Generate Go code from protobufs
       - Create common utilities (logging, tracing, etc.)
       - Publish as Go module
-    priority: 1
+    priority: critical
     labels: [shared, foundation]
 
   # These three services can be built in PARALLEL
@@ -45,7 +45,7 @@ tasks:
       - Implement gRPC service
       - Add REST gateway
       - Write unit tests
-    priority: 1
+    priority: critical
     labels: [service, user, parallel-group-a]
 
   - id: product-service
@@ -64,7 +64,7 @@ tasks:
       - Implement gRPC service
       - Add REST gateway
       - Write unit tests
-    priority: 1
+    priority: critical
     labels: [service, product, parallel-group-a]
 
   - id: order-service
@@ -83,7 +83,7 @@ tasks:
       - Implement gRPC service
       - Add REST gateway
       - Write unit tests
-    priority: 1
+    priority: critical
     labels: [service, order, parallel-group-a]
 
   # These infrastructure components can also run in PARALLEL
@@ -103,7 +103,7 @@ tasks:
       - Implement rate limiting
       - Add authentication middleware
       - Generate OpenAPI docs
-    priority: 1
+    priority: critical
     labels: [infrastructure, gateway, parallel-group-b]
 
   - id: notification-service
@@ -121,7 +121,7 @@ tasks:
       - Integrate SMS provider (Twilio)
       - Set up Pub/Sub subscriptions
       - Create notification templates
-    priority: 2
+    priority: high
     labels: [infrastructure, notification, parallel-group-b]
 
   - id: analytics-service
@@ -139,7 +139,7 @@ tasks:
       - Create metrics collection pipeline
       - Implement analytics API
       - Create Grafana dashboards
-    priority: 2
+    priority: high
     labels: [infrastructure, analytics, parallel-group-b]
 
   # Integration tests require ALL services to be complete
@@ -161,7 +161,7 @@ tasks:
       - Test happy paths
       - Test error handling
       - Run tests in CI
-    priority: 1
+    priority: critical
     category: test
     labels: [testing, integration]
 
@@ -181,7 +181,7 @@ tasks:
       - Optimize image size
       - Add health check
       - Test image locally
-    priority: 2
+    priority: high
     labels: [docker, user, parallel-group-c]
 
   - id: product-service-docker
@@ -197,7 +197,7 @@ tasks:
       - Optimize image size
       - Add health check
       - Test image locally
-    priority: 2
+    priority: high
     labels: [docker, product, parallel-group-c]
 
   - id: order-service-docker
@@ -213,7 +213,7 @@ tasks:
       - Optimize image size
       - Add health check
       - Test image locally
-    priority: 2
+    priority: high
     labels: [docker, order, parallel-group-c]
 
   - id: gateway-docker
@@ -229,7 +229,7 @@ tasks:
       - Optimize image size
       - Add health check
       - Test image locally
-    priority: 2
+    priority: high
     labels: [docker, gateway, parallel-group-c]
 
   # Orchestration requires all Docker images
@@ -248,7 +248,7 @@ tasks:
       - Configure service discovery
       - Set up ingress
       - Test deployment
-    priority: 2
+    priority: high
     labels: [kubernetes, orchestration]
 
   # Monitoring can be set up in parallel with other infrastructure
@@ -267,7 +267,7 @@ tasks:
       - Set up log aggregation
       - Configure distributed tracing
       - Create alerts
-    priority: 2
+    priority: high
     labels: [monitoring, observability, parallel-group-b]
 
   # Documentation can be written in parallel with development
@@ -286,6 +286,6 @@ tasks:
       - Write deployment guide
       - Write development guide
       - Set up API docs website
-    priority: 3
+    priority: low
     category: docs
     labels: [documentation, parallel-group-b]

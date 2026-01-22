@@ -5,7 +5,7 @@ name: Modern API Gateway
 description: Build an API gateway with rate limiting, caching, and load balancing
 
 defaults:
-  priority: 2
+  priority: high
   category: functional
 
 tasks:
@@ -23,7 +23,7 @@ tasks:
       - Investigate service mesh integration
       - Document findings in docs/research/api-gateway-patterns.md
       - Create decision matrix for architecture selection
-    priority: 1
+    priority: critical
     category: research
     labels: [research, architecture]
     research_required: true
@@ -46,7 +46,7 @@ tasks:
       - Document algorithm pros and cons
       - Select algorithm for implementation
       - Document implementation approach
-    priority: 1
+    priority: critical
     category: research
     labels: [research, algorithms]
     research_required: true
@@ -68,7 +68,7 @@ tasks:
       - Research Redis caching patterns for API gateway
       - Document caching strategy selection
       - Design cache key structure
-    priority: 1
+    priority: critical
     category: research
     labels: [research, caching]
     research_required: true
@@ -91,7 +91,7 @@ tasks:
       - Set up directory structure per architecture pattern
       - Install dependencies (gorilla/mux go-redis etc)
       - Create main.go with basic server
-    priority: 1
+    priority: critical
     labels: [setup, golang]
 
   # Core Gateway
@@ -110,7 +110,7 @@ tasks:
       - Implement health checking for backends
       - Add error handling and logging
       - Test proxy with sample backend
-    priority: 1
+    priority: critical
     labels: [core, proxy]
 
   # Documentation
@@ -129,6 +129,6 @@ tasks:
       - Create deployment guide for Docker and Kubernetes
       - Generate API reference
       - Add runbook for operations
-    priority: 3
+    priority: low
     category: docs
     labels: [documentation]

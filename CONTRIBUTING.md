@@ -6,7 +6,7 @@ Thank you for your interest in contributing to BOB (Build Orchestration Bot)! Th
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/bob.git
+git clone https://github.com/yye00/bob.git
 cd bob
 ```
 

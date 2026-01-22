@@ -13,12 +13,12 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 setup(
     name="bob-framework",
     version="0.1.0",
-    author="BOB Team",
-    author_email="support@bob-framework.dev",
+    author="yelkhamra",
+    author_email="yelkhamra@users.noreply.github.com",
     description="Build Orchestration Bot - A generalized autonomous coding framework",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/bob",
+    url="https://github.com/yye00/bob",
     packages=find_packages(exclude=["tests", "tests.*", "examples", "docs"]),
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -47,8 +47,8 @@ setup(
     },
     keywords="autonomous-coding ai-agents code-generation anthropic claude orchestration",
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/bob/issues",
-        "Source": "https://github.com/yourusername/bob",
+        "Bug Reports": "https://github.com/yye00/bob/issues",
+        "Source": "https://github.com/yye00/bob",
         "Documentation": "https://docs.bob-framework.dev",
     },
 )
