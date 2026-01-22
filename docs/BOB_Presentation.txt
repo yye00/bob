@@ -1,10 +1,15 @@
 ================================================================================
                     BOB: BUILD ORCHESTRATION BOT
 
+          🔨 "Can We Build It? Yes We Can!" 🔨
+
            A Production-Ready Autonomous Coding Framework
 ================================================================================
 
                          PRESENTATION SLIDES
+
+                    Yaakoub Elkhamra, PhD
+                        January 2026
 
 ================================================================================
 
@@ -17,7 +22,9 @@
 
                     ╔═══════════════════════════════════════╗
                     ║                                       ║
-                    ║      BOB: Build Orchestration Bot     ║
+                    ║         🔨  B O B  🔨                 ║
+                    ║                                       ║
+                    ║      Build Orchestration Bot          ║
                     ║                                       ║
                     ║  ─────────────────────────────────── ║
                     ║                                       ║
@@ -25,8 +32,11 @@
                     ║   Autonomous AI-Assisted Software     ║
                     ║          Development                  ║
                     ║                                       ║
+                    ║   "Can We Build It? Yes We Can!"      ║
                     ║                                       ║
+                    ║  ─────────────────────────────────── ║
                     ║                                       ║
+                    ║       Yaakoub Elkhamra, PhD           ║
                     ║          January 2026                 ║
                     ║                                       ║
                     ╚═══════════════════════════════════════╝
@@ -35,10 +45,59 @@
 
 
 ================================================================================
-                        SLIDE 2: THE PROBLEM
+                      SLIDE 2: THE ORIGIN STORY
 ================================================================================
 
-    THE CHALLENGE: AI-Assisted Development at Scale
+    How BOB Came To Be 🔨
+    ════════════════════════════════════════════════
+
+    THE VISION:
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                                                                 │
+    │   I wanted to build a RECURSIVE workflow:                       │
+    │                                                                 │
+    │        ┌──────────┐     ┌──────────┐     ┌──────────┐          │
+    │        │ RESEARCH │ ──▶ │   PLAN   │ ──▶ │ EXECUTE  │          │
+    │        └──────────┘     └──────────┘     └──────────┘          │
+    │              ▲                                  │               │
+    │              └──────────────────────────────────┘               │
+    │                    (loop until done)                            │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+    THE PROBLEM:
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                                                                 │
+    │   💸 TOKENS WERE AN ISSUE                                       │
+    │                                                                 │
+    │   • Complex multi-step workflows = massive context              │
+    │   • API costs added up quickly                                  │
+    │   • Had to choose between capability and affordability          │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+    THE BREAKTHROUGH:
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                                                                 │
+    │   🚀 CLAUDE CODE MAX SUBSCRIPTION                               │
+    │                                                                 │
+    │   • Unlimited tokens for complex workflows                      │
+    │   • Started with Claude Code Harness Demo                       │
+    │     (Anthropic's Autonomous Coding Quickstart)                  │
+    │   • Extended it into a full production framework                │
+    │                                                                 │
+    │   Built with: CLAUDE CODE SDK                                   │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
+
+
+
+
+================================================================================
+                        SLIDE 3: THE PROBLEM
+================================================================================
+
+    THE CHALLENGE: AI-Assisted Development at Scale 🔨
     ════════════════════════════════════════════════
 
     Current Pain Points:
@@ -73,10 +132,10 @@
 
 
 ================================================================================
-                        SLIDE 3: THE SOLUTION
+                        SLIDE 4: THE SOLUTION
 ================================================================================
 
-    BOB: Build Orchestration Bot
+    BOB: Build Orchestration Bot 🔨
     ════════════════════════════════════════════════
 
     A complete framework for autonomous coding at production scale.
@@ -97,17 +156,23 @@
     Key Innovation: BOB doesn't just run agents - it ORCHESTRATES them.
 
 
-    Built on: Anthropic Claude Quickstarts - Autonomous Coding Demo
-    Enhanced: From demo to production-ready framework
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                                                                 │
+    │  Built on:   Anthropic Claude Code SDK                          │
+    │              Claude Code Harness (Autonomous Coding Quickstart) │
+    │                                                                 │
+    │  Enhanced:   From demo to production-ready framework            │
+    │                                                                 │
+    └─────────────────────────────────────────────────────────────────┘
 
 
 
 
 ================================================================================
-                     SLIDE 4: KEY FEATURES OVERVIEW
+                     SLIDE 5: KEY FEATURES OVERVIEW
 ================================================================================
 
-    What BOB Provides
+    What BOB Provides 🔨
     ════════════════════════════════════════════════
 
 
@@ -142,10 +207,10 @@
 
 
 ================================================================================
-                      SLIDE 5: ARCHITECTURE
+                      SLIDE 6: ARCHITECTURE
 ================================================================================
 
-    System Architecture
+    System Architecture 🔨
     ════════════════════════════════════════════════
 
 
@@ -174,16 +239,18 @@
     │   │  PERSISTENCE: SQLite  │  OBSERVABILITY: JSON Logs + Costs  │    │
     │   └────────────────────────────────────────────────────────────┘    │
     │                                                                      │
+    │   Powered by: Claude Code SDK                                        │
+    │                                                                      │
     └─────────────────────────────────────────────────────────────────────┘
 
 
 
 
 ================================================================================
-                    SLIDE 6: ESCALATION SYSTEM
+                    SLIDE 7: ESCALATION SYSTEM
 ================================================================================
 
-    Intelligent Failure Handling
+    Intelligent Failure Handling 🔨
     ════════════════════════════════════════════════
 
     When a task fails, BOB doesn't give up - it escalates intelligently.
@@ -224,10 +291,10 @@
 
 
 ================================================================================
-                   SLIDE 7: RESEARCH-FIRST WORKFLOW
+                   SLIDE 8: RESEARCH-FIRST WORKFLOW
 ================================================================================
 
-    Proactive Research Before Implementation
+    Proactive Research Before Implementation 🔨
     ════════════════════════════════════════════════
 
     Traditional Approach:
@@ -271,10 +338,10 @@
 
 
 ================================================================================
-                     SLIDE 8: COST TRACKING
+                     SLIDE 9: COST TRACKING
 ================================================================================
 
-    Real-Time Cost Visibility & Control
+    Real-Time Cost Visibility & Control 🔨
     ════════════════════════════════════════════════
 
 
@@ -313,10 +380,10 @@
 
 
 ================================================================================
-                     SLIDE 9: CLI EXPERIENCE
+                     SLIDE 10: CLI EXPERIENCE
 ================================================================================
 
-    Developer-Friendly Command Line Interface
+    Developer-Friendly Command Line Interface 🔨
     ════════════════════════════════════════════════
 
 
@@ -358,10 +425,10 @@
 
 
 ================================================================================
-                    SLIDE 10: SPEC FLEXIBILITY
+                    SLIDE 11: SPEC FLEXIBILITY
 ================================================================================
 
-    Multiple Specification Formats
+    Multiple Specification Formats 🔨
     ════════════════════════════════════════════════
 
 
@@ -401,10 +468,10 @@
 
 
 ================================================================================
-                   SLIDE 11: PARALLEL EXECUTION
+                   SLIDE 12: PARALLEL EXECUTION
 ================================================================================
 
-    Concurrent Task Processing
+    Concurrent Task Processing 🔨
     ════════════════════════════════════════════════
 
     BOB builds a dependency graph and runs independent tasks in parallel:
@@ -445,10 +512,10 @@
 
 
 ================================================================================
-                    SLIDE 12: OBSERVABILITY
+                    SLIDE 13: OBSERVABILITY
 ================================================================================
 
-    Structured Logging & Monitoring
+    Structured Logging & Monitoring 🔨
     ════════════════════════════════════════════════
 
     Every event is captured as structured JSON:
@@ -490,10 +557,10 @@
 
 
 ================================================================================
-                   SLIDE 13: COMPARISON TABLE
+                   SLIDE 14: COMPARISON TABLE
 ================================================================================
 
-    BOB vs. Traditional Approaches
+    BOB vs. Traditional Approaches 🔨
     ════════════════════════════════════════════════
 
 
@@ -531,10 +598,10 @@
 
 
 ================================================================================
-                     SLIDE 14: GETTING STARTED
+                     SLIDE 15: GETTING STARTED
 ================================================================================
 
-    Quick Start Guide
+    Quick Start Guide 🔨
     ════════════════════════════════════════════════
 
 
@@ -579,10 +646,10 @@
 
 
 ================================================================================
-                       SLIDE 15: SUMMARY
+                       SLIDE 16: SUMMARY
 ================================================================================
 
-    BOB: The Complete Autonomous Coding Framework
+    BOB: The Complete Autonomous Coding Framework 🔨
     ════════════════════════════════════════════════
 
 
@@ -608,12 +675,13 @@
     │  • SQLite persistence with transactions                         │
     │  • Comprehensive CLI with JSON output                           │
     │  • GitHub Issues integration                                    │
+    │  • Built with Claude Code SDK                                   │
     │                                                                 │
     │                                                                 │
     │  GET STARTED                                                    │
     │  ─────────────────                                              │
     │                                                                 │
-    │  $ git clone https://github.com/yye00/bob.git            │
+    │  $ git clone https://github.com/yye00/bob.git                   │
     │  $ cd bob && ./init.sh                                          │
     │  $ bob project create my-app ./workspace file://spec.yaml       │
     │  $ bob run                                                      │
@@ -621,8 +689,14 @@
     └─────────────────────────────────────────────────────────────────┘
 
 
-
-                    "Bob the Builder... Can we build it? Yes we can!"
+              ╔═══════════════════════════════════════════════════╗
+              ║                                                   ║
+              ║    🔨 "Can We Build It? YES WE CAN!" 🔨           ║
+              ║                                                   ║
+              ║              Yaakoub Elkhamra, PhD                ║
+              ║         https://github.com/yye00/bob              ║
+              ║                                                   ║
+              ╚═══════════════════════════════════════════════════╝
 
 
 
@@ -636,19 +710,20 @@ APPENDIX: Slide Index
 ═════════════════════════════════════════════════════════════════════════════
 
   Slide 1:  Title
-  Slide 2:  The Problem
-  Slide 3:  The Solution
-  Slide 4:  Key Features Overview
-  Slide 5:  Architecture
-  Slide 6:  Escalation System
-  Slide 7:  Research-First Workflow
-  Slide 8:  Cost Tracking
-  Slide 9:  CLI Experience
-  Slide 10: Spec Flexibility
-  Slide 11: Parallel Execution
-  Slide 12: Observability
-  Slide 13: Comparison Table
-  Slide 14: Getting Started
-  Slide 15: Summary
+  Slide 2:  The Origin Story (NEW - How BOB Came To Be)
+  Slide 3:  The Problem
+  Slide 4:  The Solution
+  Slide 5:  Key Features Overview
+  Slide 6:  Architecture
+  Slide 7:  Escalation System
+  Slide 8:  Research-First Workflow
+  Slide 9:  Cost Tracking
+  Slide 10: CLI Experience
+  Slide 11: Spec Flexibility
+  Slide 12: Parallel Execution
+  Slide 13: Observability
+  Slide 14: Comparison Table
+  Slide 15: Getting Started
+  Slide 16: Summary
 
 ═════════════════════════════════════════════════════════════════════════════
