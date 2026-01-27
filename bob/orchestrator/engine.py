@@ -506,15 +506,75 @@ class Orchestrator:
         Returns:
             List of subtasks
         """
-        # Use task decomposer to break down the task
-        # This is a placeholder - real implementation would:
-        # 1. Use TaskDecomposer.analyze_task_for_decomposition
-        # 2. Generate decomposition prompt
-        # 3. Send to Claude for subtask generation
-        # 4. Validate decomposition
-        # 5. Create and persist subtasks
+        import json
+        from bob.orchestrator.task_decomposer import (
+            generate_decomposition_prompt,
+            validate_decomposition,
+        )
 
-        return []
+        # Build error context from task history
+        error_context = f"Task has failed {task.attempts} times."
+        if task.failure_type:
+            error_context += f" Failure type: {task.failure_type.value}."
+
+        # Generate decomposition prompt
+        prompt = generate_decomposition_prompt(task, error_context)
+
+        # Execute with Claude to generate decomposition
+        result = await execute_task_with_claude(
+            project_dir=self.project_dir,
+            prompt=prompt,
+            model=self.current_model,
+            timeout_seconds=600,  # 10 minute timeout for decomposition
+        )
+
+        if not result.success:
+            # Decomposition failed
+            return []
+
+        # Read the decomposition plan
+        plan_path = self.project_dir / "decomposition_plan.json"
+        if not plan_path.exists():
+            return []
+
+        try:
+            with open(plan_path, 'r') as f:
+                plan = json.load(f)
+        except Exception:
+            return []
+
+        # Extract sub-tasks and reasoning
+        sub_tasks = plan.get("sub_tasks", [])
+        reasoning = plan.get("reasoning", "")
+
+        if not sub_tasks:
+            return []
+
+        # Validate decomposition
+        is_valid, issues = validate_decomposition(sub_tasks, task)
+        if not is_valid:
+            # Invalid decomposition - log issues and return empty
+            # TODO: Proper logging of issues
+            return []
+
+        # Use TaskDecomposer to create subtasks in database
+        decomposition_result = self.task_decomposer.decompose_task(
+            task_id=task.id,
+            sub_tasks=sub_tasks,
+            reasoning=reasoning,
+        )
+
+        if not decomposition_result.success:
+            return []
+
+        # Retrieve the created Task objects from the database
+        created_tasks = []
+        for sub in decomposition_result.sub_tasks:
+            task_obj = self.db.get_task_by_spec_id(self.project_id, sub.spec_id)
+            if task_obj:
+                created_tasks.append(task_obj)
+
+        return created_tasks
 
     def _get_model_for_tier(self, tier: Any) -> str:
         """
