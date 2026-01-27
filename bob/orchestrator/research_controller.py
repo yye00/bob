@@ -26,6 +26,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+import json
+
+import httpx
 
 from bob.database.manager import DatabaseManager
 from bob.models.base import Task, TaskStatus
@@ -173,43 +176,178 @@ class ResearchController:
         query: str,
         research_type: str,
     ) -> ResearchResult:
-        """Execute a single research query.
+        """Execute a single research query using Perplexity API.
 
-        In production, this would call Perplexity MCP or web search.
-        For now, returns placeholder results.
+        Makes a real HTTP request to Perplexity's research API and parses results.
 
         Args:
             query: Research query to execute
-            research_type: Type of research
+            research_type: Type of research (affects model selection)
 
         Returns:
-            ResearchResult with findings
+            ResearchResult with findings from Perplexity
         """
-        if self.perplexity_available:
-            # In production: Call Perplexity MCP
-            # For now: Return placeholder
+        # Check for API key
+        api_key = os.getenv("PERPLEXITY_API_KEY")
+        if not api_key:
             return ResearchResult(
                 query=query,
-                findings=f"Research findings for: {query}\n\nThis would contain actual research results from Perplexity.",
+                findings=f"Research needed for: {query}\n\nPerplexity API key not configured.",
                 sources=[],
-                suggestions=[
-                    "Review official documentation",
-                    "Check for code examples",
-                    "Verify API compatibility",
-                ],
-                code_examples=[],
-                success=True,
-            )
-        else:
-            # Fallback: Would use web search or return error
-            return ResearchResult(
-                query=query,
-                findings=f"Research needed for: {query}\n\nPerplexity not available. Manual research required.",
-                sources=[],
-                suggestions=["Install Perplexity MCP", "Set PERPLEXITY_API_KEY"],
+                suggestions=["Set PERPLEXITY_API_KEY environment variable"],
                 code_examples=[],
                 success=False,
-                error="Perplexity MCP not available",
+                error="PERPLEXITY_API_KEY not set",
+            )
+
+        # Select model based on research type
+        model_map = {
+            "quick": "sonar",
+            "deep": "sonar-reasoning",
+            "experimental": "sonar-reasoning",
+        }
+        model = model_map.get(research_type, "sonar")
+
+        # Prepare API request
+        url = "https://api.perplexity.ai/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Construct research-focused prompt
+        research_prompt = f"""Research the following question and provide:
+1. Key findings and information
+2. Relevant sources and documentation
+3. Practical suggestions for implementation
+4. Code examples if applicable
+
+Question: {query}
+
+Please provide detailed, actionable research findings."""
+
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a technical research assistant. Provide thorough, accurate research with sources and practical examples.",
+                },
+                {
+                    "role": "user",
+                    "content": research_prompt,
+                },
+            ],
+            "temperature": 0.2,
+            "max_tokens": 2000,
+        }
+
+        try:
+            # Make API request with timeout
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+
+            # Parse response
+            data = response.json()
+
+            # Extract content from response
+            if "choices" not in data or len(data["choices"]) == 0:
+                return ResearchResult(
+                    query=query,
+                    findings="No results returned from Perplexity API",
+                    sources=[],
+                    suggestions=[],
+                    code_examples=[],
+                    success=False,
+                    error="Empty response from API",
+                )
+
+            content = data["choices"][0]["message"]["content"]
+
+            # Parse citations/sources if available
+            sources = []
+            if "citations" in data:
+                sources = data["citations"][:5]  # Limit to top 5 sources
+
+            # Extract code examples from content (simple heuristic)
+            code_examples = []
+            if "```" in content:
+                parts = content.split("```")
+                for i in range(1, len(parts), 2):
+                    code_block = parts[i]
+                    # Remove language identifier if present
+                    lines = code_block.split("\n")
+                    if lines[0].strip() and not lines[0].strip().startswith(("python", "javascript", "typescript", "bash", "sh")):
+                        code_examples.append(code_block.strip())
+                    elif len(lines) > 1:
+                        code_examples.append("\n".join(lines[1:]).strip())
+
+            # Extract suggestions (look for numbered lists or bullet points)
+            suggestions = []
+            for line in content.split("\n"):
+                line = line.strip()
+                if line.startswith(("- ", "* ", "• ")) or (line and line[0].isdigit() and "." in line[:3]):
+                    suggestion = line.lstrip("- *•0123456789. ")
+                    if len(suggestion) > 10 and len(suggestion) < 200:
+                        suggestions.append(suggestion)
+                        if len(suggestions) >= 5:
+                            break
+
+            return ResearchResult(
+                query=query,
+                findings=content,
+                sources=sources,
+                suggestions=suggestions if suggestions else [
+                    "Review the research findings above",
+                    "Check official documentation",
+                    "Consider implementation approaches",
+                ],
+                code_examples=code_examples,
+                success=True,
+            )
+
+        except httpx.TimeoutException:
+            return ResearchResult(
+                query=query,
+                findings=f"Research request timed out for: {query}",
+                sources=[],
+                suggestions=["Try again with a simpler query", "Check network connection"],
+                code_examples=[],
+                success=False,
+                error="Request timeout",
+            )
+
+        except httpx.HTTPStatusError as e:
+            error_msg = f"HTTP {e.response.status_code}"
+            if e.response.status_code == 429:
+                error_msg = "Rate limit exceeded"
+                suggestions = ["Wait before retrying", "Check API quota"]
+            elif e.response.status_code == 401:
+                error_msg = "Invalid API key"
+                suggestions = ["Check PERPLEXITY_API_KEY is valid"]
+            else:
+                suggestions = ["Check API status", "Verify request format"]
+
+            return ResearchResult(
+                query=query,
+                findings=f"API request failed: {error_msg}",
+                sources=[],
+                suggestions=suggestions,
+                code_examples=[],
+                success=False,
+                error=error_msg,
+            )
+
+        except Exception as e:
+            return ResearchResult(
+                query=query,
+                findings=f"Research failed for: {query}",
+                sources=[],
+                suggestions=["Check logs for details", "Verify API configuration"],
+                code_examples=[],
+                success=False,
+                error=str(e),
             )
 
     def get_implementation_context(self, task: Task) -> str:
