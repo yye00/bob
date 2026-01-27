@@ -27,6 +27,7 @@ from bob.models.base import (
     EscalationAction,
 )
 from bob.orchestrator.client import create_client, create_research_client
+from bob.orchestrator.claude_executor import ClaudeExecutor, execute_task_with_claude
 from bob.orchestrator.escalation import EscalationController
 from bob.orchestrator.failure_classifier import classify_failure, ClassificationResult
 from bob.orchestrator.task_decomposer import TaskDecomposer
@@ -190,6 +191,43 @@ class Orchestrator:
 
         return True, None
 
+    def _check_dependencies(self, task: Task) -> tuple[bool, dict[str, str]]:
+        """
+        Check if all dependencies for a task are met.
+
+        Args:
+            task: Task to check dependencies for
+
+        Returns:
+            Tuple of (deps_met, deps_status)
+            deps_met is True if all dependencies are COMPLETED
+            deps_status is a dict mapping spec_id to status string
+        """
+        if not task.depends_on:
+            # No dependencies - all met
+            return True, {}
+
+        deps_status = {}
+        deps_met = True
+
+        for dep_spec_id in task.depends_on:
+            try:
+                dep_task = self.db.get_task_by_spec_id(self.project_id, dep_spec_id)
+                if dep_task:
+                    deps_status[dep_spec_id] = dep_task.status.value
+                    if dep_task.status != TaskStatus.COMPLETED:
+                        deps_met = False
+                else:
+                    # Dependency task not found
+                    deps_status[dep_spec_id] = "not_found"
+                    deps_met = False
+            except Exception:
+                # Error fetching dependency
+                deps_status[dep_spec_id] = "error"
+                deps_met = False
+
+        return deps_met, deps_status
+
     async def execute_task(
         self,
         task: Task,
@@ -277,10 +315,11 @@ class Orchestrator:
 
             if success:
                 # Task succeeded - record success in escalation controller
+                deps_met, deps_status = self._check_dependencies(task)
                 self.escalation.record_attempt(
                     task_id=task.id,
                     success=True,
-                    deps_met=True,  # TODO: Check actual dependencies
+                    deps_met=deps_met,
                 )
                 # Update task status to completed
                 self.db.update_task(task.id, status=TaskStatus.COMPLETED)
@@ -301,24 +340,33 @@ class Orchestrator:
         prompt: str,
     ) -> tuple[bool, Optional[str]]:
         """
-        Execute task with Claude SDK client.
+        Execute task with Claude CLI.
 
         Args:
-            client: Claude SDK client
+            client: Claude SDK client (unused, kept for API compatibility)
             prompt: Prompt to send
 
         Returns:
             Tuple of (success, error_message)
         """
-        # Placeholder for actual Claude SDK execution
-        # In a real implementation, this would:
-        # 1. await client.query(prompt)
-        # 2. async for msg in client.receive_response(): ...
-        # 3. Check for success indicators in response
-        # 4. Return (True, None) on success or (False, error) on failure
-
-        # For now, return a placeholder
-        return True, None
+        # Use Claude CLI executor for reliable execution
+        result = await execute_task_with_claude(
+            project_dir=self.project_dir,
+            prompt=prompt,
+            model=self.current_model,
+            timeout_seconds=3600,  # 1 hour timeout
+        )
+        
+        if result.success:
+            return True, None
+        else:
+            error_msg = result.error or f"Claude execution failed with exit code {result.exit_code}"
+            if result.output:
+                # Include last part of output for context
+                output_lines = result.output.strip().split('\n')
+                last_lines = '\n'.join(output_lines[-10:])
+                error_msg = f"{error_msg}\n\nLast output:\n{last_lines}"
+            return False, error_msg
 
     async def _handle_failure(
         self,
@@ -343,11 +391,14 @@ class Orchestrator:
             "attempt": task.attempts,
         }]
 
+        # Check dependencies
+        deps_met, deps_status = self._check_dependencies(task)
+
         # Classify the failure
         classification = classify_failure(
             task=task,
             error_history=error_history,
-            deps_status={},  # TODO: Get actual dependencies status
+            deps_status=deps_status,
         )
 
         # Record the attempt in escalation controller
@@ -356,7 +407,7 @@ class Orchestrator:
             success=False,
             error_msg=error,
             error_type=classification.failure_type.value if classification.failure_type else None,
-            deps_met=True,  # TODO: Check actual dependencies
+            deps_met=deps_met,
         )
 
         # Reload task to get updated attempts count
@@ -368,7 +419,7 @@ class Orchestrator:
         if self.config.enable_escalation:
             action, context = self.escalation.get_next_action(
                 task_id=task.id,
-                deps_met=True,  # TODO: Check actual dependencies
+                deps_met=deps_met,
             )
         else:
             # Without escalation, just mark as failed after max retries
