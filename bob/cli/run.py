@@ -331,9 +331,41 @@ def _run_parallel(
         console.print(table)
         console.print()
 
-    # Execute tasks in parallel using TaskQueue.run_parallel()
-    # For now, use mock executor (actual agent execution will be implemented later)
-    results = queue.run_parallel(tasks_to_run, max_workers=max_workers)
+    # Create real executor function for parallel task execution
+    import asyncio
+    from bob.orchestrator.engine import OrchestratorConfig
+
+    # Get project for orchestrator setup
+    project = db.get_project(project_id)
+    project_dir = Path(project.workspace_dir)
+
+    # Create orchestrator config
+    config = OrchestratorConfig(
+        default_model=model or "claude-sonnet-4-20250514",
+        non_interactive=True,  # Parallel execution is always non-interactive
+    )
+
+    # Create orchestrator
+    orchestrator = create_orchestrator(
+        db_manager=db,
+        project_id=project_id,
+        project_dir=project_dir,
+        config=config,
+    )
+
+    def real_executor(task: Task) -> dict:
+        """Execute task with real Claude."""
+        prompt = _build_task_prompt(task, project)
+        status, error = asyncio.run(orchestrator.execute_task(task, prompt))
+        return {
+            "task_id": task.id,
+            "spec_id": task.spec_id,
+            "status": "success" if status == TaskStatus.COMPLETED else status.value,
+            "error": error,
+        }
+
+    # Execute tasks in parallel using real Claude executor
+    results = queue.run_parallel(tasks_to_run, executor_func=real_executor, max_workers=max_workers)
 
     # Display results
     if json_output:
