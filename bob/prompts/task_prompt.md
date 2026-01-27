@@ -56,6 +56,21 @@ Complete the assigned task efficiently and effectively, following best practices
 
 ---
 
+## 🚨 CRITICAL POLICY - NO MOCKING, NO STUBS, NO PLACEHOLDERS 🚨
+
+**This is a HARD RULE with NO EXCEPTIONS:**
+- Zero mocking
+- Zero stubs  
+- Zero placeholders
+- Zero "TODO: implement later" for core features
+- Always implement REAL functionality
+- If it cannot be done yet → raise a clear error, NEVER fake it
+- Every function must do what it says - no empty returns, no hardcoded values
+
+**Violations are unacceptable. Implement it for real or don't implement it at all.**
+
+---
+
 ## Execution Guidelines
 
 ### 1. Understand Requirements
