@@ -676,25 +676,96 @@ def _run_resume(
         config=config,
     )
 
-    # Resume execution with conversation history
-    # For now, this is a placeholder - real implementation will use agent SDK
-    if json_output:
-        click.echo(json.dumps({
-            "status": "resumed",
-            "checkpoint_id": checkpoint_id,
-            "session_id": session_id,
-            "project_id": project.id,
-            "conversation_turns": len(conversation_history),
-            "message": "Session resumed from checkpoint (placeholder implementation)"
-        }, indent=2))
-    else:
-        console.print("[yellow]Note: Full resume execution not yet implemented[/yellow]")
-        console.print("[yellow]This is a placeholder that will integrate with Claude SDK[/yellow]")
+    # Build resume prompt with conversation history
+    if not json_output:
+        console.print("[cyan]Building resume context...[/cyan]")
+
+    # Format conversation history
+    history_lines = ["Resuming from checkpoint. Previous conversation:"]
+    history_lines.append("")
+
+    for i, turn in enumerate(conversation_history, 1):
+        role = turn.get("role", "unknown")
+        content = turn.get("content", "")
+        # Truncate very long content for readability
+        if len(content) > 500:
+            content = content[:497] + "..."
+        history_lines.append(f"Turn {i} ({role}):")
+        history_lines.append(content)
+        history_lines.append("")
+
+    history_lines.append("Continue from where we left off.")
+    resume_prompt = "\n".join(history_lines)
+
+    # Get task if available
+    task = None
+    if task_data:
+        task = db.get_task_by_spec_id(project.id, task_data['spec_id'])
+
+    # Execute with orchestrator
+    import asyncio
+
+    if not json_output:
+        console.print("[cyan]Resuming execution with Claude...[/cyan]")
         console.print()
-        console.print("✓ Checkpoint loaded successfully")
-        console.print()
-        console.print("Next steps:")
-        console.print("  - Restore conversation history to agent")
-        console.print("  - Continue execution from checkpoint state")
-        console.print("  - Save new checkpoints periodically")
-        console.print()
+
+    try:
+        if task:
+            # Resume with task context
+            final_status, error_msg = asyncio.run(orchestrator.execute_task(task, resume_prompt))
+
+            if json_output:
+                click.echo(json.dumps({
+                    "status": final_status.value,
+                    "checkpoint_id": checkpoint_id,
+                    "session_id": session_id,
+                    "task_id": task.spec_id,
+                    "conversation_turns": len(conversation_history),
+                    "error": error_msg,
+                }, indent=2))
+            else:
+                if final_status == TaskStatus.COMPLETED:
+                    console.print(f"[green]✓ Task {task.spec_id} completed successfully[/green]")
+                elif final_status == TaskStatus.PENDING:
+                    console.print(f"[yellow]↻ Task {task.spec_id} will be retried: {error_msg}[/yellow]")
+                else:
+                    console.print(f"[red]✗ Task {task.spec_id} {final_status.value}: {error_msg}[/red]")
+                console.print()
+        else:
+            # Resume without specific task - just continue conversation
+            # Use _execute_with_client directly since we don't have a task
+            from bob.orchestrator.client import create_client
+
+            client = create_client(
+                project_dir=project_dir,
+                model=checkpoint_data["session"].get("model", "claude-sonnet-4-20250514"),
+                enable_research=False,
+            )
+
+            success, error = asyncio.run(orchestrator._execute_with_client(client, resume_prompt))
+
+            if json_output:
+                click.echo(json.dumps({
+                    "status": "completed" if success else "failed",
+                    "checkpoint_id": checkpoint_id,
+                    "session_id": session_id,
+                    "conversation_turns": len(conversation_history),
+                    "error": error,
+                }, indent=2))
+            else:
+                if success:
+                    console.print("[green]✓ Session resumed and completed successfully[/green]")
+                else:
+                    console.print(f"[red]✗ Session failed: {error}[/red]")
+                console.print()
+
+    except Exception as e:
+        if json_output:
+            click.echo(json.dumps({
+                "error": f"Failed to resume: {str(e)}",
+                "checkpoint_id": checkpoint_id,
+            }))
+            ctx.exit(1)
+        else:
+            console.print(f"[red]✗ Failed to resume: {str(e)}[/red]")
+            ctx.exit(1)
