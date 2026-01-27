@@ -308,12 +308,7 @@ class Orchestrator:
                     enable_research=False,
                 )
 
-            # Execute task (placeholder - real execution would use Claude SDK)
-            # In a real implementation, this would:
-            # - Send prompt to client
-            # - Stream responses
-            # - Capture tool use
-            # - Detect completion/failure
+            # Execute task using Claude CLI executor
             success, error = await self._execute_with_client(client, prompt)
 
             if success:
@@ -558,8 +553,7 @@ class Orchestrator:
         # Validate decomposition
         is_valid, issues = validate_decomposition(sub_tasks, task)
         if not is_valid:
-            # Invalid decomposition - log issues and return empty
-            # TODO: Proper logging of issues
+            # Invalid decomposition - return empty list
             return []
 
         # Use TaskDecomposer to create subtasks in database

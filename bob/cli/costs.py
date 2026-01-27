@@ -40,7 +40,7 @@ def costs(
     Examples:
         bob costs                    # Show total costs across all projects
         bob costs --project my-app   # Show costs for specific project
-        bob costs --json             # Output as JSON
+        bob costs --json-output      # Output as JSON
 
     Displays:
         - Total cost in USD

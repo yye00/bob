@@ -253,7 +253,7 @@ def list(
     Examples:
         bob project list
         bob project list --status active
-        bob project list --json
+        bob project list --json-output
 
     \b
     Filter by status:
@@ -461,7 +461,7 @@ def status(ctx: click.Context, name: Optional[str], json_output: bool) -> None:
     Examples:
         bob project status              # Show active project status
         bob project status my-app       # Show specific project status
-        bob project status --json       # JSON output
+        bob project status --json-output       # JSON output
 
     Displays:
         - Project information (name, description, workspace, spec source)

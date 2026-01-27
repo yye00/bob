@@ -217,9 +217,6 @@ class TaskDecomposer:
             status=TaskStatus.DEPRECATED,
         )
 
-        # Log decomposition event
-        # TODO: Add event logging when DatabaseManager.log_event() is implemented
-
         # Return result
         result = DecompositionResult(
             parent_task_id=task_id,

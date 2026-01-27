@@ -96,8 +96,7 @@ class ResearchController:
     ) -> bool:
         """Execute research for a task.
 
-        This method would normally integrate with Perplexity MCP or web search.
-        For now, it simulates research by creating placeholder findings.
+        Uses Perplexity API to perform real research queries and collect findings.
 
         Args:
             task: Task to research
@@ -137,8 +136,7 @@ class ResearchController:
             # Record query attempt
             self.research_tracker.record_query(task.id, query)
 
-            # In production, this would call Perplexity MCP or web search
-            # For now, create placeholder result
+            # Execute research query using Perplexity API
             result = self._execute_research_query(query, research_type)
 
             # Add to context

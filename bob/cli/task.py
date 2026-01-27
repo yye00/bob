@@ -92,9 +92,7 @@ def list(
     # Determine project ID
     project_id = global_ctx.project_id
     if not project_id:
-        # Try to get active project
-        # TODO: Implement get_active_project() in DatabaseManager
-        # For now, get the first active project
+        # Get the first active project
         projects = db.list_projects(status=ProjectStatus.ACTIVE, limit=1)
         if not projects:
             if json_output:

@@ -257,9 +257,8 @@ class TaskQueue:
             tasks: List of Task objects to execute in parallel
             max_workers: Maximum number of concurrent workers (default: 5)
             executor_func: Optional callable to execute each task. If None,
-                          a mock executor is used that simulates task execution
-                          for testing purposes. In production, this should be
-                          a function that executes the actual agent session.
+                          a default test executor is used. In production, always
+                          provide a real executor function that executes the agent session.
                           Signature: func(task: Task) -> dict
 
         Returns:

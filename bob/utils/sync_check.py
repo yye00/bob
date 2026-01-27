@@ -58,10 +58,11 @@ def compute_spec_source_hash(project: Project) -> str:
     if hasattr(spec_source, '_compute_file_hash'):
         return spec_source._compute_file_hash()
 
-    # For other sources, we'd need to implement hash computation
-    # For now, raise an error for unsupported sources
-    raise ValueError(
-        f"Hash computation not yet implemented for source type: {project.spec_source}"
+    # For other sources, hash computation needs to be implemented
+    # based on the specific source type (GitHub API, etc.)
+    raise NotImplementedError(
+        f"Hash computation not implemented for source type: {project.spec_source}. "
+        f"Only file-based sources are currently supported."
     )
 
 
