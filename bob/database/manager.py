@@ -792,6 +792,82 @@ class DatabaseManager:
             return cursor.rowcount > 0
 
     # ============================================================================
+    # Settings Operations
+    # ============================================================================
+
+    def set_active_project(self, project_id: str) -> None:
+        """Set the currently active project.
+
+        Args:
+            project_id: Project ID to set as active
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO settings (key, value, updated_at)
+                VALUES ('active_project_id', ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (project_id,),
+            )
+
+    def get_active_project(self) -> Optional[Project]:
+        """Get the currently active project or None if none active.
+
+        Returns:
+            Project object or None if no active project is set
+        """
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "SELECT value FROM settings WHERE key = 'active_project_id'"
+            )
+            row = cursor.fetchone()
+            if row:
+                project_id = row[0]
+                return self.get_project(project_id)
+            return None
+
+    # ============================================================================
+    # Event Logging
+    # ============================================================================
+
+    def log_event(
+        self,
+        event_type: str,
+        task_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        data: Optional[dict] = None,
+    ) -> None:
+        """Log an event to the database for tracking/debugging.
+
+        Args:
+            event_type: Type of event (e.g., "task_started", "task_completed")
+            task_id: Associated task ID (optional)
+            project_id: Associated project ID (optional, defaults to active project)
+            data: Additional event data as JSON dict (optional)
+        """
+        # Use active project if no project_id provided
+        if project_id is None:
+            active_project = self.get_active_project()
+            if active_project:
+                project_id = active_project.id
+            else:
+                raise ValueError("No project_id provided and no active project set")
+
+        event_data = json.dumps(data) if data else "{}"
+
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO events (project_id, task_id, event_type, event_data)
+                VALUES (?, ?, ?, ?)
+                """,
+                (project_id, task_id, event_type, event_data),
+            )
+
+    # ============================================================================
     # Helper Methods
     # ============================================================================
 
