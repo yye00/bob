@@ -10,7 +10,7 @@ from typing import Optional
 
 
 # Current schema version
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -108,6 +108,25 @@ def apply_migration_3(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def apply_migration_4(conn: sqlite3.Connection) -> None:
+    """Add settings table for application settings.
+
+    Args:
+        conn: Database connection
+    """
+    # Create settings table
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.commit()
+
+
 def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> None:
     """Apply database migrations.
 
@@ -153,6 +172,16 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
             print(f"✓ Migrated to schema version 3", file=sys.stderr)
             current_version = 3
 
+        if current_version < 4:
+            apply_migration_4(conn)
+            conn.execute(
+                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                (4, "Add settings table for application settings"),
+            )
+            conn.commit()
+            print(f"✓ Migrated to schema version 4", file=sys.stderr)
+            current_version = 4
+
         if current_version < target_version:
             print(f"✓ Database now at version {current_version}", file=sys.stderr)
     else:
@@ -174,6 +203,7 @@ def verify_schema(conn: sqlite3.Connection) -> bool:
         "sessions",
         "events",
         "research_sessions",
+        "settings",
         "schema_version",
     ]
 
