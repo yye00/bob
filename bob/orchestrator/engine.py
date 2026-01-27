@@ -49,6 +49,7 @@ class OrchestratorConfig:
         max_cost_per_project: Optional[float] = None,
         max_cost_per_session: Optional[float] = None,
         warn_at_percent: int = 80,
+        non_interactive: bool = False,
     ):
         """
         Initialize orchestrator configuration.
@@ -62,6 +63,7 @@ class OrchestratorConfig:
             max_cost_per_project: Maximum cost per project (USD), None for no limit
             max_cost_per_session: Maximum cost per session (USD), None for no limit
             warn_at_percent: Warn when reaching this percentage of limit (0-100)
+            non_interactive: Whether to run in non-interactive mode (disable TUI, auto-select defaults)
         """
         self.default_model = default_model
         self.max_retries = max_retries
@@ -71,6 +73,7 @@ class OrchestratorConfig:
         self.max_cost_per_project = max_cost_per_project
         self.max_cost_per_session = max_cost_per_session
         self.warn_at_percent = warn_at_percent
+        self.non_interactive = non_interactive
 
 
 class Orchestrator:
@@ -355,6 +358,7 @@ class Orchestrator:
             prompt=prompt,
             model=self.current_model,
             timeout_seconds=3600,  # 1 hour timeout
+            non_interactive=self.config.non_interactive,
         )
         
         if result.success:
@@ -526,6 +530,7 @@ class Orchestrator:
             prompt=prompt,
             model=self.current_model,
             timeout_seconds=600,  # 10 minute timeout for decomposition
+            non_interactive=self.config.non_interactive,
         )
 
         if not result.success:

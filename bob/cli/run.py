@@ -15,9 +15,68 @@ from rich.table import Table
 from pathlib import Path
 
 from bob.database.manager import DatabaseManager
-from bob.models.base import ProjectStatus, TaskStatus
+from bob.models.base import ProjectStatus, TaskStatus, Task
 from bob.orchestrator.task_queue import TaskQueue
 from bob.orchestrator.engine import create_orchestrator
+
+
+def _build_task_prompt(task: Task, project) -> str:
+    """
+    Build a comprehensive prompt for Claude to execute the task.
+    
+    Args:
+        task: Task to execute
+        project: Project the task belongs to
+        
+    Returns:
+        Formatted prompt string
+    """
+    prompt_parts = [
+        f"# Task: {task.title}",
+        f"Task ID: {task.spec_id}",
+        f"Priority: {task.priority}",
+        "",
+        "## Description",
+        task.description or "No description provided.",
+        "",
+    ]
+    
+    if task.acceptance_criteria:
+        prompt_parts.append("## Acceptance Criteria")
+        for criterion in task.acceptance_criteria:
+            prompt_parts.append(f"- {criterion}")
+        prompt_parts.append("")
+    
+    if task.steps:
+        prompt_parts.append("## Implementation Steps")
+        for i, step in enumerate(task.steps, 1):
+            prompt_parts.append(f"{i}. {step}")
+        prompt_parts.append("")
+    
+    if task.research_required and not task.research_complete:
+        prompt_parts.append("## Research Required")
+        prompt_parts.append("This task requires research before implementation.")
+        if task.research_queries:
+            prompt_parts.append("Suggested research queries:")
+            for query in task.research_queries:
+                prompt_parts.append(f"- {query}")
+        prompt_parts.append("")
+    
+    if task.research_findings:
+        prompt_parts.append("## Research Findings")
+        prompt_parts.append(task.research_findings)
+        prompt_parts.append("")
+    
+    prompt_parts.extend([
+        "## Instructions",
+        "Complete this task by implementing the required functionality.",
+        "Ensure all acceptance criteria are met before considering the task complete.",
+        "Use appropriate tools to read, write, and test code as needed.",
+        "",
+        f"Working directory: {project.workspace_dir}",
+    ])
+    
+    return "\n".join(prompt_parts)
 
 
 # ============================================================================
@@ -76,6 +135,12 @@ from bob.orchestrator.engine import create_orchestrator
     is_flag=True,
     help="Output in JSON format",
 )
+@click.option(
+    "--non-interactive",
+    "-n",
+    is_flag=True,
+    help="Run in non-interactive mode (auto-select defaults, disable TUI)",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -88,6 +153,7 @@ def run(
     checkpoint_id: Optional[str],
     dry_run: bool,
     json_output: bool,
+    non_interactive: bool,
 ) -> None:
     """Run the autonomous coding agent.
 
@@ -185,6 +251,7 @@ def run(
             model=model,
             dry_run=dry_run,
             json_output=json_output,
+            non_interactive=non_interactive,
             ctx=ctx,
         )
     else:
@@ -198,6 +265,7 @@ def run(
             model=model,
             dry_run=dry_run,
             json_output=json_output,
+            non_interactive=non_interactive,
             ctx=ctx,
         )
 
@@ -322,6 +390,7 @@ def _run_single_task(
     model: Optional[str],
     dry_run: bool,
     json_output: bool,
+    non_interactive: bool,
     ctx: click.Context,
 ) -> None:
     """Run a single specific task.
@@ -336,6 +405,7 @@ def _run_single_task(
         model: Optional model override
         dry_run: Whether to do a dry run
         json_output: Whether to output in JSON format
+        non_interactive: Whether to run in non-interactive mode
         ctx: Click context
     """
     # Get the task
@@ -409,10 +479,12 @@ def _run_single_task(
 
     # Create orchestrator
     from bob.orchestrator.engine import OrchestratorConfig
+    import asyncio
 
     project_dir = Path(project.workspace_dir)
     config = OrchestratorConfig(
         default_model=model or "claude-sonnet-4-20250514",
+        non_interactive=non_interactive,
     )
     orchestrator = create_orchestrator(
         db_manager=db,
@@ -421,20 +493,30 @@ def _run_single_task(
         config=config,
     )
 
-    # Execute task - this is a placeholder, real execution will use agent SDK
-    # For now, just mark as completed for testing
+    # Build the task prompt
+    prompt = _build_task_prompt(task, project)
+    
+    if not json_output:
+        console.print(f"[cyan]Executing with Claude...[/cyan]")
+        console.print()
+
+    # Execute task with orchestrator
+    final_status, error_msg = asyncio.run(orchestrator.execute_task(task, prompt))
+    
     if json_output:
         click.echo(json.dumps({
-            "status": "completed",
+            "status": final_status.value,
             "task_id": task.spec_id,
             "title": task.title,
-            "message": "Task execution with orchestrator (placeholder)"
+            "error": error_msg,
         }, indent=2))
     else:
-        console.print("[yellow]Note: Full orchestrator execution not yet implemented[/yellow]")
-        console.print("[yellow]This is a placeholder that will integrate with Claude SDK[/yellow]")
-        console.print()
-        console.print("✓ Task execution initiated")
+        if final_status.value == "completed":
+            console.print(f"[green]✓ Task {task.spec_id} completed successfully[/green]")
+        elif final_status.value == "pending":
+            console.print(f"[yellow]↻ Task {task.spec_id} will be retried: {error_msg}[/yellow]")
+        else:
+            console.print(f"[red]✗ Task {task.spec_id} {final_status.value}: {error_msg}[/red]")
         console.print()
 
 
@@ -447,6 +529,7 @@ def _run_auto_select(
     model: Optional[str],
     dry_run: bool,
     json_output: bool,
+    non_interactive: bool,
     ctx: click.Context,
 ) -> None:
     """Auto-select and run the next ready task.
@@ -460,6 +543,7 @@ def _run_auto_select(
         model: Optional model override
         dry_run: Whether to do a dry run
         json_output: Whether to output in JSON format
+        non_interactive: Whether to run in non-interactive mode
         ctx: Click context
     """
     # Get next ready task
@@ -489,6 +573,7 @@ def _run_auto_select(
         model=model,
         dry_run=dry_run,
         json_output=json_output,
+        non_interactive=non_interactive,
         ctx=ctx,
     )
 
