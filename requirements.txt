@@ -18,3 +18,4 @@ httpx>=0.27.0
 
 # Async support
 asyncio-mqtt>=0.16.0  # For async operations
+pexpect>=4.8
