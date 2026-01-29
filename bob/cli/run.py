@@ -20,6 +20,37 @@ from bob.orchestrator.task_queue import TaskQueue
 from bob.orchestrator.engine import create_orchestrator
 
 
+def _load_project_references(project) -> list[dict]:
+    """
+    Load reference documents from the project spec.
+    
+    Reads the spec YAML and extracts the top-level 'references' key.
+    Each reference can have:
+      - path: local file path (relative to workspace)
+      - url: web URL
+      - label: human-readable label
+      - focus: bool — if True, this is a primary reference to read deeply
+    
+    Returns:
+        List of reference dicts
+    """
+    import yaml
+    spec_source = project.spec_source
+    if not spec_source.startswith("file://"):
+        return []
+    
+    spec_path = Path(spec_source.replace("file://", ""))
+    if not spec_path.exists():
+        return []
+    
+    try:
+        with open(spec_path, "r") as f:
+            spec_data = yaml.safe_load(f)
+        return spec_data.get("references", []) or []
+    except Exception:
+        return []
+
+
 def _build_task_prompt(task: Task, project) -> str:
     """
     Build a comprehensive prompt for Claude to execute the task.
@@ -53,9 +84,46 @@ def _build_task_prompt(task: Task, project) -> str:
             prompt_parts.append(f"{i}. {step}")
         prompt_parts.append("")
     
+    # Include reference documents
+    references = _load_project_references(project)
+    if references:
+        prompt_parts.append("## Reference Documents")
+        prompt_parts.append("The following reference materials are available. Read them for implementation details.")
+        prompt_parts.append("")
+        
+        focus_refs = [r for r in references if r.get("focus", False)]
+        other_refs = [r for r in references if not r.get("focus", False)]
+        
+        if focus_refs:
+            prompt_parts.append("### PRIMARY REFERENCES (read these first!)")
+            for ref in focus_refs:
+                label = ref.get("label", "Reference")
+                if ref.get("path"):
+                    abs_path = Path(project.workspace_dir) / ref["path"]
+                    prompt_parts.append(f"- **{label}**: Read the file at `{abs_path}`")
+                    prompt_parts.append(f"  Use: `Read({abs_path})`")
+                elif ref.get("url"):
+                    prompt_parts.append(f"- **{label}**: {ref['url']}")
+                if ref.get("sections"):
+                    prompt_parts.append(f"  Focus on sections: {', '.join(ref['sections'])}")
+            prompt_parts.append("")
+        
+        if other_refs:
+            prompt_parts.append("### Additional References")
+            for ref in other_refs:
+                label = ref.get("label", "Reference")
+                if ref.get("path"):
+                    abs_path = Path(project.workspace_dir) / ref["path"]
+                    prompt_parts.append(f"- **{label}**: `{abs_path}`")
+                elif ref.get("url"):
+                    prompt_parts.append(f"- **{label}**: {ref['url']}")
+            prompt_parts.append("")
+    
     if task.research_required and not task.research_complete:
         prompt_parts.append("## Research Required")
         prompt_parts.append("This task requires research before implementation.")
+        if references:
+            prompt_parts.append("START by reading the primary reference documents listed above.")
         if task.research_queries:
             prompt_parts.append("Suggested research queries:")
             for query in task.research_queries:
