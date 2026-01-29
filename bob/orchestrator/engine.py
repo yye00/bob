@@ -50,6 +50,9 @@ class OrchestratorConfig:
         max_cost_per_session: Optional[float] = None,
         warn_at_percent: int = 80,
         non_interactive: bool = False,
+        use_opus_default: bool = False,
+        enable_thinking: bool = False,
+        thinking_budget: int = 10000,
     ):
         """
         Initialize orchestrator configuration.
@@ -74,6 +77,13 @@ class OrchestratorConfig:
         self.max_cost_per_session = max_cost_per_session
         self.warn_at_percent = warn_at_percent
         self.non_interactive = non_interactive
+        self.use_opus_default = use_opus_default
+        self.enable_thinking = enable_thinking
+        self.thinking_budget = thinking_budget
+
+        # If use_opus_default, override the default model
+        if use_opus_default:
+            self.default_model = "claude-opus-4-5-20251101"
 
 
 class Orchestrator:
@@ -386,6 +396,8 @@ class Orchestrator:
             model=self.current_model,
             timeout_seconds=3600,  # 1 hour timeout
             non_interactive=self.config.non_interactive,
+            enable_thinking=self.config.enable_thinking,
+            thinking_budget=self.config.thinking_budget,
         )
         
         if result.success:

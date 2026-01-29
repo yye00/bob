@@ -251,6 +251,25 @@ def sync(
             for o in task_spec.expected_outputs
         ]
 
+        # Auto-enhance weak verify_scripts with meaningful checks
+        from bob.orchestrator.verification_generator import generate_verify_script
+        verify_script = task_spec.verify_script
+        is_trivial = (
+            not verify_script
+            or verify_script.strip().startswith("test -f")
+            or verify_script.strip() == ""
+        )
+        if is_trivial and (expected_outputs or task_spec.acceptance_criteria):
+            verify_script = generate_verify_script(
+                task_description=task_spec.description or "",
+                acceptance_criteria=task_spec.acceptance_criteria or [],
+                expected_outputs=expected_outputs,
+                workspace_dir=project.workspace_dir,
+                existing_script=verify_script,
+            )
+            if not json_output:
+                click.echo(f"    ⚡ Auto-generated verify_script for {task_spec.spec_id}")
+
         task = Task(
             id=task_id,
             project_id=project.id,
@@ -274,7 +293,7 @@ def sync(
             research_queries=task_spec.research_queries,
             research_findings={},
             expected_outputs=expected_outputs,
-            verify_script=task_spec.verify_script,
+            verify_script=verify_script,
         )
 
         try:

@@ -41,6 +41,8 @@ class ClaudeExecutor:
         timeout_seconds: int = 3600,  # 1 hour default
         on_output: Optional[Callable[[str], None]] = None,
         non_interactive: bool = False,
+        enable_thinking: bool = False,
+        thinking_budget: int = 10000,
     ):
         """
         Initialize the executor.
@@ -57,6 +59,8 @@ class ClaudeExecutor:
         self.timeout_seconds = timeout_seconds
         self.on_output = on_output
         self.non_interactive = non_interactive
+        self.enable_thinking = enable_thinking
+        self.thinking_budget = thinking_budget
         self._process: Optional[subprocess.Popen] = None
         
     async def execute(self, prompt: str) -> ExecutionResult:
@@ -81,6 +85,10 @@ class ClaudeExecutor:
             "-p",
             "--dangerously-skip-permissions",
         ]
+
+        # Enable extended thinking for complex tasks
+        if self.enable_thinking:
+            cmd.extend(["--thinking-budget", str(self.thinking_budget)])
 
         cmd.append(prompt)
         
@@ -233,6 +241,8 @@ async def execute_task_with_claude(
     model: str = "claude-sonnet-4-20250514",
     timeout_seconds: int = 3600,
     non_interactive: bool = False,
+    enable_thinking: bool = False,
+    thinking_budget: int = 10000,
 ) -> ExecutionResult:
     """
     Convenience function to execute a task with Claude.
@@ -243,6 +253,8 @@ async def execute_task_with_claude(
         model: Claude model
         timeout_seconds: Maximum execution time
         non_interactive: Whether to run in non-interactive mode
+        enable_thinking: Whether to enable extended thinking
+        thinking_budget: Token budget for thinking
 
     Returns:
         ExecutionResult
@@ -252,5 +264,7 @@ async def execute_task_with_claude(
         model=model,
         timeout_seconds=timeout_seconds,
         non_interactive=non_interactive,
+        enable_thinking=enable_thinking,
+        thinking_budget=thinking_budget,
     )
     return await executor.execute(prompt)

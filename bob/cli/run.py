@@ -148,6 +148,28 @@ def _build_task_prompt(task: Task, project) -> str:
     is_flag=True,
     help="Run in non-interactive mode (auto-select defaults, disable TUI)",
 )
+@click.option(
+    "--opus",
+    is_flag=True,
+    help="Use Opus model for all tasks from the start (skip Sonnet tier)",
+)
+@click.option(
+    "--thinking",
+    is_flag=True,
+    help="Enable extended thinking for complex reasoning",
+)
+@click.option(
+    "--thinking-budget",
+    type=int,
+    default=10000,
+    help="Token budget for extended thinking (default: 10000)",
+)
+@click.option(
+    "--research",
+    "force_research",
+    is_flag=True,
+    help="Force research mode for all tasks (web search + experimentation)",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -161,6 +183,10 @@ def run(
     dry_run: bool,
     json_output: bool,
     non_interactive: bool,
+    opus: bool,
+    thinking: bool,
+    thinking_budget: int,
+    force_research: bool,
 ) -> None:
     """Run the autonomous coding agent.
 
@@ -246,6 +272,10 @@ def run(
         )
         return
 
+    # Override model if --opus flag is set
+    if opus and not model:
+        model = "opus"
+
     # Handle single task execution
     if task_id:
         _run_single_task(
@@ -259,6 +289,10 @@ def run(
             dry_run=dry_run,
             json_output=json_output,
             non_interactive=non_interactive,
+            use_opus_default=opus,
+            enable_thinking=thinking,
+            thinking_budget=thinking_budget,
+            force_research=force_research,
             ctx=ctx,
         )
     else:
@@ -273,6 +307,10 @@ def run(
             dry_run=dry_run,
             json_output=json_output,
             non_interactive=non_interactive,
+            use_opus_default=opus,
+            enable_thinking=thinking,
+            thinking_budget=thinking_budget,
+            force_research=force_research,
             ctx=ctx,
         )
 
@@ -432,7 +470,11 @@ def _run_single_task(
     dry_run: bool,
     json_output: bool,
     non_interactive: bool,
-    ctx: click.Context,
+    use_opus_default: bool = False,
+    enable_thinking: bool = False,
+    thinking_budget: int = 10000,
+    force_research: bool = False,
+    ctx: click.Context = None,
 ) -> None:
     """Run a single specific task.
 
@@ -523,9 +565,22 @@ def _run_single_task(
     import asyncio
 
     project_dir = Path(project.workspace_dir)
+
+    # Resolve model name
+    model_map = {
+        "sonnet": "claude-sonnet-4-5-20250929",
+        "opus": "claude-opus-4-5-20251101",
+        "haiku": "claude-haiku-3-5-20241022",
+    }
+    resolved_model = model_map.get(model, model) if model else "claude-sonnet-4-5-20250929"
+
     config = OrchestratorConfig(
-        default_model=model or "claude-sonnet-4-20250514",
+        default_model=resolved_model,
         non_interactive=non_interactive,
+        use_opus_default=use_opus_default,
+        enable_thinking=enable_thinking,
+        thinking_budget=thinking_budget,
+        enable_research=force_research or True,
     )
     orchestrator = create_orchestrator(
         db_manager=db,
@@ -533,6 +588,11 @@ def _run_single_task(
         project_dir=project_dir,
         config=config,
     )
+
+    # Force research mode if --research flag was set
+    if force_research and not task.research_complete:
+        db.update_task(task.id, research_required=True)
+        task = db.get_task(task.id)  # Reload
 
     # Build the task prompt
     prompt = _build_task_prompt(task, project)
@@ -571,7 +631,11 @@ def _run_auto_select(
     dry_run: bool,
     json_output: bool,
     non_interactive: bool,
-    ctx: click.Context,
+    use_opus_default: bool = False,
+    enable_thinking: bool = False,
+    thinking_budget: int = 10000,
+    force_research: bool = False,
+    ctx: click.Context = None,
 ) -> None:
     """Auto-select and run the next ready task.
 
@@ -615,6 +679,10 @@ def _run_auto_select(
         dry_run=dry_run,
         json_output=json_output,
         non_interactive=non_interactive,
+        use_opus_default=use_opus_default,
+        enable_thinking=enable_thinking,
+        thinking_budget=thinking_budget,
+        force_research=force_research,
         ctx=ctx,
     )
 

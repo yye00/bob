@@ -19,6 +19,12 @@ DEFAULT_CONFIG = {
     "models": {
         "default": "claude-sonnet-4-5-20250929",
         "escalation": "claude-opus-4-5-20251101",
+        # Set to true to use Opus for all tasks from the start
+        "use_opus_default": False,
+        # Enable extended thinking for complex tasks
+        "enable_thinking": False,
+        # Thinking budget tokens (when thinking is enabled)
+        "thinking_budget": 10000,
     },
     "api": {
         "anthropic_api_key": "${ANTHROPIC_API_KEY}",
