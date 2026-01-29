@@ -171,6 +171,10 @@ project.add_command(project_commands.delete)
 # Add sync command directly (not a subcommand group, just a command)
 cli.add_command(sync_commands.sync)
 
+# Add plan command (Opus-powered feature generation)
+from bob.cli import plan as plan_commands
+cli.add_command(plan_commands.plan)
+
 
 @cli.group()
 def task() -> None:
