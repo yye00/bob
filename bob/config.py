@@ -49,6 +49,13 @@ DEFAULT_CONFIG = {
             "tier2": "claude-opus-4-5-20251101",
         },
     },
+    "planning": {
+        "confidence_threshold": 0.9,
+        "max_refinement_iterations": 3,
+        "enable_research": True,
+        "model": "claude-opus-4-5-20251101",
+        "thinking_budget": 16000,
+    },
 }
 
 
