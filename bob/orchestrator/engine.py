@@ -298,28 +298,10 @@ class Orchestrator:
         self.db.update_task(task.id, status=TaskStatus.IN_PROGRESS)
 
         try:
-            # Determine if research is needed
-            needs_research = (
-                task.research_required
-                and not task.research_complete
-                and self.config.enable_research
-            )
-
-            # Create appropriate client
-            if needs_research:
-                client = create_research_client(
-                    project_dir=self.project_dir,
-                    model=self.current_model,
-                )
-            else:
-                client = create_client(
-                    project_dir=self.project_dir,
-                    model=self.current_model,
-                    enable_research=False,
-                )
-
             # Execute task using Claude CLI executor
-            success, error = await self._execute_with_client(client, prompt)
+            # Note: The CLI executor handles all Claude interactions directly
+            # via pexpect/subprocess. The SDK client is not needed.
+            success, error = await self._execute_with_client(None, prompt)
 
             if success:
                 # Ralph Wiggum Loop: Verify outputs before claiming victory
