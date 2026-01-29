@@ -126,10 +126,10 @@ bob project status
 bob run
 
 # Or specify project explicitly
-bob run --project hello-world
+bob -p hello-world run
 
-# Run with custom max iterations
-bob run --max-iterations 5
+# Run with custom max turns per session
+bob run --max-turns 50
 ```
 
 The agent will:
@@ -211,14 +211,14 @@ bob project use backend
 bob project status
 
 # Work on specific project
-bob run --project frontend
+bob -p frontend run
 ```
 
 ### Workflow 3: Parallel Execution
 
 ```bash
-# Run multiple independent tasks in parallel
-bob run --parallel --max-workers 3
+# Run up to 3 independent tasks in parallel
+bob run --parallel 3
 
 # BOB will:
 # - Analyze task dependencies
@@ -238,14 +238,14 @@ bob run --parallel --max-workers 3
 # View tasks needing research
 bob task list --needs-research
 
-# Run research phase only
-bob research --task-id user-auth
+# Run research for a specific task
+bob research user-auth
 
-# Review research findings
-bob research --show --task-id user-auth
+# View task with research findings
+bob task show user-auth
 
-# Implement after research
-bob run --task-id user-auth
+# Implement the task after research
+bob run --task user-auth
 ```
 
 ## Understanding BOB's Workflow
@@ -427,9 +427,9 @@ bob task list --needs-research
 
 # Execution
 bob run
-bob run --parallel
-bob run --max-iterations 10
-bob research --task-id <id>
+bob run --parallel 3
+bob run --max-turns 50
+bob research <task-id>
 
 # Monitoring
 bob status
@@ -441,9 +441,8 @@ bob costs --project <name>
 bob config show
 bob config set <key> <value>
 
-# Checkpointing
-bob checkpoint list
-bob checkpoint restore <checkpoint-id>
+# Resume from checkpoint
+bob run --resume
 ```
 
 ---

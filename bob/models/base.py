@@ -137,6 +137,15 @@ class Project:
 
 
 @dataclass
+class ExpectedOutput:
+    """Defines an expected output file for task verification."""
+    path: str = ""
+    min_lines: int = 0
+    must_contain: list[str] = field(default_factory=list)
+    must_not_contain: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Task:
     """Represents a task extracted from a project specification.
 
@@ -165,6 +174,9 @@ class Task:
     research_queries: list[str] = field(default_factory=list)
     research_findings: dict[str, Any] = field(default_factory=dict)
     skip_reason: Optional[str] = None
+    # Output verification (Ralph Wiggum loop)
+    expected_outputs: list[ExpectedOutput] = field(default_factory=list)
+    verify_script: Optional[str] = None
 
 
 @dataclass

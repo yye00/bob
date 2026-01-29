@@ -263,14 +263,21 @@ tasks:
 ```
 
 **Markdown**:
+
+> **Note**: Task IDs in Markdown format must follow the pattern `[A-Z]\d+` (e.g., F001, M001, A123).
+
 ```markdown
-## feature-1: My Feature [priority:critical]
+## F001: My Feature [priority:critical] [category:functional]
 
 Implement the feature with the following requirements...
 
 ### Acceptance Criteria
 - Criterion 1
 - Criterion 2
+
+### Steps
+1. Step 1
+2. Step 2
 ```
 
 #### GitHub Issues
@@ -500,10 +507,7 @@ Sessions are automatically checkpointed:
 bob run --resume
 
 # Resume specific checkpoint
-bob run --resume checkpoint_abc123
-
-# List available checkpoints
-bob status --checkpoints
+bob run --resume <checkpoint_id>
 ```
 
 ### Plugin Architecture
@@ -649,11 +653,11 @@ bob project create my-app ./workspace github://owner/repo?label=implement
 # List all projects
 bob project list
 bob project list --status active
-bob project list --json
+bob project list --json-output
 
 # Show project details
 bob project status <name>
-bob project status my-app --json
+bob project status my-app --json-output
 
 # Set active project
 bob project use <name>
@@ -729,7 +733,7 @@ bob logs --json                  # JSON output
 # Cost breakdown
 bob costs
 bob costs --project my-app
-bob costs --json
+bob costs --json-output
 ```
 
 ### Configuration Commands

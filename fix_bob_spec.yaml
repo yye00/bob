@@ -1,0 +1,212 @@
+name: Fix Bob - Replace Stubs with Real Implementations
+description: |
+  Replace all placeholder/stub implementations in Bob with real working code,
+  and add honest integration tests that actually hit the APIs.
+
+tasks:
+  - id: F001-research-controller
+    title: Implement Real Perplexity Research Integration
+    description: |
+      Replace the placeholder implementation in bob/orchestrator/research_controller.py
+      with real Perplexity API calls.
+      
+      Current state (STUB):
+      - run_research() returns fake placeholder findings
+      - _execute_research_query() returns hardcoded ResearchResult
+      
+      Requirements:
+      - Use the Perplexity API (PERPLEXITY_API_KEY env var)
+      - Make actual HTTP requests to Perplexity's API
+      - Parse and return real research results
+      - Handle API errors gracefully
+      - Respect rate limits
+      - Fall back gracefully when API key is not set
+      
+      The research_agent.py file has ResearchResult dataclass - use that.
+      Check if there's already a Perplexity client or use httpx directly.
+    acceptance_criteria:
+      - _execute_research_query() makes real Perplexity API calls
+      - Returns actual research findings from Perplexity
+      - Handles missing API key gracefully (returns error result, doesn't crash)
+      - Handles API errors (rate limits, network issues)
+      - Logs research queries and results
+    priority: high
+    labels: [core, research]
+
+  - id: F002-dependency-checker
+    title: Implement Real Dependency Checking in Engine
+    description: |
+      Replace hardcoded deps_met=True in bob/orchestrator/engine.py with
+      actual dependency checking logic.
+      
+      Current state (STUB):
+      - Lines 284, 360, 369, 381 all have deps_met=True with TODO comments
+      - Line 360: deps_status={} with TODO comment
+      
+      Requirements:
+      - Check if dependent tasks are actually completed
+      - Query database for dependency task statuses
+      - Return accurate deps_met boolean
+      - Populate deps_status dict with actual dependency info
+      - Handle circular dependency detection
+    acceptance_criteria:
+      - Tasks with unmet dependencies are not executed
+      - deps_met accurately reflects dependency status from database
+      - deps_status contains actual status of each dependency
+      - Circular dependencies are detected and reported
+    priority: high
+    depends_on: []
+    labels: [core, orchestration]
+
+  - id: F003-task-decomposer
+    title: Implement Task Decomposition
+    description: |
+      Implement the _decompose_task() method in bob/orchestrator/engine.py
+      that currently returns an empty list [].
+      
+      Current state (STUB):
+      - Line ~469: Returns [] with placeholder comment
+      - Comment says it should use TaskDecomposer class
+      
+      Requirements:
+      - Use TaskDecomposer.analyze_task_for_decomposition()
+      - Generate decomposition prompt for Claude
+      - Parse Claude's response into subtasks
+      - Validate the decomposition makes sense
+      - Create and persist subtasks in database
+      - Link subtasks to parent task
+    acceptance_criteria:
+      - Complex tasks are broken into manageable subtasks
+      - Subtasks are persisted in database with correct parent_id
+      - Subtasks have proper dependencies on each other
+      - Original task marked as decomposed
+    priority: medium
+    depends_on: [F002-dependency-checker]
+    labels: [core, orchestration]
+
+  - id: F004-db-active-project
+    title: Implement get_active_project() in DatabaseManager
+    description: |
+      Implement the missing get_active_project() method in bob/database/manager.py.
+      
+      Current state:
+      - Referenced in bob/cli/task.py line 96 with TODO comment
+      - Method doesn't exist in DatabaseManager
+      
+      Requirements:
+      - Store active project ID (could be in a settings table or config)
+      - get_active_project() returns the currently active Project or None
+      - set_active_project(project_id) sets the active project
+      - Clear active project when project is deleted
+    acceptance_criteria:
+      - get_active_project() returns correct Project object
+      - set_active_project() persists the selection
+      - Handles case when no project is active (returns None)
+      - CLI commands that need active project work correctly
+    priority: medium
+    labels: [database, cli]
+
+  - id: F005-db-log-event
+    title: Implement log_event() in DatabaseManager
+    description: |
+      Implement the missing log_event() method in bob/database/manager.py.
+      
+      Current state:
+      - Referenced in bob/orchestrator/task_decomposer.py line 221 with TODO
+      - Method doesn't exist in DatabaseManager
+      
+      Requirements:
+      - Create events table if not exists (may need migration)
+      - log_event(event_type, task_id, project_id, data) persists event
+      - Events should have timestamp, type, related IDs, and JSON data
+      - Support querying events by type, task, project, time range
+    acceptance_criteria:
+      - log_event() persists events to database
+      - Events table schema supports all needed fields
+      - Can query events by various filters
+      - TaskDecomposer can use it for logging
+    priority: medium
+    depends_on: [F004-db-active-project]
+    labels: [database]
+
+  - id: F006-checkpoint-resume
+    title: Implement Real Checkpoint Resume
+    description: |
+      Replace placeholder checkpoint resume in bob/cli/run.py with real implementation.
+      
+      Current state (STUB):
+      - Lines 665-677: Just prints placeholder message
+      - Says "This is a placeholder that will integrate with Claude SDK"
+      
+      Requirements:
+      - Load checkpoint data (conversation history, task state)
+      - Resume Claude session with conversation context
+      - Continue execution from where it left off
+      - Handle case where checkpoint is stale/invalid
+    acceptance_criteria:
+      - bob run --resume <checkpoint_id> actually resumes execution
+      - Conversation history is restored to Claude
+      - Task continues from checkpoint state
+      - Handles invalid/missing checkpoints gracefully
+    priority: medium
+    depends_on: [F002-dependency-checker]
+    labels: [cli, checkpoints]
+
+  - id: F007-integration-tests-research
+    title: Add Integration Tests for Research (Real API)
+    description: |
+      Add real integration tests for the research functionality that
+      actually call the Perplexity API.
+      
+      Requirements:
+      - Create tests/integration/test_research_api.py
+      - Tests should be skipped if PERPLEXITY_API_KEY not set
+      - Test real research queries return meaningful results
+      - Test error handling for invalid queries
+      - Test rate limiting behavior
+      - Use pytest markers for integration tests
+      
+      Example test structure:
+      ```python
+      @pytest.mark.integration
+      @pytest.mark.skipif(not os.getenv("PERPLEXITY_API_KEY"), reason="No API key")
+      def test_real_perplexity_query():
+          ...
+      ```
+    acceptance_criteria:
+      - Tests exist in tests/integration/test_research_api.py
+      - Tests call real Perplexity API
+      - Tests are skipped gracefully when API key missing
+      - Tests verify actual research results are returned
+      - pytest -m integration runs only integration tests
+    priority: high
+    depends_on: [F001-research-controller]
+    labels: [testing, research]
+
+  - id: F008-integration-tests-orchestration
+    title: Add Integration Tests for Orchestration (Real Claude)
+    description: |
+      Add real integration tests for the orchestration engine that
+      actually run Claude for simple tasks.
+      
+      Requirements:
+      - Create tests/integration/test_orchestration_api.py
+      - Tests should be skipped if ANTHROPIC_API_KEY not set
+      - Test a simple task executes successfully with real Claude
+      - Test dependency ordering works correctly
+      - Test failure handling and escalation
+      - Keep tasks small to minimize API costs
+      
+      Example minimal test task:
+      - "Create a file called test.txt with content 'hello'"
+      - Verify file was created
+      - Clean up after test
+    acceptance_criteria:
+      - Tests exist in tests/integration/test_orchestration_api.py
+      - Tests run real Claude for simple tasks
+      - Tests verify actual task completion
+      - Tests clean up generated files
+      - Tests are marked with @pytest.mark.integration
+    priority: high
+    depends_on: [F002-dependency-checker, F003-task-decomposer]
+    labels: [testing, orchestration]

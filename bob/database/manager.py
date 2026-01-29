@@ -13,6 +13,7 @@ from typing import Any, Generator, Optional
 
 from bob.models.base import (
     AgentType,
+    ExpectedOutput,
     FailureType,
     ModelTier,
     Project,
@@ -273,6 +274,17 @@ class DatabaseManager:
         Returns:
             Task ID
         """
+        # Serialize expected_outputs to JSON
+        expected_outputs_json = json.dumps([
+            {
+                "path": o.path,
+                "min_lines": o.min_lines,
+                "must_contain": o.must_contain,
+                "must_not_contain": o.must_not_contain,
+            }
+            for o in task.expected_outputs
+        ])
+        
         with self.transaction() as conn:
             conn.execute(
                 """
@@ -282,8 +294,9 @@ class DatabaseManager:
                     labels, status, assigned_agent, current_model, attempts,
                     escalation_tier, failure_type, research_required,
                     research_complete, research_queries, research_findings, skip_reason,
+                    expected_outputs, verify_script,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (
                     task.id,
@@ -308,6 +321,8 @@ class DatabaseManager:
                     json.dumps(task.research_queries),
                     json.dumps(task.research_findings),
                     task.skip_reason,
+                    expected_outputs_json,
+                    task.verify_script,
                 ),
             )
         return task.id
@@ -908,6 +923,27 @@ class DatabaseManager:
         except (KeyError, IndexError):
             skip_reason = None
 
+        # Handle expected_outputs field (added in schema v5)
+        try:
+            expected_outputs_raw = json.loads(row["expected_outputs"])
+            expected_outputs = [
+                ExpectedOutput(
+                    path=o.get("path", ""),
+                    min_lines=o.get("min_lines", 0),
+                    must_contain=o.get("must_contain", []),
+                    must_not_contain=o.get("must_not_contain", []),
+                )
+                for o in expected_outputs_raw
+            ]
+        except (KeyError, IndexError, json.JSONDecodeError):
+            expected_outputs = []
+
+        # Handle verify_script field (added in schema v5)
+        try:
+            verify_script = row["verify_script"]
+        except (KeyError, IndexError):
+            verify_script = None
+
         return Task(
             id=row["id"],
             project_id=row["project_id"],
@@ -931,6 +967,8 @@ class DatabaseManager:
             research_queries=json.loads(row["research_queries"]),
             research_findings=json.loads(row["research_findings"]),
             skip_reason=skip_reason,
+            expected_outputs=expected_outputs,
+            verify_script=verify_script,
         )
 
     def _row_to_session(self, row: sqlite3.Row) -> Session:

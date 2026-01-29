@@ -59,12 +59,19 @@ def _build_task_prompt(task: Task, project) -> str:
         if task.research_queries:
             prompt_parts.append("Suggested research queries:")
             for query in task.research_queries:
+                # Handle case where query might be a dict
+                if isinstance(query, dict):
+                    query = str(query)
                 prompt_parts.append(f"- {query}")
         prompt_parts.append("")
     
     if task.research_findings:
         prompt_parts.append("## Research Findings")
-        prompt_parts.append(task.research_findings)
+        # Handle case where research_findings might be a dict
+        findings = task.research_findings
+        if isinstance(findings, dict):
+            findings = str(findings)
+        prompt_parts.append(findings)
         prompt_parts.append("")
     
     prompt_parts.extend([

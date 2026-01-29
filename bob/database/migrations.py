@@ -10,7 +10,7 @@ from typing import Optional
 
 
 # Current schema version
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:
@@ -127,6 +127,29 @@ def apply_migration_4(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def apply_migration_5(conn: sqlite3.Connection) -> None:
+    """Add expected_outputs and verify_script for Ralph Wiggum verification loop.
+
+    Args:
+        conn: Database connection
+    """
+    # Add expected_outputs column (JSON array of output specs)
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN expected_outputs TEXT NOT NULL DEFAULT '[]'")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
+    # Add verify_script column (optional bash script to verify task completion)
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN verify_script TEXT")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+
+    conn.commit()
+
+
 def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> None:
     """Apply database migrations.
 
@@ -181,6 +204,16 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
             conn.commit()
             print(f"✓ Migrated to schema version 4", file=sys.stderr)
             current_version = 4
+
+        if current_version < 5:
+            apply_migration_5(conn)
+            conn.execute(
+                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                (5, "Add expected_outputs and verify_script for task verification"),
+            )
+            conn.commit()
+            print(f"✓ Migrated to schema version 5", file=sys.stderr)
+            current_version = 5
 
         if current_version < target_version:
             print(f"✓ Database now at version {current_version}", file=sys.stderr)

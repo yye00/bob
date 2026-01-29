@@ -239,6 +239,18 @@ def sync(
     for task_spec in sync_result.added:
         task_id = f"task-{uuid.uuid4().hex[:8]}"
 
+        # Convert ExpectedOutputSpec to ExpectedOutput
+        from bob.models.base import ExpectedOutput
+        expected_outputs = [
+            ExpectedOutput(
+                path=o.path,
+                min_lines=o.min_lines,
+                must_contain=o.must_contain,
+                must_not_contain=o.must_not_contain,
+            )
+            for o in task_spec.expected_outputs
+        ]
+
         task = Task(
             id=task_id,
             project_id=project.id,
@@ -261,6 +273,8 @@ def sync(
             research_complete=False,  # Start as incomplete
             research_queries=task_spec.research_queries,
             research_findings={},
+            expected_outputs=expected_outputs,
+            verify_script=task_spec.verify_script,
         )
 
         try:

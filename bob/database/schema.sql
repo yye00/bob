@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     research_queries TEXT NOT NULL DEFAULT '[]',  -- JSON array
     research_findings TEXT NOT NULL DEFAULT '{}',  -- JSON object
     skip_reason TEXT,  -- Reason for skipping (NULL if not skipped)
+    expected_outputs TEXT NOT NULL DEFAULT '[]',  -- JSON array of output specs for verification
+    verify_script TEXT,  -- Optional bash script to verify task completion
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,

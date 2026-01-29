@@ -13,6 +13,7 @@ from typing import Any, Optional
 import yaml
 
 from bob.spec_sources.base import (
+    ExpectedOutputSpec,
     SpecSource,
     SpecSourceError,
     SyncResult,
@@ -376,6 +377,22 @@ class FileSpecSource(SpecSource):
                 title, description, steps
             )
 
+        # Parse expected_outputs for verification (Ralph Wiggum loop)
+        expected_outputs_raw = task_data.get("expected_outputs", [])
+        expected_outputs = []
+        for item in expected_outputs_raw:
+            if isinstance(item, str):
+                expected_outputs.append(ExpectedOutputSpec(path=item))
+            elif isinstance(item, dict):
+                expected_outputs.append(ExpectedOutputSpec(
+                    path=item.get("path", ""),
+                    min_lines=item.get("min_lines", 0),
+                    must_contain=item.get("must_contain", []),
+                    must_not_contain=item.get("must_not_contain", []),
+                ))
+        
+        verify_script = task_data.get("verify_script", None)
+
         # Store original task data in metadata
         metadata = {
             "source_file": str(self.file_path),
@@ -397,6 +414,8 @@ class FileSpecSource(SpecSource):
             metadata=metadata,
             spec_version=spec_version,
             deprecated=deprecated,
+            expected_outputs=expected_outputs,
+            verify_script=verify_script,
         )
 
     def _detect_research_needed(

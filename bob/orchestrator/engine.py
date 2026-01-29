@@ -312,7 +312,19 @@ class Orchestrator:
             success, error = await self._execute_with_client(client, prompt)
 
             if success:
-                # Task succeeded - record success in escalation controller
+                # Ralph Wiggum Loop: Verify outputs before claiming victory
+                from bob.orchestrator.verifier import verify_task_outputs
+                verified, verify_msg = verify_task_outputs(task, self.project_dir)
+                
+                if not verified:
+                    # Outputs not verified - treat as failure, retry
+                    print(f"\n🔍 Output verification failed for {task.spec_id}:")
+                    print(verify_msg)
+                    error_msg = f"Output verification failed: {verify_msg}"
+                    return await self._handle_failure(task, error_msg)
+                
+                # Outputs verified - record success
+                print(f"\n✅ Output verification passed for {task.spec_id}")
                 deps_met, deps_status = self._check_dependencies(task)
                 self.escalation.record_attempt(
                     task_id=task.id,
@@ -330,7 +342,27 @@ class Orchestrator:
         except Exception as e:
             # Unexpected error during execution
             error_msg = f"Unexpected error: {str(e)}"
-            return await self._handle_failure(task, error_msg)
+            try:
+                return await self._handle_failure(task, error_msg)
+            except Exception as inner_e:
+                # Last resort: if even _handle_failure throws, ensure we
+                # never leave a task stuck in IN_PROGRESS
+                print(f"\n❌ CRITICAL: _handle_failure also failed for {task.spec_id}: {inner_e}")
+                self.db.update_task(task.id, status=TaskStatus.FAILED)
+                return TaskStatus.FAILED, f"Double fault: {error_msg} / {inner_e}"
+        finally:
+            # SAFETY NET: Never leave a task stuck at IN_PROGRESS.
+            # If we reach this point and the task is still IN_PROGRESS,
+            # something went wrong — force it to FAILED so the runner
+            # doesn't spin forever.
+            try:
+                current = self.db.get_task(task.id)
+                if current and current.status == TaskStatus.IN_PROGRESS:
+                    print(f"\n⚠️  Safety net: Task {task.spec_id} still IN_PROGRESS after "
+                          f"execute_task() — forcing to FAILED")
+                    self.db.update_task(task.id, status=TaskStatus.FAILED)
+            except Exception:
+                pass  # Don't let safety net itself cause issues
 
     async def _execute_with_client(
         self,

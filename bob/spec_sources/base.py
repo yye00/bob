@@ -12,6 +12,15 @@ from typing import Any, Optional
 
 
 @dataclass
+class ExpectedOutputSpec:
+    """Specification for an expected output file."""
+    path: str
+    min_lines: int = 0
+    must_contain: list[str] = field(default_factory=list)
+    must_not_contain: list[str] = field(default_factory=list)
+
+
+@dataclass
 class TaskSpec:
     """Specification for a task from a spec source.
 
@@ -33,6 +42,9 @@ class TaskSpec:
     metadata: dict[str, Any] = field(default_factory=dict)  # Source-specific metadata
     spec_version: int = 1  # Version of the spec when this task was added/updated
     deprecated: bool = False  # If true, task is no longer active
+    # Output verification (Ralph Wiggum loop)
+    expected_outputs: list[ExpectedOutputSpec] = field(default_factory=list)
+    verify_script: Optional[str] = None
 
 
 @dataclass

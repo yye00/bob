@@ -73,14 +73,14 @@ class ClaudeExecutor:
         
         # Build the claude command
         # Using --dangerously-skip-permissions for autonomous operation
+        # MUST use --print (-p) for non-interactive mode (accepts piped input)
+        # --print DOES execute tools (Write, Bash, etc.) — it just outputs
+        # results as text instead of using the TUI.
         cmd = [
             "claude",
+            "-p",
             "--dangerously-skip-permissions",
         ]
-
-        # Add --print flag for non-interactive mode (disables TUI)
-        if self.non_interactive:
-            cmd.append("--print")
 
         cmd.append(prompt)
         
@@ -89,14 +89,37 @@ class ClaudeExecutor:
         env["ANTHROPIC_MODEL"] = self.model
         
         try:
-            # Start the process
-            self._process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.project_dir),
-                env=env,
-            )
+            # Use script(1) to provide a pseudo-TTY so Claude can access
+            # GNOME keyring / D-Bus for OAuth credentials.
+            # Without a PTY, Claude CLI cannot retrieve OAuth tokens from
+            # the system's secret service and silently fails.
+            import shutil
+            script_bin = shutil.which("script")
+            
+            if script_bin:
+                # script -q -e -c 'command' /dev/null provides a PTY wrapper.
+                # -e makes script return the exit code of the child process.
+                # We use shlex.quote for safe shell escaping of the prompt,
+                # which can contain arbitrary multi-line text with special chars.
+                import shlex
+                shell_cmd = "claude -p --dangerously-skip-permissions " + shlex.quote(prompt)
+                full_cmd = [script_bin, "-q", "-e", "-c", shell_cmd, "/dev/null"]
+                self._process = await asyncio.create_subprocess_exec(
+                    *full_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(self.project_dir),
+                    env=env,
+                )
+            else:
+                # Fallback: direct subprocess (may fail with OAuth)
+                self._process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(self.project_dir),
+                    env=env,
+                )
             
             # Collect output with timeout
             try:
@@ -121,9 +144,26 @@ class ClaudeExecutor:
             output = stdout.decode("utf-8", errors="replace")
             error_output = stderr.decode("utf-8", errors="replace")
             
+            # Strip script(1) artifacts from output (carriage returns, ANSI escapes)
+            import re
+            output = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', output)  # ANSI escapes
+            output = output.replace('\r\n', '\n').replace('\r', '')  # CR artifacts
+            
             # Determine success based on exit code
             # Claude Code returns 0 on success
             success = exit_code == 0
+            
+            # BUG FIX: If exit code is 0 but output is empty/whitespace,
+            # this is likely a silent auth failure (OAuth credentials
+            # inaccessible, Claude exits 0 via script(1) wrapper without
+            # producing any output). Treat as failure.
+            if success and not output.strip():
+                success = False
+                error_output = (error_output or "") + (
+                    "\nClaude CLI exited with code 0 but produced no output. "
+                    "This usually means OAuth authentication failed silently. "
+                    "Try running 'claude /login' in an interactive terminal."
+                )
             
             # Check for common failure patterns in output
             failure_patterns = [
