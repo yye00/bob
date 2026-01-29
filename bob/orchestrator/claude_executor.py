@@ -86,9 +86,9 @@ class ClaudeExecutor:
             "--dangerously-skip-permissions",
         ]
 
-        # Enable extended thinking for complex tasks
-        if self.enable_thinking:
-            cmd.extend(["--thinking-budget", str(self.thinking_budget)])
+        # Note: Extended thinking is enabled automatically when using Opus.
+        # Claude CLI does not have a --thinking-budget flag.
+        # Thinking is controlled by model choice, not a CLI flag.
 
         cmd.append(prompt)
         
