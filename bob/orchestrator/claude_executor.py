@@ -165,24 +165,27 @@ class ClaudeExecutor:
                     "Try running 'claude /login' in an interactive terminal."
                 )
             
-            # Check for common failure patterns in output
+            # Check for common failure patterns in output.
+            # If Claude exits 0 but output contains unhandled errors
+            # (no completion indicator), mark as failure.
             failure_patterns = [
-                "Error:",
-                "Failed to",
-                "Could not",
-                "Exception:",
                 "Traceback (most recent call last):",
+                "FATAL ERROR:",
+                "Unhandled exception:",
             ]
             
             if success:
                 for pattern in failure_patterns:
                     if pattern in output or pattern in error_output:
-                        # May have had errors but claude handled them
-                        # Check if there's a completion indicator
-                        if "✓" in output or "completed" in output.lower():
+                        # Check if Claude handled/recovered from the error
+                        if "✓" in output or "completed" in output.lower() or "successfully" in output.lower():
                             break
-                        # Otherwise might be a failure
-                        # success = False  # Don't override - trust exit code
+                        # Unrecovered error — mark as failure
+                        success = False
+                        error_output = (error_output or "") + (
+                            f"\nDetected unrecovered failure pattern in output: {pattern}"
+                        )
+                        break
             
             return ExecutionResult(
                 success=success,

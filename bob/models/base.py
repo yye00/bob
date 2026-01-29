@@ -31,6 +31,7 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
     DEPRECATED = "deprecated"
+    DECOMPOSED = "decomposed"
 
 
 class SessionStatus(str, Enum):

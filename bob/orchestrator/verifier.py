@@ -111,9 +111,16 @@ def verify_task_outputs(task: Task, workspace: Path) -> tuple[bool, str]:
     messages = []
     all_passed = True
     
-    # Skip verification if no outputs defined
+    # Warn when no verification criteria are defined.
+    # For critical/high priority tasks, this is a failure — specs MUST
+    # define expected_outputs or verify_script for important tasks.
     if not task.expected_outputs and not task.verify_script:
-        return True, "No verification criteria defined"
+        if task.priority in ("critical", "high"):
+            return False, (
+                f"No verification criteria defined for {task.priority}-priority task "
+                f"'{task.spec_id}'. Add expected_outputs or verify_script to the spec."
+            )
+        return True, "⚠️ No verification criteria defined — skipping verification"
     
     # Verify each expected output
     for output in task.expected_outputs:

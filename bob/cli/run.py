@@ -346,24 +346,26 @@ def _run_parallel(
     project = db.get_project(project_id)
     project_dir = Path(project.workspace_dir)
 
-    # Create orchestrator config
-    config = OrchestratorConfig(
-        default_model=model or "claude-sonnet-4-20250514",
-        non_interactive=True,  # Parallel execution is always non-interactive
-    )
-
-    # Create orchestrator
-    orchestrator = create_orchestrator(
-        db_manager=db,
-        project_id=project_id,
-        project_dir=project_dir,
-        config=config,
-    )
-
     def real_executor(task: Task) -> dict:
-        """Execute task with real Claude."""
+        """Execute task with real Claude.
+        
+        Each thread gets its own Orchestrator instance to avoid
+        race conditions on shared mutable state (current_model,
+        current_task, etc.).
+        """
+        # Create a per-thread orchestrator — NOT shared across threads
+        thread_config = OrchestratorConfig(
+            default_model=model or "claude-sonnet-4-20250514",
+            non_interactive=True,
+        )
+        thread_orchestrator = create_orchestrator(
+            db_manager=db,
+            project_id=project_id,
+            project_dir=project_dir,
+            config=thread_config,
+        )
         prompt = _build_task_prompt(task, project)
-        status, error = asyncio.run(orchestrator.execute_task(task, prompt))
+        status, error = asyncio.run(thread_orchestrator.execute_task(task, prompt))
         return {
             "task_id": task.id,
             "spec_id": task.spec_id,

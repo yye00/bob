@@ -414,13 +414,18 @@ class Orchestrator:
         Returns:
             Tuple of (final_status, error_message)
         """
-        # Build error history from task state for classification
-        error_history = [{
+        # Build FULL error history from stored state + current error.
+        # Previous code only passed a single-element list, so
+        # check_repeated_errors (threshold=2) could never trigger.
+        stored_history = task.research_findings.get("error_history", [])
+        current_error = {
             "timestamp": datetime.now().isoformat(),
             "model": self.current_model,
-            "error": error,
+            "error_msg": error,  # Key must be "error_msg" for classifier
+            "error": error,      # Keep both for compatibility
             "attempt": task.attempts,
-        }]
+        }
+        error_history = stored_history + [current_error]
 
         # Check dependencies
         deps_met, deps_status = self._check_dependencies(task)
@@ -516,6 +521,60 @@ class Orchestrator:
             # If decomposition fails or disabled, request user help
             self.db.update_task(task.id, status=TaskStatus.FAILED)
             return TaskStatus.FAILED, "Decomposition needed but unavailable"
+
+        elif action == EscalationAction.DIAGNOSE:
+            # Run root cause analysis after Opus exhausts retries
+            print(f"\n🔬 Running diagnosis for {task.spec_id}...")
+            # Classify the failure using full error history
+            error_history = task.research_findings.get("error_history", [])
+            deps_met, deps_status = self._check_dependencies(task)
+            from bob.orchestrator.failure_classifier import classify_failure
+            diagnosis = classify_failure(
+                task=task,
+                error_history=error_history,
+                deps_status=deps_status,
+            )
+            # Record the diagnosis result
+            self.escalation.record_diagnosis(
+                task.id,
+                failure_type=diagnosis.failure_type,
+                research_queries=diagnosis.research_queries if diagnosis.research_queries else None,
+            )
+            print(f"   Diagnosis: {diagnosis.failure_type.value} "
+                  f"(confidence: {diagnosis.confidence:.0%})")
+            print(f"   Reason: {diagnosis.reason}")
+            # Re-evaluate now that diagnosis is recorded — this will call
+            # _get_post_diagnosis_action which routes to DECOMPOSE/RESEARCH/etc.
+            post_action, post_context = self.escalation.get_next_action(
+                task_id=task.id, deps_met=deps_met,
+            )
+            if post_action != EscalationAction.DIAGNOSE:
+                # Recurse into the post-diagnosis action
+                return await self._execute_escalation_action(task, post_action, classification)
+            # If still DIAGNOSE (shouldn't happen), fall through to REQUEST_USER
+            self.db.update_task(task.id, status=TaskStatus.BLOCKED)
+            return TaskStatus.BLOCKED, f"Diagnosed as {diagnosis.failure_type.value}, needs user help"
+
+        elif action == EscalationAction.RESTRUCTURE:
+            # Bad assumptions detected — needs research and restructure
+            print(f"\n🔄 Restructuring {task.spec_id} — bad assumptions detected")
+            self.db.update_task(
+                task.id,
+                research_required=True,
+                research_complete=False,
+                status=TaskStatus.PENDING,
+            )
+            return TaskStatus.PENDING, "Needs restructure via research (bad assumptions)"
+
+        elif action == EscalationAction.SKIP:
+            # Dependencies not met or task already decomposed — don't change status
+            print(f"\n⏭️  Skipping {task.spec_id} — {classification.reason if hasattr(classification, 'reason') else 'deps not met or decomposed'}")
+            # Don't mark as FAILED — leave current status intact
+            current = self.db.get_task(task.id)
+            if current and current.status == TaskStatus.IN_PROGRESS:
+                # If still in_progress, move back to pending
+                self.db.update_task(task.id, status=TaskStatus.PENDING)
+            return current.status if current else TaskStatus.PENDING, "Skipped"
 
         elif action == EscalationAction.REQUEST_USER:
             # Needs user intervention

@@ -362,9 +362,11 @@ class TaskQueue:
             exec_result = executor_func(task)
 
             # Update session as completed
-            session.ended_at = datetime.now()
-            session.status = SessionStatus.COMPLETED
-            self.db_manager.update_session(session)
+            self.db_manager.update_session(
+                session_id=session_id,
+                status=SessionStatus.COMPLETED,
+                ended_at=datetime.now(),
+            )
 
             # Return result
             return {
@@ -381,9 +383,11 @@ class TaskQueue:
             # Handle task-level exceptions
             # Update session as failed if it was created
             try:
-                session.ended_at = datetime.now()
-                session.status = SessionStatus.FAILED
-                self.db_manager.update_session(session)
+                self.db_manager.update_session(
+                    session_id=session_id,
+                    status=SessionStatus.FAILED,
+                    ended_at=datetime.now(),
+                )
             except Exception:
                 pass  # Session may not have been created
 

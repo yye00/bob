@@ -611,14 +611,23 @@ def retry(
     # Note: We allow retrying any task (pending, failed, completed, etc.)
     # This provides flexibility for users
 
-    # Update task in database
-    # Note: Cannot clear failure_type (None means "don't update")
+    # Fully reset task state for a real retry.
+    # Use escalation controller's reset_task() which handles clearing
+    # attempts, failure_type (via raw SQL for NULL), error_history,
+    # diagnosis state, and decomposition flags.
+    from bob.orchestrator.escalation import EscalationController
+    escalation = EscalationController(db, project_id)
+    escalation.reset_task(task.id)
+
+    # Set status to PENDING (reset_task doesn't change status)
     update_kwargs = {
         "task_id": task.id,
         "status": TaskStatus.PENDING,
     }
-    if reset_escalation:
-        update_kwargs["escalation_tier"] = ModelTier.TIER1
+    if not reset_escalation:
+        # Preserve current escalation tier unless --reset-escalation
+        update_kwargs["escalation_tier"] = task.escalation_tier
+        update_kwargs["current_model"] = task.current_model
 
     db.update_task(**update_kwargs)
 

@@ -418,19 +418,22 @@ class DatabaseManager:
             )
             return [self._row_to_task(row) for row in cursor.fetchall()]
 
+    # Sentinel value to distinguish "not provided" from "set to None/NULL"
+    _UNSET = object()
+
     def update_task(
         self,
         task_id: str,
-        status: Optional[TaskStatus] = None,
-        assigned_agent: Optional[AgentType] = None,
-        current_model: Optional[str] = None,
-        escalation_tier: Optional[ModelTier] = None,
-        failure_type: Optional[FailureType] = None,
-        research_required: Optional[bool] = None,
-        research_complete: Optional[bool] = None,
-        research_findings: Optional[dict[str, Any]] = None,
-        attempts: Optional[int] = None,
-        skip_reason: Optional[str] = None,
+        status: Optional[TaskStatus] = _UNSET,
+        assigned_agent: Optional[AgentType] = _UNSET,
+        current_model: Optional[str] = _UNSET,
+        escalation_tier: Optional[ModelTier] = _UNSET,
+        failure_type: Optional[FailureType] = _UNSET,
+        research_required: Optional[bool] = _UNSET,
+        research_complete: Optional[bool] = _UNSET,
+        research_findings: Optional[dict[str, Any]] = _UNSET,
+        attempts: Optional[int] = _UNSET,
+        skip_reason: Optional[str] = _UNSET,
     ) -> bool:
         """Update task fields.
 
@@ -450,37 +453,39 @@ class DatabaseManager:
         Returns:
             True if task was updated, False if not found
         """
+        _U = self._UNSET
         updates = []
         params = []
 
-        if status is not None:
+        if status is not _U:
             updates.append("status = ?")
-            params.append(status.value)
-        if assigned_agent is not None:
+            params.append(status.value if status else None)
+        if assigned_agent is not _U:
             updates.append("assigned_agent = ?")
-            params.append(assigned_agent.value)
-        if current_model is not None:
+            params.append(assigned_agent.value if assigned_agent else None)
+        if current_model is not _U:
             updates.append("current_model = ?")
             params.append(current_model)
-        if escalation_tier is not None:
+        if escalation_tier is not _U:
             updates.append("escalation_tier = ?")
-            params.append(escalation_tier.value)
-        if failure_type is not None:
+            params.append(escalation_tier.value if escalation_tier else None)
+        if failure_type is not _U:
+            # Now supports clearing to NULL: update_task(id, failure_type=None)
             updates.append("failure_type = ?")
-            params.append(failure_type.value)
-        if research_required is not None:
+            params.append(failure_type.value if failure_type else None)
+        if research_required is not _U:
             updates.append("research_required = ?")
             params.append(1 if research_required else 0)
-        if research_complete is not None:
+        if research_complete is not _U:
             updates.append("research_complete = ?")
             params.append(1 if research_complete else 0)
-        if research_findings is not None:
+        if research_findings is not _U:
             updates.append("research_findings = ?")
-            params.append(json.dumps(research_findings))
-        if attempts is not None:
+            params.append(json.dumps(research_findings) if research_findings is not None else None)
+        if attempts is not _U:
             updates.append("attempts = ?")
             params.append(attempts)
-        if skip_reason is not None:
+        if skip_reason is not _U:
             updates.append("skip_reason = ?")
             params.append(skip_reason)
 

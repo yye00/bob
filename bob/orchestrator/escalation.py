@@ -84,10 +84,16 @@ class EscalationController:
         error_history = task.research_findings.get("error_history", [])
 
         if success:
-            # Reset escalation state on success
-            # Clear error history on success
+            # Reset escalation state on success, but ARCHIVE error history
+            # for post-mortem debugging instead of deleting it.
             research_findings = task.research_findings.copy()
+            current_history = research_findings.get("error_history", [])
+            if current_history:
+                archived = research_findings.get("archived_error_history", [])
+                archived.extend(current_history)
+                research_findings["archived_error_history"] = archived
             research_findings["error_history"] = []
+            research_findings["completed_after_attempts"] = task.attempts + 1
 
             # Use direct SQL to set failure_type to NULL
             import json
