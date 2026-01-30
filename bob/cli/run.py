@@ -489,7 +489,11 @@ def _run_parallel(
             config=thread_config,
         )
         prompt = _build_task_prompt(task, project)
-        status, error = asyncio.run(thread_orchestrator.execute_task(task, prompt))
+        thread_orchestrator.telemetry.start_run()
+        try:
+            status, error = asyncio.run(thread_orchestrator.execute_task(task, prompt))
+        finally:
+            thread_orchestrator.telemetry.end_run()
         return {
             "task_id": task.id,
             "spec_id": task.spec_id,
@@ -691,9 +695,13 @@ def _run_single_task(
         console.print(f"[cyan]Executing with Claude...[/cyan]")
         console.print()
 
-    # Execute task with orchestrator
-    final_status, error_msg = asyncio.run(orchestrator.execute_task(task, prompt))
-    
+    # Execute task with orchestrator (with run-level telemetry)
+    orchestrator.telemetry.start_run()
+    try:
+        final_status, error_msg = asyncio.run(orchestrator.execute_task(task, prompt))
+    finally:
+        orchestrator.telemetry.end_run()
+
     if json_output:
         click.echo(json.dumps({
             "status": final_status.value,

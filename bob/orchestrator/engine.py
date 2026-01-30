@@ -34,6 +34,7 @@ from bob.orchestrator.failure_classifier import classify_failure, Classification
 from bob.orchestrator.task_decomposer import TaskDecomposer
 from bob.orchestrator.research_controller import ResearchController
 from bob.observability.cost_tracker import CostTracker
+from bob.observability.logger import EventType, LogContext, create_logger
 from bob.observability.telemetry import RunTelemetry
 from bob.orchestrator.debug_journal import DebugJournal
 from bob.config import ConfigManager
@@ -131,6 +132,10 @@ class Orchestrator:
 
         # Initialize telemetry
         self.telemetry = RunTelemetry(workspace=project_dir)
+
+        # Initialize structured logger (JSON logs → .bob/logs/)
+        self.logger = create_logger("orchestrator", project_workspace=Path(project_dir))
+        self.logger.set_context(project_id=project_id)
 
         # Initialize debug journal (MemGPT-style on-disk debug history)
         self.debug_journal = DebugJournal(project_dir)
@@ -292,12 +297,18 @@ class Orchestrator:
             error_message is None if successful
         """
         self.current_task = task
+        self.logger.set_context(task_id=task.id, model=self.current_model)
 
         # Start telemetry for this task
         self.telemetry.start_task_attempt(
             task_id=task.id,
             spec_id=task.spec_id,
             title=task.title,
+            model=self.current_model,
+        )
+        self.logger.info(
+            f"Starting task {task.spec_id}: {task.title}",
+            event_type=EventType.TASK_STARTED,
             model=self.current_model,
         )
 
@@ -346,6 +357,16 @@ class Orchestrator:
                 verified, verify_msg = verify_task_outputs(task, self.project_dir)
 
                 self.telemetry.record_verification(task.id, verified, verify_msg)
+                if verified:
+                    self.logger.info(
+                        f"Verification passed for {task.spec_id}",
+                        event_type=EventType.VERIFICATION_PASSED,
+                    )
+                else:
+                    self.logger.warning(
+                        f"Verification failed for {task.spec_id}: {verify_msg[:200]}",
+                        event_type=EventType.VERIFICATION_FAILED,
+                    )
 
                 if not verified:
                     # === MULTI-DEBUG LOOP (MemGPT-style) ===
@@ -358,6 +379,11 @@ class Orchestrator:
                     print(f"\n🔍 Verification failed for {task.spec_id}:")
                     print(verify_msg)
                     print(f"\n🐛 Entering debug mode (up to {max_debug} attempts)...")
+                    self.logger.info(
+                        f"Entering debug mode for {task.spec_id} (up to {max_debug} attempts)",
+                        event_type=EventType.DEBUG_MODE_ENTERED,
+                        max_debug_attempts=max_debug,
+                    )
 
                     # Record first failure to journal
                     self.debug_journal.record_attempt(
@@ -396,6 +422,11 @@ class Orchestrator:
 
                             if verified2:
                                 print(f"\n✅ Debug fix worked on attempt {debug_attempt + 1}! Verification passed for {task.spec_id}")
+                                self.logger.info(
+                                    f"Debug fix worked on attempt {debug_attempt + 1} for {task.spec_id}",
+                                    event_type=EventType.DEBUG_MODE_SUCCEEDED,
+                                    debug_attempt=debug_attempt + 1,
+                                )
                                 self.debug_journal.record_success(task.spec_id, debug_attempt + 1)
                                 self.telemetry.record_debug(task.id, debug_attempt + 1, success=True)
                                 self.telemetry.end_task_attempt(task.id, success=True)
@@ -459,6 +490,10 @@ class Orchestrator:
 
                 # Outputs verified on first try - record success
                 print(f"\n✅ Verification passed for {task.spec_id}")
+                self.logger.info(
+                    f"Task {task.spec_id} completed successfully (first try)",
+                    event_type=EventType.TASK_COMPLETED,
+                )
                 deps_met, deps_status = self._check_dependencies(task)
                 self.escalation.record_attempt(
                     task_id=task.id,
@@ -481,6 +516,11 @@ class Orchestrator:
         except Exception as e:
             # Unexpected error during execution
             error_msg = f"Unexpected error: {str(e)}"
+            self.logger.error(
+                f"Task {task.spec_id} failed with unexpected error: {e}",
+                event_type=EventType.TASK_FAILED,
+                exc_info=True,
+            )
             self.telemetry.end_task_attempt(task.id, success=False, error_message=error_msg)
             try:
                 self.telemetry.set_task_final_status(task.id, "failed")
@@ -664,7 +704,53 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
             thinking_budget=self.config.thinking_budget,
             stall_timeout=self.config.stall_timeout,
         )
-        
+
+        # Record stall detection if it occurred
+        if result.exit_code == -2 and self.current_task:
+            self.telemetry.record_stall(
+                task_id=self.current_task.id,
+                stall_duration_seconds=self.config.stall_timeout,
+            )
+            self.logger.warning(
+                f"Stall detected for {self.current_task.spec_id}: "
+                f"no file modifications for {self.config.stall_timeout}s",
+                event_type=EventType.STALL_DETECTED,
+                stall_timeout=self.config.stall_timeout,
+            )
+
+        # Record token usage in telemetry
+        if result.token_usage and self.current_task:
+            self.logger.info(
+                f"Token usage for {self.current_task.spec_id}: "
+                f"in={result.token_usage.input_tokens}, "
+                f"out={result.token_usage.output_tokens}, "
+                f"cache_read={result.token_usage.cache_read_tokens}, "
+                f"cache_write={result.token_usage.cache_write_tokens}",
+                input_tokens=result.token_usage.input_tokens,
+                output_tokens=result.token_usage.output_tokens,
+                cache_read_tokens=result.token_usage.cache_read_tokens,
+                cache_write_tokens=result.token_usage.cache_write_tokens,
+                cost_usd=result.cost_usd,
+                model_used=result.model_used,
+            )
+            # Feed into cost tracker if we have a session
+            if self.session_id:
+                try:
+                    from bob.observability.cost_tracker import TokenUsage
+                    usage = TokenUsage(
+                        input_tokens=result.token_usage.input_tokens,
+                        output_tokens=result.token_usage.output_tokens,
+                        cache_read_tokens=result.token_usage.cache_read_tokens,
+                        cache_write_tokens=result.token_usage.cache_write_tokens,
+                    )
+                    self.cost_tracker.track_session(
+                        session_id=self.session_id,
+                        model=result.model_used or self.current_model,
+                        usage=usage,
+                    )
+                except Exception:
+                    pass  # Cost tracking should never crash execution
+
         if result.success:
             return True, None
         else:
@@ -742,6 +828,13 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
                 action = EscalationAction.CONTINUE
 
         # Execute escalation action
+        self.logger.info(
+            f"Escalation action for {task.spec_id}: {action.value}",
+            event_type=EventType.ESCALATION_TRIGGERED,
+            action=action.value,
+            failure_type=classification.failure_type.value if classification.failure_type else None,
+            attempts=task.attempts,
+        )
         return await self._execute_escalation_action(task, action, classification)
 
     async def _execute_escalation_action(

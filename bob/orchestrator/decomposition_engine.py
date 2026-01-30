@@ -34,6 +34,8 @@ from bob.orchestrator.work_unit import (
     ConfidenceScore,
 )
 from bob.orchestrator.decomposer import Decomposer
+from bob.observability.logger import EventType, create_logger
+from bob.observability.telemetry import RunTelemetry
 
 
 class DecompositionEngine:
@@ -73,6 +75,12 @@ class DecompositionEngine:
         self.tree: dict[str, WorkUnit] = {}
         self.history: list[dict[str, Any]] = []
         self._start_time: float = 0
+
+        # Observability
+        self.logger = create_logger("decomposition", project_workspace=output_dir)
+        self.telemetry: Optional[RunTelemetry] = None
+        if output_dir:
+            self.telemetry = RunTelemetry(workspace=output_dir)
 
     def register(self, kind: WorkUnitKind, decomposer: Decomposer) -> None:
         """Register a decomposer for a work unit kind."""
@@ -255,9 +263,22 @@ class DecompositionEngine:
         self.tree.clear()
         self.history.clear()
 
+        # Start telemetry run
+        if self.telemetry:
+            self.telemetry.start_run()
+
         # Register initial units
         for unit in initial_units:
             self.tree[unit.id] = unit
+
+        self.logger.info(
+            f"Decomposition engine started: {len(initial_units)} initial units, "
+            f"threshold={self.threshold}, budget={self.context_budget_pct:.0%}",
+            event_type=EventType.DECOMPOSITION_STARTED,
+            initial_units=len(initial_units),
+            threshold=self.threshold,
+            context_budget_pct=self.context_budget_pct,
+        )
 
         print(f"\n{'=' * 60}")
         print(f"  DECOMPOSITION ENGINE")
@@ -278,18 +299,32 @@ class DecompositionEngine:
         done = sum(1 for u in self.tree.values() if u.status == WorkUnitStatus.DONE)
         failed = sum(1 for u in self.tree.values() if u.status == WorkUnitStatus.FAILED)
         total = len(self.tree)
+        max_depth = max((u.depth for u in self.tree.values()), default=0)
+
+        self.logger.info(
+            f"Decomposition engine complete: {total} units "
+            f"({done} done, {failed} failed) in {elapsed:.1f}s",
+            event_type=EventType.DECOMPOSITION_COMPLETED,
+            total_units=total,
+            done=done,
+            failed=failed,
+            elapsed_s=round(elapsed, 1),
+            max_depth=max_depth,
+        )
 
         print(f"\n{'=' * 60}")
         print(f"  ENGINE COMPLETE")
         print(f"{'=' * 60}")
         print(f"  Total units: {total} ({done} done, {failed} failed)")
         print(f"  Elapsed: {elapsed:.1f}s")
-        print(f"  Decomposition depth: max {max((u.depth for u in self.tree.values()), default=0)}")
+        print(f"  Decomposition depth: max {max_depth}")
         print()
 
-        # Persist history
+        # Persist history and end telemetry
         if self.output_dir:
             self._save_history()
+        if self.telemetry:
+            self.telemetry.end_run()
 
         return self.tree
 
