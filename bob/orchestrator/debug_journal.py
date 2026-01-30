@@ -15,6 +15,7 @@ debug history through its file-read tools.
 
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -37,6 +38,16 @@ class DebugJournal:
         self.project_dir = Path(project_dir)
         self.debug_dir = self.project_dir / ".bob" / "debug"
         self.debug_dir.mkdir(parents=True, exist_ok=True)
+        # Per-task locks for concurrent access (parallel execution)
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_lock = threading.Lock()  # Protects _locks dict itself
+
+    def _get_lock(self, spec_id: str) -> threading.Lock:
+        """Get or create a lock for a specific task's journal."""
+        with self._locks_lock:
+            if spec_id not in self._locks:
+                self._locks[spec_id] = threading.Lock()
+            return self._locks[spec_id]
     
     def journal_path(self, spec_id: str) -> Path:
         """Get the path to a task's debug journal."""
@@ -68,6 +79,8 @@ class DebugJournal:
     ) -> None:
         """Record a debug attempt in the journal.
         
+        Thread-safe: uses per-task locks for parallel execution.
+        
         Args:
             spec_id: Task spec ID
             task_title: Human-readable task title
@@ -84,9 +97,11 @@ class DebugJournal:
         if not error_summary:
             error_summary = self._auto_summarize_error(verification_error)
         
-        # Create or append to journal
-        if not path.exists():
-            header = f"""# Debug Journal: {task_title} ({spec_id})
+        lock = self._get_lock(spec_id)
+        with lock:
+            # Create or append to journal
+            if not path.exists():
+                header = f"""# Debug Journal: {task_title} ({spec_id})
 
 Created: {timestamp}
 Status: IN PROGRESS
@@ -94,24 +109,24 @@ Status: IN PROGRESS
 ---
 
 """
-            path.write_text(header)
-        
-        # Build attempt entry
-        entry = f"""## Debug Attempt {attempt_number} — {timestamp}
+                path.write_text(header)
+            
+            # Build attempt entry
+            entry = f"""## Debug Attempt {attempt_number} — {timestamp}
 
 **Summary:** {error_summary}
 
 """
-        if approach_taken:
-            entry += f"**Approach:** {approach_taken}\n\n"
-        
-        if files_modified:
-            entry += "**Files modified:**\n"
-            for f in files_modified:
-                entry += f"- `{f}`\n"
-            entry += "\n"
-        
-        entry += f"""**Verification error (full):**
+            if approach_taken:
+                entry += f"**Approach:** {approach_taken}\n\n"
+            
+            if files_modified:
+                entry += "**Files modified:**\n"
+                for f in files_modified:
+                    entry += f"- `{f}`\n"
+                entry += "\n"
+            
+            entry += f"""**Verification error (full):**
 ```
 {verification_error.strip()}
 ```
@@ -119,30 +134,32 @@ Status: IN PROGRESS
 ---
 
 """
-        
-        # Append to journal
-        with open(path, "a") as f:
-            f.write(entry)
+            
+            # Append to journal
+            with open(path, "a") as f:
+                f.write(entry)
     
     def record_success(self, spec_id: str, attempt_number: int) -> None:
-        """Record that debugging succeeded."""
+        """Record that debugging succeeded. Thread-safe."""
         path = self.journal_path(spec_id)
         if not path.exists():
             return
         
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Update status in header
-        content = path.read_text()
-        content = content.replace("Status: IN PROGRESS", f"Status: RESOLVED (attempt {attempt_number})")
-        
-        # Append success entry
-        content += f"""## ✅ RESOLVED — {timestamp}
+        lock = self._get_lock(spec_id)
+        with lock:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Update status in header
+            content = path.read_text()
+            content = content.replace("Status: IN PROGRESS", f"Status: RESOLVED (attempt {attempt_number})")
+            
+            # Append success entry
+            content += f"""## ✅ RESOLVED — {timestamp}
 
 Task passed verification after {attempt_number} debug attempt(s).
 
 """
-        path.write_text(content)
+            path.write_text(content)
     
     def get_compact_summary(self, spec_id: str, max_attempts: int = 10) -> str:
         """Get a compact summary of debug history for prompt injection.
@@ -196,10 +213,12 @@ Task passed verification after {attempt_number} debug attempt(s).
         return path.read_text()
     
     def clear_journal(self, spec_id: str) -> None:
-        """Remove a task's debug journal (e.g., on task reset)."""
-        path = self.journal_path(spec_id)
-        if path.exists():
-            path.unlink()
+        """Remove a specific task's debug journal. Thread-safe."""
+        lock = self._get_lock(spec_id)
+        with lock:
+            path = self.journal_path(spec_id)
+            if path.exists():
+                path.unlink()
     
     def list_journals(self) -> list[dict]:
         """List all debug journals with basic info."""
@@ -220,25 +239,51 @@ Task passed verification after {attempt_number} debug attempt(s).
         return journals
 
     def cleanup_resolved(self) -> list[str]:
-        """Remove journals for tasks that were resolved.
+        """Remove journals for tasks that were resolved. Thread-safe.
+        
+        Uses per-task locks so parallel tasks can't have their journals
+        deleted mid-write. Only deletes journals marked RESOLVED.
         
         Returns list of spec_ids that were cleaned up.
         """
         cleaned = []
-        for path in self.debug_dir.glob("*.md"):
-            content = path.read_text()
-            if "RESOLVED" in content:
-                spec_id = path.stem
-                path.unlink()
-                cleaned.append(spec_id)
+        # Snapshot the list first, then lock-per-task to delete
+        paths = list(self.debug_dir.glob("*.md"))
+        for path in paths:
+            spec_id = path.stem
+            lock = self._get_lock(spec_id)
+            with lock:
+                if path.exists():
+                    try:
+                        content = path.read_text()
+                        if "RESOLVED" in content:
+                            path.unlink()
+                            cleaned.append(spec_id)
+                    except (OSError, IOError):
+                        pass  # File may have been deleted by another thread
         return cleaned
 
     def cleanup_all(self) -> int:
-        """Remove all debug journals. Returns count of files removed."""
+        """Remove all debug journals. Thread-safe.
+        
+        WARNING: Only use when no tasks are actively running.
+        Uses per-task locks but can't prevent a new journal from being
+        created after deletion.
+        
+        Returns count of files removed.
+        """
         count = 0
-        for path in self.debug_dir.glob("*.md"):
-            path.unlink()
-            count += 1
+        paths = list(self.debug_dir.glob("*.md"))
+        for path in paths:
+            spec_id = path.stem
+            lock = self._get_lock(spec_id)
+            with lock:
+                if path.exists():
+                    try:
+                        path.unlink()
+                        count += 1
+                    except (OSError, IOError):
+                        pass
         return count
 
     def total_size_kb(self) -> float:

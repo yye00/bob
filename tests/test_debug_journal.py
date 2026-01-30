@@ -183,3 +183,94 @@ class TestTruncate:
 
     def test_exact_length(self):
         assert _truncate("hello", 5) == "hello"
+
+
+class TestDebugJournalConcurrency:
+    """Test thread safety for parallel task execution."""
+
+    def test_concurrent_writes_different_tasks(self, tmp_path):
+        """Parallel tasks write to different journals without interference."""
+        import threading
+
+        journal = DebugJournal(tmp_path)
+        errors = []
+
+        def write_task(task_id):
+            try:
+                for i in range(5):
+                    journal.record_attempt(
+                        spec_id=task_id,
+                        task_title=f"Task {task_id}",
+                        attempt_number=i + 1,
+                        verification_error=f"Error {i} for {task_id}",
+                    )
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=write_task, args=(f"D{i:03d}",)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Errors during concurrent writes: {errors}"
+
+        # Each task should have exactly 5 attempts
+        for i in range(10):
+            assert journal.get_attempt_count(f"D{i:03d}") == 5
+
+    def test_concurrent_write_and_cleanup(self, tmp_path):
+        """Cleanup doesn't delete a journal that's being written to."""
+        import threading
+        import time
+
+        journal = DebugJournal(tmp_path)
+
+        # Create a resolved journal and an in-progress one
+        journal.record_attempt("DONE", "Done Task", 1, "error")
+        journal.record_success("DONE", 1)
+        journal.record_attempt("ACTIVE", "Active Task", 1, "error")
+
+        errors = []
+
+        def keep_writing():
+            try:
+                for i in range(10):
+                    journal.record_attempt("ACTIVE", "Active Task", i + 2, f"Error {i}")
+                    time.sleep(0.01)
+            except Exception as e:
+                errors.append(e)
+
+        def do_cleanup():
+            try:
+                time.sleep(0.02)  # Let writing start
+                journal.cleanup_resolved()
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=keep_writing)
+        t2 = threading.Thread(target=do_cleanup)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert not errors
+        # DONE should be cleaned up, ACTIVE should survive
+        assert not journal.has_journal("DONE")
+        assert journal.has_journal("ACTIVE")
+        assert journal.get_attempt_count("ACTIVE") >= 10  # At least initial + 10 more
+
+    def test_clear_specific_task_only(self, tmp_path):
+        """clear_journal only removes the targeted task."""
+        journal = DebugJournal(tmp_path)
+
+        journal.record_attempt("D001", "MPS", 1, "error A")
+        journal.record_attempt("D002", "MPO", 1, "error B")
+        journal.record_attempt("D003", "Optimizer", 1, "error C")
+
+        journal.clear_journal("D002")
+
+        assert journal.has_journal("D001")
+        assert not journal.has_journal("D002")
+        assert journal.has_journal("D003")
