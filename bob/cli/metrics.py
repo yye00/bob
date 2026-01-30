@@ -45,7 +45,7 @@ def _format_duration(seconds: float) -> str:
         return f"{hours}h {mins}m"
 
 
-@click.command("metrics")
+@click.group("metrics", invoke_without_command=True)
 @click.option(
     "--run",
     "run_id",
@@ -82,6 +82,10 @@ def metrics(
       bob metrics --task F001         # Show task history across runs
       bob metrics --json              # JSON output
     """
+    # If a subcommand was invoked, don't run the default metrics display
+    if ctx.invoked_subcommand is not None:
+        return
+
     global_ctx = ctx.obj
 
     if global_ctx and global_ctx.json_output:
