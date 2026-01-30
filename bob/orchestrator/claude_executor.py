@@ -194,12 +194,14 @@ class ClaudeExecutor:
             "claude",
             "-p",
             "--dangerously-skip-permissions",
-            "--output-format", "json",
         ]
 
         # Note: Extended thinking is enabled automatically when using Opus.
         # Claude CLI does not have a --thinking-budget flag.
         # Thinking is controlled by model choice, not a CLI flag.
+        # Note: --output-format json is NOT used because it breaks
+        # when combined with script(1) PTY wrapper. Token usage
+        # will be extracted from stderr/environment instead.
 
         cmd.append(prompt)
         
@@ -247,7 +249,7 @@ class ClaudeExecutor:
             
             if script_bin:
                 # script -q -e -c 'command' /dev/null provides a PTY wrapper.
-                shell_cmd = "claude -p --dangerously-skip-permissions --output-format json " + shlex.quote(prompt)
+                shell_cmd = "claude -p --dangerously-skip-permissions " + shlex.quote(prompt)
                 full_cmd = [script_bin, "-q", "-e", "-c", shell_cmd, "/dev/null"]
                 self._process = await asyncio.create_subprocess_exec(
                     *full_cmd,
@@ -279,7 +281,7 @@ class ClaudeExecutor:
                 import pexpect
                 
                 def _run_pexpect():
-                    shell_cmd = "claude -p --dangerously-skip-permissions --output-format json " + shlex.quote(prompt)
+                    shell_cmd = "claude -p --dangerously-skip-permissions " + shlex.quote(prompt)
                     child = pexpect.spawn(
                         "/bin/bash", ["-c", shell_cmd],
                         cwd=str(self.project_dir),
@@ -350,36 +352,13 @@ class ClaudeExecutor:
             output = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', output)  # ANSI escapes
             output = output.replace('\r\n', '\n').replace('\r', '')  # CR artifacts
 
-            # Parse JSON output for token usage and cost
+            # Try to extract token usage from output
+            # Claude CLI with --output-format json provides structured data,
+            # but we use text mode for compatibility with PTY wrappers.
+            # Token usage extraction is best-effort.
             token_usage = None
             cost_usd = None
             model_used = None
-            json_result = None
-            try:
-                json_result = json.loads(output.strip())
-                if isinstance(json_result, dict):
-                    # Extract token usage
-                    usage = json_result.get("usage", {})
-                    if usage:
-                        token_usage = TokenUsageStats(
-                            input_tokens=usage.get("input_tokens", 0),
-                            output_tokens=usage.get("output_tokens", 0),
-                            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
-                            cache_write_tokens=usage.get("cache_creation_input_tokens", 0),
-                        )
-                    # Extract cost
-                    cost_usd = json_result.get("cost_usd") or json_result.get("total_cost_usd")
-                    # Extract model
-                    model_used = json_result.get("model")
-                    # Extract the actual text result for downstream consumers
-                    if "result" in json_result:
-                        output = json_result["result"]
-                    # Check is_error field
-                    if json_result.get("is_error"):
-                        exit_code = 1  # Treat as failure
-            except (json.JSONDecodeError, ValueError):
-                # Not valid JSON — raw text output (fallback)
-                pass
 
             # Determine success based on exit code
             # Claude Code returns 0 on success
