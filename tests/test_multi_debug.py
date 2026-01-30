@@ -175,7 +175,7 @@ class TestMultiDebugLoop:
             return (False, f"Verification error #{call_count['verify']}")
 
         with patch.object(orchestrator, '_execute_with_client', side_effect=mock_execute):
-            with patch('bob.orchestrator.engine.verify_task_outputs', side_effect=mock_verify):
+            with patch('bob.orchestrator.verifier.verify_task_outputs', side_effect=mock_verify):
                 with patch.object(orchestrator, '_handle_failure', return_value=(TaskStatus.FAILED, "All debug failed")):
                     status, error = await orchestrator.execute_task(sample_task, "Test prompt")
 
@@ -204,7 +204,7 @@ class TestMultiDebugLoop:
             return (True, "All good!")
 
         with patch.object(orchestrator, '_execute_with_client', side_effect=mock_execute):
-            with patch('bob.orchestrator.engine.verify_task_outputs', side_effect=mock_verify):
+            with patch('bob.orchestrator.verifier.verify_task_outputs', side_effect=mock_verify):
                 status, error = await orchestrator.execute_task(sample_task, "Test prompt")
 
         assert status == TaskStatus.COMPLETED
@@ -229,7 +229,7 @@ class TestMultiDebugLoop:
             return (False, "Something wrong")
 
         with patch.object(orchestrator, '_execute_with_client', side_effect=mock_execute):
-            with patch('bob.orchestrator.engine.verify_task_outputs', side_effect=mock_verify):
+            with patch('bob.orchestrator.verifier.verify_task_outputs', side_effect=mock_verify):
                 with patch.object(orchestrator, '_handle_failure', return_value=(TaskStatus.FAILED, "Gave up")):
                     status, error = await orchestrator.execute_task(sample_task, "Test prompt")
 
@@ -253,7 +253,7 @@ class TestMultiDebugLoop:
             return (True, "Passed")
 
         with patch.object(orchestrator, '_execute_with_client', side_effect=mock_execute):
-            with patch('bob.orchestrator.engine.verify_task_outputs', side_effect=mock_verify):
+            with patch('bob.orchestrator.verifier.verify_task_outputs', side_effect=mock_verify):
                 await orchestrator.execute_task(sample_task, "Test prompt")
 
         # Check telemetry

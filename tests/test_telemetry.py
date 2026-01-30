@@ -166,6 +166,7 @@ class TestRunTelemetry:
         rt.start_run()
         rt.start_task_attempt(task_id="t1", spec_id="F001", title="Persist Test", model="sonnet")
         rt.end_task_attempt(task_id="t1", success=True)
+        rt.set_task_final_status("t1", "completed")
         rt.end_run()
 
         # Load the file
@@ -173,7 +174,7 @@ class TestRunTelemetry:
         assert filepath.exists()
         data = RunTelemetry.load(filepath)
         assert data["run_id"] == "persist-test"
-        assert data["tasks_completed"] == 0  # completed status not set via set_task_final_status
+        assert data["tasks_completed"] == 1
         assert len(data["tasks"]) == 1
 
     def test_list_runs(self, tmp_path):

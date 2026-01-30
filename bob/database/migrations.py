@@ -10,7 +10,7 @@ from typing import Optional
 
 
 # Current schema version
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 def get_schema_version(conn: sqlite3.Connection) -> int:

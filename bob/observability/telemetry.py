@@ -313,5 +313,5 @@ class RunTelemetry:
         telemetry_dir = Path(workspace) / ".bob" / "telemetry"
         if not telemetry_dir.exists():
             return []
-        runs = sorted(telemetry_dir.glob("run-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        runs = sorted(telemetry_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         return runs
