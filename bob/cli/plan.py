@@ -378,13 +378,18 @@ async def _run_decomposition_engine(
 ) -> tuple[dict, list[str]]:
     """Run the recursive decomposition engine to generate a plan.
 
-    This replaces the legacy 3-phase pipeline with one recursive algorithm:
-      evaluate → decompose → recurse (until confident or max depth)
+    Pipeline:
+      Phase 0: EXTRACT — Opus reads the app spec + references and generates
+               atomic tasks from scratch (no hardcoded task list)
+      Phase 1: DECOMPOSE — Recursive engine evaluates confidence, decomposes
+               below-threshold tasks, generates verification tests
+      Phase 2: VALIDATE — Syntax-check scripts, flag trivial tests
 
     Returns:
         Tuple of (plan_data dict, warnings list)
     """
     import yaml
+    from rich.console import Console
     from bob.orchestrator.decomposition_engine import DecompositionEngine
     from bob.orchestrator.work_unit import WorkUnit, WorkUnitKind
     from bob.orchestrator.decomposers import (
@@ -392,18 +397,66 @@ async def _run_decomposition_engine(
         VerificationDecomposer,
         ResearchDecomposer,
     )
+    from bob.orchestrator.feature_extractor import (
+        extract_features,
+        extract_spec_metadata,
+    )
 
-    # Parse spec to extract tasks and references
+    console = Console()
+
+    # Parse spec
     spec_data = yaml.safe_load(spec_content) or {}
     references = spec_data.get("references", []) or []
-    raw_tasks = spec_data.get("tasks", [])
 
-    if not raw_tasks:
-        raise ValueError("Spec has no tasks. Add a 'tasks' section to the spec YAML.")
+    if not spec_data.get("description") and not spec_data.get("tasks"):
+        raise ValueError(
+            "Spec has neither 'description' nor 'tasks'. "
+            "Add at least a 'description' field."
+        )
 
-    # Create initial work units from spec tasks
+    # ─── Phase 0: Feature Extraction ───────────────────────────────
+    # Opus reads the application spec and generates tasks from scratch.
+    # The spec's existing task list (if any) is included as "hints"
+    # but Opus is free to generate a completely different decomposition.
+
+    console.print("\n[bold cyan]Phase 0: Feature Extraction[/bold cyan]")
+    console.print("  Opus is reading the application spec + references...")
+    console.print("  Generating atomic tasks from scratch...\n")
+
+    full_description, constraints, environment_notes = extract_spec_metadata(spec_data)
+
+    extracted_tasks = await extract_features(
+        spec_description=full_description,
+        references=references,
+        constraints=constraints,
+        workspace_dir=workspace_dir,
+        project_dir=project_dir,
+        model=model,
+        timeout_seconds=600,
+        environment_notes=environment_notes,
+    )
+
+    console.print(
+        f"  [green]✓ Extracted {len(extracted_tasks)} tasks from spec[/green]\n"
+    )
+    for t in extracted_tasks:
+        tid = t.get("id", "?")
+        title = t.get("title", "")
+        deps = t.get("depends_on", [])
+        dep_str = f" (depends: {', '.join(deps)})" if deps else ""
+        console.print(f"    {tid}: {title}{dep_str}")
+    console.print()
+
+    # ─── Phase 1: Recursive Decomposition ──────────────────────────
+    # The engine evaluates each extracted task's confidence and
+    # decomposes any that are below threshold.
+
+    console.print("[bold cyan]Phase 1: Recursive Decomposition[/bold cyan]")
+    console.print(f"  Evaluating {len(extracted_tasks)} tasks (threshold: {confidence_threshold})...\n")
+
+    # Create initial work units from EXTRACTED tasks (not spec tasks)
     initial_units = []
-    for task_data in raw_tasks:
+    for task_data in extracted_tasks:
         unit = WorkUnit(
             kind=WorkUnitKind.TASK,
             content=task_data,
@@ -449,7 +502,7 @@ async def _run_decomposition_engine(
     # Run the engine
     tree = await engine.run(initial_units)
 
-    # Collect results
+    # ─── Phase 2: Collect + Validate ───────────────────────────────
     plan_data = _tree_to_plan_data(tree, spec_data)
     warnings = _validate_plan(plan_data, confidence_threshold)
 
