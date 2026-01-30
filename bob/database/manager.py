@@ -284,7 +284,13 @@ class DatabaseManager:
             }
             for o in task.expected_outputs
         ])
-        
+
+        def _serialize_tests(tests):
+            return json.dumps([
+                {"name": t.name, "command": t.command, "timeout": t.timeout}
+                for t in tests
+            ])
+
         with self.transaction() as conn:
             conn.execute(
                 """
@@ -295,8 +301,10 @@ class DatabaseManager:
                     escalation_tier, failure_type, research_required,
                     research_complete, research_queries, research_findings, skip_reason,
                     expected_outputs, verify_script,
+                    numerical_tests, algorithmic_tests, convergence_tests,
+                    verification_level,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (
                     task.id,
@@ -323,6 +331,10 @@ class DatabaseManager:
                     task.skip_reason,
                     expected_outputs_json,
                     task.verify_script,
+                    _serialize_tests(task.numerical_tests),
+                    _serialize_tests(task.algorithmic_tests),
+                    _serialize_tests(task.convergence_tests),
+                    task.verification_level,
                 ),
             )
         return task.id
@@ -949,6 +961,31 @@ class DatabaseManager:
         except (KeyError, IndexError):
             verify_script = None
 
+        # Handle semantic verification fields (added in schema v6)
+        def _deserialize_tests(row, col_name):
+            from bob.models.base import VerificationTest
+            try:
+                raw = json.loads(row[col_name])
+                return [
+                    VerificationTest(
+                        name=t.get("name", "unnamed"),
+                        command=t.get("command", ""),
+                        timeout=t.get("timeout", 120),
+                    )
+                    for t in raw
+                ]
+            except (KeyError, IndexError, json.JSONDecodeError):
+                return []
+
+        numerical_tests = _deserialize_tests(row, "numerical_tests")
+        algorithmic_tests = _deserialize_tests(row, "algorithmic_tests")
+        convergence_tests = _deserialize_tests(row, "convergence_tests")
+
+        try:
+            verification_level = row["verification_level"]
+        except (KeyError, IndexError):
+            verification_level = "standard"
+
         return Task(
             id=row["id"],
             project_id=row["project_id"],
@@ -974,6 +1011,10 @@ class DatabaseManager:
             skip_reason=skip_reason,
             expected_outputs=expected_outputs,
             verify_script=verify_script,
+            numerical_tests=numerical_tests,
+            algorithmic_tests=algorithmic_tests,
+            convergence_tests=convergence_tests,
+            verification_level=verification_level,
         )
 
     def _row_to_session(self, row: sqlite3.Row) -> Session:

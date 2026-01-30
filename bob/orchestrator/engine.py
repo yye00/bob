@@ -33,6 +33,7 @@ from bob.orchestrator.failure_classifier import classify_failure, Classification
 from bob.orchestrator.task_decomposer import TaskDecomposer
 from bob.orchestrator.research_controller import ResearchController
 from bob.observability.cost_tracker import CostTracker
+from bob.observability.telemetry import RunTelemetry
 from bob.config import ConfigManager
 
 
@@ -53,6 +54,8 @@ class OrchestratorConfig:
         use_opus_default: bool = False,
         enable_thinking: bool = False,
         thinking_budget: int = 10000,
+        max_debug_attempts: int = 3,
+        stall_timeout: int = 600,
     ):
         """
         Initialize orchestrator configuration.
@@ -67,6 +70,8 @@ class OrchestratorConfig:
             max_cost_per_session: Maximum cost per session (USD), None for no limit
             warn_at_percent: Warn when reaching this percentage of limit (0-100)
             non_interactive: Whether to run in non-interactive mode (disable TUI, auto-select defaults)
+            max_debug_attempts: Maximum debug attempts per verification failure (default: 3)
+            stall_timeout: Seconds without file modifications before killing process (default: 600)
         """
         self.default_model = default_model
         self.max_retries = max_retries
@@ -80,6 +85,8 @@ class OrchestratorConfig:
         self.use_opus_default = use_opus_default
         self.enable_thinking = enable_thinking
         self.thinking_budget = thinking_budget
+        self.max_debug_attempts = max_debug_attempts
+        self.stall_timeout = stall_timeout
 
         # If use_opus_default, override the default model
         if use_opus_default:
@@ -119,6 +126,9 @@ class Orchestrator:
         self.task_decomposer = TaskDecomposer(db_manager)
         self.research_controller = ResearchController(db_manager, project_dir)
         self.cost_tracker = CostTracker(db_manager)
+
+        # Initialize telemetry
+        self.telemetry = RunTelemetry(workspace=project_dir)
 
         # Current execution state
         self.current_task: Optional[Task] = None
@@ -268,11 +278,21 @@ class Orchestrator:
         """
         self.current_task = task
 
+        # Start telemetry for this task
+        self.telemetry.start_task_attempt(
+            task_id=task.id,
+            spec_id=task.spec_id,
+            title=task.title,
+            model=self.current_model,
+        )
+
         # Check project cost limit before starting
         can_continue, budget_msg = self.check_project_cost_limit()
         if not can_continue:
             # Cost limit exceeded - block the task
             self.db.update_task(task.id, status=TaskStatus.BLOCKED)
+            self.telemetry.end_task_attempt(task.id, success=False, error_message=budget_msg)
+            self.telemetry.set_task_final_status(task.id, "blocked")
             return TaskStatus.BLOCKED, budget_msg
 
         # Display warning if approaching limit
@@ -287,6 +307,8 @@ class Orchestrator:
             if not can_continue:
                 # Session cost limit exceeded - block the task
                 self.db.update_task(task.id, status=TaskStatus.BLOCKED)
+                self.telemetry.end_task_attempt(task.id, success=False, error_message=session_msg)
+                self.telemetry.set_task_final_status(task.id, "blocked")
                 return TaskStatus.BLOCKED, session_msg
 
             if session_msg:
@@ -307,48 +329,94 @@ class Orchestrator:
                 # Verify outputs before claiming victory
                 from bob.orchestrator.verifier import verify_task_outputs
                 verified, verify_msg = verify_task_outputs(task, self.project_dir)
-                
+
+                self.telemetry.record_verification(task.id, verified, verify_msg)
+
                 if not verified:
-                    # === DEBUG MODE ===
-                    # Instead of blind retry, give Claude the verification errors
-                    # and let it debug its own code. This is the key difference
-                    # from the old "Ralph Wiggum" approach.
+                    # === MULTI-DEBUG LOOP ===
+                    # Instead of a single debug attempt, loop up to max_debug_attempts.
+                    # Each iteration feeds verification errors back to Claude.
+                    max_debug = self.config.max_debug_attempts
                     print(f"\n🔍 Verification failed for {task.spec_id}:")
                     print(verify_msg)
-                    print(f"\n🐛 Entering debug mode — feeding errors back to Claude...")
-                    
-                    debug_prompt = self._build_debug_prompt(task, prompt, verify_msg)
-                    debug_success, debug_error = await self._execute_with_client(None, debug_prompt)
-                    
-                    if debug_success:
-                        # Re-verify after debug attempt
-                        verified2, verify_msg2 = verify_task_outputs(task, self.project_dir)
-                        if verified2:
-                            print(f"\n✅ Debug fix worked! Verification passed for {task.spec_id}")
-                            deps_met, deps_status = self._check_dependencies(task)
-                            self.escalation.record_attempt(
-                                task_id=task.id,
-                                success=True,
-                                deps_met=deps_met,
-                            )
-                            self.db.update_task(task.id, status=TaskStatus.COMPLETED)
-                            return TaskStatus.COMPLETED, None
+                    print(f"\n🐛 Entering debug mode (up to {max_debug} attempts)...")
+
+                    previous_errors = [verify_msg]
+                    debug_succeeded = False
+
+                    for debug_attempt in range(max_debug):
+                        print(f"\n🔧 Debug attempt {debug_attempt + 1}/{max_debug}...")
+
+                        self.telemetry.start_task_attempt(
+                            task_id=task.id,
+                            spec_id=task.spec_id,
+                            title=task.title,
+                            model=self.current_model,
+                            is_debug=True,
+                            debug_attempt_number=debug_attempt + 1,
+                        )
+
+                        debug_prompt = self._build_debug_prompt(
+                            task, prompt, verify_msg, debug_attempt, previous_errors
+                        )
+                        debug_success, debug_error = await self._execute_with_client(None, debug_prompt)
+
+                        if debug_success:
+                            # Re-verify after debug attempt
+                            verified2, verify_msg2 = verify_task_outputs(task, self.project_dir)
+                            self.telemetry.record_verification(task.id, verified2, verify_msg2)
+
+                            if verified2:
+                                print(f"\n✅ Debug fix worked on attempt {debug_attempt + 1}! Verification passed for {task.spec_id}")
+                                self.telemetry.record_debug(task.id, debug_attempt + 1, success=True)
+                                self.telemetry.end_task_attempt(task.id, success=True)
+                                debug_succeeded = True
+                                break
+                            else:
+                                # Debug didn't fix it — accumulate errors
+                                print(f"\n🔍 Debug attempt {debug_attempt + 1} didn't fix verification:")
+                                print(verify_msg2)
+                                previous_errors.append(verify_msg2)
+                                verify_msg = verify_msg2  # Update for next iteration
+                                self.telemetry.record_debug(
+                                    task.id, debug_attempt + 1, success=False,
+                                    error_message=verify_msg2,
+                                )
+                                self.telemetry.end_task_attempt(
+                                    task.id, success=False, error_message=verify_msg2,
+                                )
                         else:
-                            # Debug didn't fix it — now escalate with full context
-                            print(f"\n🔍 Debug attempt didn't fix verification:")
-                            print(verify_msg2)
-                            error_msg = (
-                                f"Verification failed after debug attempt.\n"
-                                f"Original errors:\n{verify_msg}\n"
-                                f"After debug:\n{verify_msg2}"
+                            # Debug execution itself failed
+                            error_detail = f"Debug attempt {debug_attempt + 1} execution failed: {debug_error}"
+                            previous_errors.append(error_detail)
+                            self.telemetry.record_debug(
+                                task.id, debug_attempt + 1, success=False,
+                                error_message=error_detail,
                             )
-                            return await self._handle_failure(task, error_msg)
+                            self.telemetry.end_task_attempt(
+                                task.id, success=False, error_message=error_detail,
+                            )
+
+                    if debug_succeeded:
+                        deps_met, deps_status = self._check_dependencies(task)
+                        self.escalation.record_attempt(
+                            task_id=task.id,
+                            success=True,
+                            deps_met=deps_met,
+                        )
+                        self.db.update_task(task.id, status=TaskStatus.COMPLETED)
+                        self.telemetry.set_task_final_status(task.id, "completed")
+                        return TaskStatus.COMPLETED, None
                     else:
-                        # Debug execution itself failed
-                        error_msg = f"Debug attempt failed: {debug_error}\nOriginal verification: {verify_msg}"
+                        # All debug attempts exhausted — escalate
+                        error_msg = (
+                            f"Verification failed after {max_debug} debug attempts.\n"
+                            f"Error history:\n" + "\n---\n".join(previous_errors)
+                        )
+                        self.telemetry.set_task_final_status(task.id, "failed")
                         return await self._handle_failure(task, error_msg)
-                
-                # Outputs verified - record success
+
+                # Outputs verified on first try - record success
                 print(f"\n✅ Verification passed for {task.spec_id}")
                 deps_met, deps_status = self._check_dependencies(task)
                 self.escalation.record_attempt(
@@ -358,16 +426,22 @@ class Orchestrator:
                 )
                 # Update task status to completed
                 self.db.update_task(task.id, status=TaskStatus.COMPLETED)
+                self.telemetry.end_task_attempt(task.id, success=True)
+                self.telemetry.set_task_final_status(task.id, "completed")
                 return TaskStatus.COMPLETED, None
 
             else:
                 # Task failed - classify and decide action
+                self.telemetry.end_task_attempt(task.id, success=False, error_message=error)
+                self.telemetry.set_task_final_status(task.id, "failed")
                 return await self._handle_failure(task, error)
 
         except Exception as e:
             # Unexpected error during execution
             error_msg = f"Unexpected error: {str(e)}"
+            self.telemetry.end_task_attempt(task.id, success=False, error_message=error_msg)
             try:
+                self.telemetry.set_task_final_status(task.id, "failed")
                 return await self._handle_failure(task, error_msg)
             except Exception as inner_e:
                 # Last resort: if even _handle_failure throws, ensure we
@@ -389,7 +463,14 @@ class Orchestrator:
             except Exception:
                 pass  # Don't let safety net itself cause issues
 
-    def _build_debug_prompt(self, task: Task, original_prompt: str, verify_errors: str) -> str:
+    def _build_debug_prompt(
+        self,
+        task: Task,
+        original_prompt: str,
+        verify_errors: str,
+        debug_attempt: int = 0,
+        previous_errors: Optional[list[str]] = None,
+    ) -> str:
         """
         Build a debug prompt that feeds verification errors back to Claude.
         
@@ -397,8 +478,16 @@ class Orchestrator:
         1. What files it already created
         2. What the verification errors are
         3. To READ its own code and FIX the specific issues
+        4. Full file inventory of the workspace
         
         This turns "retry from scratch" into "iterative debugging."
+        
+        Args:
+            task: The task being debugged
+            original_prompt: The original task prompt
+            verify_errors: Current verification error message
+            debug_attempt: Which debug attempt this is (0-indexed)
+            previous_errors: List of all previous error messages
         """
         # List files that exist in the expected outputs
         existing_files = []
@@ -413,6 +502,9 @@ class Orchestrator:
         
         files_section = "\n".join(existing_files) if existing_files else "  (no files created yet)"
         
+        # Build workspace file inventory
+        workspace_inventory = self._get_workspace_inventory()
+        
         # Include the verify_script so Claude can run it itself
         verify_section = ""
         if task.verify_script:
@@ -423,7 +515,17 @@ class Orchestrator:
 ```
 """
         
-        debug_prompt = f"""# DEBUG MODE: Fix Verification Failures
+        # Build previous errors section
+        prev_errors_section = ""
+        if previous_errors and len(previous_errors) > 1:
+            prev_errors_section = "\n## Previous Debug Attempts (ALREADY TRIED)\n"
+            for i, err in enumerate(previous_errors[:-1]):
+                prev_errors_section += f"\n### Attempt {i + 1} errors:\n```\n{err}\n```\n"
+            prev_errors_section += "\nDo NOT repeat the same fixes that already failed. Try a DIFFERENT approach.\n"
+        
+        attempt_info = f"(Debug attempt {debug_attempt + 1})" if debug_attempt > 0 else ""
+        
+        debug_prompt = f"""# DEBUG MODE: Fix Verification Failures {attempt_info}
 
 ## Task: {task.title} ({task.spec_id})
 
@@ -434,11 +536,14 @@ DO NOT start over. READ your existing code and FIX the specific issues below.
 ## Your Existing Files
 {files_section}
 
+## Full Workspace File Inventory
+{workspace_inventory}
+
 ## Verification Errors (FIX THESE)
 ```
 {verify_errors}
 ```
-
+{prev_errors_section}
 ## What To Do
 1. READ each file listed above — understand what you already wrote
 2. For each error above, find the root cause in your code
@@ -458,6 +563,51 @@ DO NOT start over. READ your existing code and FIX the specific issues below.
 - Run the verify script after each fix to check progress
 """
         return debug_prompt
+
+    def _get_workspace_inventory(self) -> str:
+        """Build a file inventory of the workspace with line counts.
+        
+        Lists all files in the project directory (excluding hidden dirs,
+        __pycache__, .git, node_modules, etc.) with their line counts.
+        """
+        import os
+        
+        skip_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv',
+                     '.bob', '.tox', '.mypy_cache', '.pytest_cache', '.eggs',
+                     'dist', 'build', '*.egg-info'}
+        
+        inventory_lines = []
+        try:
+            for root, dirs, files in os.walk(self.project_dir):
+                # Filter out skipped directories
+                dirs[:] = [d for d in dirs if d not in skip_dirs and not d.endswith('.egg-info')]
+                
+                rel_root = os.path.relpath(root, self.project_dir)
+                if rel_root == '.':
+                    rel_root = ''
+                
+                for fname in sorted(files):
+                    if fname.startswith('.'):
+                        continue
+                    fpath = os.path.join(root, fname)
+                    rel_path = os.path.join(rel_root, fname) if rel_root else fname
+                    try:
+                        line_count = sum(1 for _ in open(fpath))
+                        inventory_lines.append(f"  {rel_path} ({line_count} lines)")
+                    except Exception:
+                        inventory_lines.append(f"  {rel_path} (binary/unreadable)")
+        except Exception:
+            return "  (could not scan workspace)"
+        
+        if not inventory_lines:
+            return "  (empty workspace)"
+        
+        # Limit to 100 files to avoid prompt bloat
+        if len(inventory_lines) > 100:
+            inventory_lines = inventory_lines[:100]
+            inventory_lines.append(f"  ... and {len(inventory_lines) - 100} more files")
+        
+        return "\n".join(inventory_lines)
 
     async def _execute_with_client(
         self,
@@ -483,6 +633,7 @@ DO NOT start over. READ your existing code and FIX the specific issues below.
             non_interactive=self.config.non_interactive,
             enable_thinking=self.config.enable_thinking,
             thinking_budget=self.config.thinking_budget,
+            stall_timeout=self.config.stall_timeout,
         )
         
         if result.success:

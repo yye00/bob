@@ -14,6 +14,7 @@ from bob.cli import config as config_commands
 from bob.cli import costs as costs_commands
 from bob.cli import init as init_commands
 from bob.cli import logs as logs_commands
+from bob.cli import metrics as metrics_commands
 from bob.cli import plugin as plugin_commands
 from bob.cli import project as project_commands
 from bob.cli import research as research_commands
@@ -217,6 +218,9 @@ cli.add_command(logs_commands.logs)
 
 # Add costs command directly (not a group, just a command)
 cli.add_command(costs_commands.costs)
+
+# Add metrics command
+cli.add_command(metrics_commands.metrics)
 
 
 @cli.group()

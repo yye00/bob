@@ -147,6 +147,19 @@ class ExpectedOutput:
 
 
 @dataclass
+class VerificationTest:
+    """A verification test that runs a command and checks exit code.
+
+    These tests live in the spec (stored in the DB), not in the workspace.
+    The coding agent cannot modify them — it must write code that passes them.
+    """
+    name: str
+    command: str
+    timeout: int = 120
+    expected_exit_code: int = 0
+
+
+@dataclass
 class Task:
     """Represents a task extracted from a project specification.
 
@@ -178,6 +191,11 @@ class Task:
     # Output verification (Ralph Wiggum loop)
     expected_outputs: list[ExpectedOutput] = field(default_factory=list)
     verify_script: Optional[str] = None
+    # Semantic verification layers (spec-defined, agent cannot modify)
+    numerical_tests: list[VerificationTest] = field(default_factory=list)
+    algorithmic_tests: list[VerificationTest] = field(default_factory=list)
+    convergence_tests: list[VerificationTest] = field(default_factory=list)
+    verification_level: str = "standard"  # "standard" or "scientific"
 
 
 @dataclass

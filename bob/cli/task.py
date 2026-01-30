@@ -204,12 +204,19 @@ def list(
             # Show last 20 chars (usually the version)
             model_display = "..." + model_display[-17:]
 
+        # Show completed_after_attempts if available (from archived task history)
+        attempts_display = str(task.attempts)
+        if task.attempts == 0 and task.research_findings:
+            completed_after = task.research_findings.get("completed_after_attempts")
+            if completed_after is not None:
+                attempts_display = f"0 ({completed_after})"
+
         table.add_row(
             task.spec_id,
             title,
             f"[{status_color}]{task.status.value}[/{status_color}]",
             f"[{priority_color}]{task.priority}[/{priority_color}]",
-            str(task.attempts),
+            attempts_display,
             model_display,
         )
 

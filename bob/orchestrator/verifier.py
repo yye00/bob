@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from bob.models.base import Task, ExpectedOutput
+from bob.models.base import Task, ExpectedOutput, VerificationTest
 
 
 # ============================================================================
@@ -356,6 +356,79 @@ def run_verify_script(script: str, workspace: Path, timeout: int = 120) -> tuple
         return False, f"Verify script error: {e}"
 
 
+def run_verification_test(test: VerificationTest, workspace: Path) -> tuple[bool, str]:
+    """
+    Run a single verification test (numerical, algorithmic, or convergence).
+
+    These tests are defined in the spec and stored in the DB. The coding
+    agent cannot modify them — it must write code that actually passes.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        import os
+        env = os.environ.copy()
+        env['LD_PRELOAD'] = ''  # prevent injection
+
+        result = subprocess.run(
+            ['bash', '-c', test.command],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=test.timeout,
+            env=env,
+        )
+
+        if result.returncode == test.expected_exit_code:
+            stdout = result.stdout.strip()
+            if not stdout:
+                # Tests must produce output explaining what was verified
+                return False, (
+                    f"[{test.name}] Passed but produced no output. "
+                    "Tests must print what was verified."
+                )
+            return True, f"[{test.name}] PASS: {stdout[-200:]}"
+        else:
+            stderr = result.stderr.strip()
+            stdout = result.stdout.strip()
+            detail = stderr if stderr else stdout if stdout else f"exit code {result.returncode}"
+            return False, f"[{test.name}] FAIL: {detail[-300:]}"
+
+    except subprocess.TimeoutExpired:
+        return False, f"[{test.name}] TIMEOUT after {test.timeout}s"
+    except Exception as e:
+        return False, f"[{test.name}] ERROR: {e}"
+
+
+def run_verification_suite(
+    suite_name: str,
+    tests: list[VerificationTest],
+    workspace: Path,
+) -> tuple[bool, list[str]]:
+    """
+    Run a suite of verification tests (numerical, algorithmic, or convergence).
+
+    All tests in the suite must pass for the suite to pass.
+
+    Returns:
+        Tuple of (all_passed, list_of_messages)
+    """
+    if not tests:
+        return True, []
+
+    messages = [f"--- {suite_name} ({len(tests)} tests) ---"]
+    all_passed = True
+
+    for test in tests:
+        passed, msg = run_verification_test(test, workspace)
+        messages.append(msg)
+        if not passed:
+            all_passed = False
+
+    return all_passed, messages
+
+
 def verify_task_outputs(task: Task, workspace: Path) -> tuple[bool, str]:
     """
     Verify all expected outputs for a task.
@@ -404,7 +477,38 @@ def verify_task_outputs(task: Task, workspace: Path) -> tuple[bool, str]:
         messages.append(msg)
         if not passed:
             all_passed = False
-    
+
+    # --- Semantic verification layers ---
+    # These run AFTER structural checks pass. They are defined in the spec
+    # and stored in the DB — the coding agent cannot modify them.
+
+    # Layer 1: Numerical tests (known answers, tight tolerances)
+    if task.numerical_tests:
+        passed, suite_msgs = run_verification_suite(
+            "Numerical Tests", task.numerical_tests, workspace
+        )
+        messages.extend(suite_msgs)
+        if not passed:
+            all_passed = False
+
+    # Layer 2: Algorithmic tests (method verification, differential tests)
+    if task.algorithmic_tests:
+        passed, suite_msgs = run_verification_suite(
+            "Algorithmic Tests", task.algorithmic_tests, workspace
+        )
+        messages.extend(suite_msgs)
+        if not passed:
+            all_passed = False
+
+    # Layer 3: Convergence tests (process behavior, parameter sensitivity)
+    if task.convergence_tests:
+        passed, suite_msgs = run_verification_suite(
+            "Convergence Tests", task.convergence_tests, workspace
+        )
+        messages.extend(suite_msgs)
+        if not passed:
+            all_passed = False
+
     combined = "\n".join(messages)
     
     if all_passed:

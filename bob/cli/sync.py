@@ -240,7 +240,7 @@ def sync(
         task_id = f"task-{uuid.uuid4().hex[:8]}"
 
         # Convert ExpectedOutputSpec to ExpectedOutput
-        from bob.models.base import ExpectedOutput
+        from bob.models.base import ExpectedOutput, VerificationTest
         expected_outputs = [
             ExpectedOutput(
                 path=o.path,
@@ -250,6 +250,18 @@ def sync(
             )
             for o in task_spec.expected_outputs
         ]
+
+        # Convert verification test specs to model objects
+        def _convert_tests(specs) -> list[VerificationTest]:
+            return [
+                VerificationTest(name=t.name, command=t.command, timeout=t.timeout)
+                for t in specs
+            ]
+
+        numerical_tests = _convert_tests(task_spec.numerical_tests)
+        algorithmic_tests = _convert_tests(task_spec.algorithmic_tests)
+        convergence_tests = _convert_tests(task_spec.convergence_tests)
+        verification_level = getattr(task_spec, 'verification_level', 'standard')
 
         # Auto-enhance weak verify_scripts with meaningful checks
         from bob.orchestrator.verification_generator import generate_verify_script
@@ -294,6 +306,10 @@ def sync(
             research_findings={},
             expected_outputs=expected_outputs,
             verify_script=verify_script,
+            numerical_tests=numerical_tests,
+            algorithmic_tests=algorithmic_tests,
+            convergence_tests=convergence_tests,
+            verification_level=verification_level,
         )
 
         try:

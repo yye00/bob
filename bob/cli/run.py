@@ -238,6 +238,18 @@ def _build_task_prompt(task: Task, project) -> str:
     is_flag=True,
     help="Force research mode for all tasks (web search + experimentation)",
 )
+@click.option(
+    "--max-debug-attempts",
+    type=int,
+    default=3,
+    help="Maximum debug attempts per verification failure (default: 3)",
+)
+@click.option(
+    "--stall-timeout",
+    type=int,
+    default=600,
+    help="Seconds without file modifications before killing process (default: 600)",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -255,6 +267,8 @@ def run(
     thinking: bool,
     thinking_budget: int,
     force_research: bool,
+    max_debug_attempts: int,
+    stall_timeout: int,
 ) -> None:
     """Run the autonomous coding agent.
 
@@ -361,6 +375,8 @@ def run(
             enable_thinking=thinking,
             thinking_budget=thinking_budget,
             force_research=force_research,
+            max_debug_attempts=max_debug_attempts,
+            stall_timeout=stall_timeout,
             ctx=ctx,
         )
     else:
@@ -379,6 +395,8 @@ def run(
             enable_thinking=thinking,
             thinking_budget=thinking_budget,
             force_research=force_research,
+            max_debug_attempts=max_debug_attempts,
+            stall_timeout=stall_timeout,
             ctx=ctx,
         )
 
@@ -542,6 +560,8 @@ def _run_single_task(
     enable_thinking: bool = False,
     thinking_budget: int = 10000,
     force_research: bool = False,
+    max_debug_attempts: int = 3,
+    stall_timeout: int = 600,
     ctx: click.Context = None,
 ) -> None:
     """Run a single specific task.
@@ -649,6 +669,8 @@ def _run_single_task(
         enable_thinking=enable_thinking,
         thinking_budget=thinking_budget,
         enable_research=force_research or True,
+        max_debug_attempts=max_debug_attempts,
+        stall_timeout=stall_timeout,
     )
     orchestrator = create_orchestrator(
         db_manager=db,
@@ -703,6 +725,8 @@ def _run_auto_select(
     enable_thinking: bool = False,
     thinking_budget: int = 10000,
     force_research: bool = False,
+    max_debug_attempts: int = 3,
+    stall_timeout: int = 600,
     ctx: click.Context = None,
 ) -> None:
     """Auto-select and run the next ready task.
@@ -751,6 +775,8 @@ def _run_auto_select(
         enable_thinking=enable_thinking,
         thinking_budget=thinking_budget,
         force_research=force_research,
+        max_debug_attempts=max_debug_attempts,
+        stall_timeout=stall_timeout,
         ctx=ctx,
     )
 

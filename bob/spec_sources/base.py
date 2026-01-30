@@ -21,6 +21,23 @@ class ExpectedOutputSpec:
 
 
 @dataclass
+class VerificationTestSpec:
+    """Spec-level verification test. Immutable once stored in the DB.
+
+    Three categories:
+    - numerical_tests: Known-answer tests with tight tolerances.
+      Catches hardcoded returns and wrong algorithms.
+    - algorithmic_tests: Verify the method, not just the answer.
+      Dependency injection blocks, differential input tests.
+    - convergence_tests: Verify the algorithm behaves correctly as a process.
+      Energy improves with better parameters, stable convergence.
+    """
+    name: str
+    command: str
+    timeout: int = 120
+
+
+@dataclass
 class TaskSpec:
     """Specification for a task from a spec source.
 
@@ -45,6 +62,11 @@ class TaskSpec:
     # Output verification (Ralph Wiggum loop)
     expected_outputs: list[ExpectedOutputSpec] = field(default_factory=list)
     verify_script: Optional[str] = None
+    # Semantic verification layers
+    numerical_tests: list[VerificationTestSpec] = field(default_factory=list)
+    algorithmic_tests: list[VerificationTestSpec] = field(default_factory=list)
+    convergence_tests: list[VerificationTestSpec] = field(default_factory=list)
+    verification_level: str = "standard"  # "standard" or "scientific"
 
 
 @dataclass

@@ -15,6 +15,12 @@ from bob.observability.logger import (
     StructuredLogger,
     create_logger,
 )
+from bob.observability.telemetry import (
+    RunTelemetry,
+    TaskTelemetry,
+    TaskAttempt,
+    RunSummary,
+)
 
 __all__ = [
     "PRICING",
@@ -28,4 +34,8 @@ __all__ = [
     "LogContext",
     "StructuredLogger",
     "create_logger",
+    "RunTelemetry",
+    "TaskTelemetry",
+    "TaskAttempt",
+    "RunSummary",
 ]

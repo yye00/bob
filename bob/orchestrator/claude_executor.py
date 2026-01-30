@@ -10,6 +10,7 @@ import asyncio
 import subprocess
 import os
 import signal
+import threading
 import time
 from pathlib import Path
 from typing import Optional, Callable
@@ -26,12 +27,98 @@ class ExecutionResult:
     duration_seconds: float
 
 
+class FileModificationWatcher:
+    """Watches for file modifications in a directory.
+
+    Snapshots file modification times before execution and checks
+    periodically whether any file has been modified. If no modifications
+    occur within ``stall_timeout`` seconds, sets a stall flag.
+    """
+
+    def __init__(
+        self,
+        watch_dir: Path,
+        stall_timeout: int = 600,
+        check_interval: int = 60,
+        on_stall: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self.watch_dir = Path(watch_dir)
+        self.stall_timeout = stall_timeout
+        self.check_interval = check_interval
+        self.on_stall = on_stall
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._stalled = False
+        self._last_modification_time: float = time.time()
+
+        # Directories to skip when scanning
+        self._skip_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv',
+                          '.bob', '.tox', '.mypy_cache', '.pytest_cache'}
+
+    def _scan_mtimes(self) -> float:
+        """Scan the directory and return the most recent modification time."""
+        latest = 0.0
+        try:
+            for root, dirs, files in os.walk(self.watch_dir):
+                dirs[:] = [d for d in dirs if d not in self._skip_dirs]
+                for fname in files:
+                    try:
+                        fpath = os.path.join(root, fname)
+                        mtime = os.path.getmtime(fpath)
+                        if mtime > latest:
+                            latest = mtime
+                    except (OSError, IOError):
+                        continue
+        except Exception:
+            pass
+        return latest
+
+    def _watch_loop(self) -> None:
+        """Background thread that checks for file modifications."""
+        while not self._stop_event.is_set():
+            self._stop_event.wait(self.check_interval)
+            if self._stop_event.is_set():
+                break
+
+            current_latest = self._scan_mtimes()
+            if current_latest > self._last_modification_time:
+                self._last_modification_time = current_latest
+
+            elapsed = time.time() - self._last_modification_time
+            if elapsed >= self.stall_timeout:
+                self._stalled = True
+                if self.on_stall:
+                    self.on_stall()
+                break
+
+    def start(self) -> None:
+        """Start watching for file modifications."""
+        self._last_modification_time = max(self._scan_mtimes(), time.time())
+        self._stalled = False
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._watch_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop the watcher."""
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5)
+        self._thread = None
+
+    @property
+    def stalled(self) -> bool:
+        """Whether a stall has been detected."""
+        return self._stalled
+
+
 class ClaudeExecutor:
     """
     Execute Claude Code CLI for task completion.
     
     Uses subprocess to run `claude` with the task prompt.
     Supports both synchronous completion detection and streaming output.
+    Includes file modification watching for stall detection.
     """
     
     def __init__(
@@ -43,6 +130,7 @@ class ClaudeExecutor:
         non_interactive: bool = False,
         enable_thinking: bool = False,
         thinking_budget: int = 10000,
+        stall_timeout: int = 600,
     ):
         """
         Initialize the executor.
@@ -53,6 +141,7 @@ class ClaudeExecutor:
             timeout_seconds: Maximum execution time
             on_output: Optional callback for streaming output
             non_interactive: Whether to run in non-interactive mode (disable TUI, auto-select defaults)
+            stall_timeout: Seconds without file modifications before killing process (default: 600)
         """
         self.project_dir = project_dir
         self.model = model
@@ -61,7 +150,9 @@ class ClaudeExecutor:
         self.non_interactive = non_interactive
         self.enable_thinking = enable_thinking
         self.thinking_budget = thinking_budget
+        self.stall_timeout = stall_timeout
         self._process: Optional[subprocess.Popen] = None
+        self._stall_killed = False
         
     async def execute(self, prompt: str) -> ExecutionResult:
         """
@@ -74,6 +165,7 @@ class ClaudeExecutor:
             ExecutionResult with success status and output
         """
         start_time = time.time()
+        self._stall_killed = False
         
         # Build the claude command
         # Using --dangerously-skip-permissions for autonomous operation
@@ -92,11 +184,34 @@ class ClaudeExecutor:
 
         cmd.append(prompt)
         
+        # Set up stall detection watcher
+        stall_watcher: Optional[FileModificationWatcher] = None
+        if self.stall_timeout > 0:
+            def _on_stall():
+                """Kill the process when a stall is detected."""
+                self._stall_killed = True
+                if self._process:
+                    try:
+                        self._process.kill()
+                    except Exception:
+                        pass
+            
+            stall_watcher = FileModificationWatcher(
+                watch_dir=self.project_dir,
+                stall_timeout=self.stall_timeout,
+                check_interval=min(60, self.stall_timeout // 2) if self.stall_timeout > 0 else 60,
+                on_stall=_on_stall,
+            )
+        
         # Set up environment
         env = os.environ.copy()
         env["ANTHROPIC_MODEL"] = self.model
         
         try:
+            # Start stall detection watcher
+            if stall_watcher:
+                stall_watcher.start()
+            
             # Claude CLI uses OAuth tokens stored in the system's secret
             # service (GNOME keyring via D-Bus). Without a PTY, Claude
             # cannot access the keyring and silently exits with code 0.
@@ -254,6 +369,20 @@ class ClaudeExecutor:
                         )
                         break
             
+            # Stop stall watcher
+            if stall_watcher:
+                stall_watcher.stop()
+            
+            # Check if we were killed due to a stall
+            if self._stall_killed:
+                return ExecutionResult(
+                    success=False,
+                    output=output if 'output' in dir() else "",
+                    error=f"Stall detected: no file modifications for {self.stall_timeout} seconds. Process killed.",
+                    exit_code=-2,
+                    duration_seconds=time.time() - start_time,
+                )
+            
             return ExecutionResult(
                 success=success,
                 output=output,
@@ -263,6 +392,8 @@ class ClaudeExecutor:
             )
             
         except FileNotFoundError:
+            if stall_watcher:
+                stall_watcher.stop()
             return ExecutionResult(
                 success=False,
                 output="",
@@ -271,6 +402,8 @@ class ClaudeExecutor:
                 duration_seconds=time.time() - start_time,
             )
         except Exception as e:
+            if stall_watcher:
+                stall_watcher.stop()
             return ExecutionResult(
                 success=False,
                 output="",
@@ -280,6 +413,8 @@ class ClaudeExecutor:
             )
         finally:
             self._process = None
+            if stall_watcher:
+                stall_watcher.stop()
             
     def cancel(self):
         """Cancel the current execution if running."""
@@ -302,6 +437,7 @@ async def execute_task_with_claude(
     non_interactive: bool = False,
     enable_thinking: bool = False,
     thinking_budget: int = 10000,
+    stall_timeout: int = 600,
 ) -> ExecutionResult:
     """
     Convenience function to execute a task with Claude.
@@ -314,6 +450,7 @@ async def execute_task_with_claude(
         non_interactive: Whether to run in non-interactive mode
         enable_thinking: Whether to enable extended thinking
         thinking_budget: Token budget for thinking
+        stall_timeout: Seconds without file modifications before killing process (default: 600)
 
     Returns:
         ExecutionResult
@@ -325,5 +462,6 @@ async def execute_task_with_claude(
         non_interactive=non_interactive,
         enable_thinking=enable_thinking,
         thinking_budget=thinking_budget,
+        stall_timeout=stall_timeout,
     )
     return await executor.execute(prompt)

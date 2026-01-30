@@ -14,6 +14,7 @@ import yaml
 
 from bob.spec_sources.base import (
     ExpectedOutputSpec,
+    VerificationTestSpec,
     SpecSource,
     SpecSourceError,
     SyncResult,
@@ -393,6 +394,25 @@ class FileSpecSource(SpecSource):
         
         verify_script = task_data.get("verify_script", None)
 
+        # Parse semantic verification tests
+        def _parse_verification_tests(raw: list) -> list[VerificationTestSpec]:
+            tests = []
+            for item in raw or []:
+                if isinstance(item, dict):
+                    tests.append(VerificationTestSpec(
+                        name=item.get("name", "unnamed"),
+                        command=item.get("command", ""),
+                        timeout=item.get("timeout", 120),
+                    ))
+                elif isinstance(item, str):
+                    tests.append(VerificationTestSpec(name="test", command=item))
+            return tests
+
+        numerical_tests = _parse_verification_tests(task_data.get("numerical_tests", []))
+        algorithmic_tests = _parse_verification_tests(task_data.get("algorithmic_tests", []))
+        convergence_tests = _parse_verification_tests(task_data.get("convergence_tests", []))
+        verification_level = task_data.get("verification_level", "standard")
+
         # Store original task data in metadata
         metadata = {
             "source_file": str(self.file_path),
@@ -416,6 +436,10 @@ class FileSpecSource(SpecSource):
             deprecated=deprecated,
             expected_outputs=expected_outputs,
             verify_script=verify_script,
+            numerical_tests=numerical_tests,
+            algorithmic_tests=algorithmic_tests,
+            convergence_tests=convergence_tests,
+            verification_level=verification_level,
         )
 
     def _detect_research_needed(

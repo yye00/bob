@@ -215,10 +215,45 @@ def migrate(conn: sqlite3.Connection, target_version: Optional[int] = None) -> N
             print(f"✓ Migrated to schema version 5", file=sys.stderr)
             current_version = 5
 
+        if current_version < 6:
+            apply_migration_6(conn)
+            conn.execute(
+                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                (6, "Add semantic verification layers (numerical, algorithmic, convergence tests)"),
+            )
+            conn.commit()
+            print(f"✓ Migrated to schema version 6", file=sys.stderr)
+            current_version = 6
+
         if current_version < target_version:
             print(f"✓ Database now at version {current_version}", file=sys.stderr)
     else:
         print(f"✓ Database already at version {current_version}", file=sys.stderr)
+
+
+def apply_migration_6(conn: sqlite3.Connection):
+    """Add semantic verification layers for scientific computing tasks.
+
+    Three layers of tests, all defined in the spec (immutable by the agent):
+    - numerical_tests: Known-answer tests with tight tolerances
+    - algorithmic_tests: Method verification, dependency blocking, differential
+    - convergence_tests: Process behavior, parameter sensitivity
+
+    Plus verification_level: "standard" or "scientific" (scientific requires
+    human sign-off after automated tests pass).
+    """
+    columns = {
+        "numerical_tests": "TEXT NOT NULL DEFAULT '[]'",
+        "algorithmic_tests": "TEXT NOT NULL DEFAULT '[]'",
+        "convergence_tests": "TEXT NOT NULL DEFAULT '[]'",
+        "verification_level": "TEXT NOT NULL DEFAULT 'standard'",
+    }
+    for col_name, col_def in columns.items():
+        try:
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN {col_name} {col_def}")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+    conn.commit()
 
 
 def verify_schema(conn: sqlite3.Connection) -> bool:

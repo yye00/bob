@@ -29,6 +29,17 @@ class EventType(Enum):
     DECOMPOSITION_COMPLETED = "decomposition_completed"
     CHECKPOINT_CREATED = "checkpoint_created"
     CHECKPOINT_RESTORED = "checkpoint_restored"
+    VERIFICATION_FAILED = "verification_failed"
+    VERIFICATION_PASSED = "verification_passed"
+    DEBUG_MODE_ENTERED = "debug_mode_entered"
+    DEBUG_MODE_SUCCEEDED = "debug_mode_succeeded"
+    DEBUG_MODE_FAILED = "debug_mode_failed"
+    ATTEMPT_STARTED = "attempt_started"
+    ATTEMPT_COMPLETED = "attempt_completed"
+    ATTEMPT_TIMEOUT = "attempt_timeout"
+    RUN_STARTED = "run_started"
+    RUN_COMPLETED = "run_completed"
+    STALL_DETECTED = "stall_detected"
 
 
 @dataclass
