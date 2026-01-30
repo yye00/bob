@@ -376,6 +376,21 @@ def _tasks_to_yaml_spec(plan_data: dict) -> str:
         if task.get("confidence_reason"):
             yaml_task["confidence_reason"] = task["confidence_reason"]
 
+        # Verification tests (from Phase 1.5)
+        if task.get("verification_level"):
+            yaml_task["verification_level"] = task["verification_level"]
+        for test_category in ("numerical_tests", "algorithmic_tests", "convergence_tests"):
+            tests = task.get(test_category, [])
+            if tests:
+                yaml_task[test_category] = [
+                    {
+                        "name": t["name"],
+                        "command": t["command"],
+                        "timeout": t.get("timeout", 120),
+                    }
+                    for t in tests
+                ]
+
         spec["tasks"].append(yaml_task)
 
     return yaml.dump(spec, default_flow_style=False, sort_keys=False, width=120)
@@ -387,11 +402,12 @@ def _tasks_to_yaml_spec(plan_data: dict) -> str:
 
 class FeaturePlanner:
     """
-    Confidence-driven 3-phase feature planning pipeline.
+    Confidence-driven feature planning pipeline.
 
-    Phase 1: PLAN    — Opus generates tasks with confidence scores
-    Phase 2: REFINE  — Loop until confidence > threshold
-    Phase 3: VALIDATE — Syntax-check scripts, reject trivial tests
+    Phase 1:   PLAN    — Opus generates tasks with confidence scores
+    Phase 1.5: VERIFY  — Generate verification tests from papers + search
+    Phase 2:   REFINE  — Loop until confidence > threshold
+    Phase 3:   VALIDATE — Syntax-check scripts, reject trivial tests
     """
 
     def __init__(
@@ -489,6 +505,62 @@ class FeaturePlanner:
                 f"    {status} {t['id']}: impl={impl:.2f} ver={ver:.2f}"
                 f"  — {t['title'][:60]}"
             )
+
+        return plan_data
+
+    # ------------------------------------------------------------------
+    # Phase 1.5: VERIFY — Generate verification tests from papers
+    # ------------------------------------------------------------------
+
+    async def phase1_5_verify(
+        self, plan_data: dict, spec_content: str
+    ) -> dict:
+        """
+        Generate verification tests for scientific tasks.
+
+        Reads reference papers attached to the spec and uses Perplexity
+        to search for supplementary reference values. Generates
+        numerical, algorithmic, and convergence tests per task.
+
+        Only runs for tasks with verification_level="scientific"
+        (inferred from task content if not explicitly set).
+
+        Args:
+            plan_data: Plan dict from Phase 1
+            spec_content: Raw spec YAML (to extract references)
+
+        Returns:
+            Plan dict with verification tests added to scientific tasks.
+        """
+        from bob.orchestrator.verification_researcher import VerificationResearcher
+
+        # Extract references from spec
+        references = []
+        try:
+            spec_data = yaml.safe_load(spec_content)
+            if isinstance(spec_data, dict):
+                references = spec_data.get("references", []) or []
+        except (yaml.YAMLError, AttributeError):
+            pass
+
+        if not references:
+            print("\n  ℹ️  No reference documents in spec — skipping Phase 1.5")
+            return plan_data
+
+        researcher = VerificationResearcher(
+            workspace_dir=self.workspace_dir,
+            project_dir=self.project_dir,
+            references=references,
+            model=self.model,
+            timeout_seconds=self.timeout_seconds,
+            enable_research=self.enable_research,
+        )
+
+        await researcher.research_all_tasks(plan_data)
+
+        # Persist intermediate result
+        verify_json = self.output_dir / "verification_tests.json"
+        verify_json.write_text(json.dumps(plan_data, indent=2))
 
         return plan_data
 
@@ -684,6 +756,40 @@ class FeaturePlanner:
                     warnings.append(msg)
                     print(f"  ⚠ {msg}")
 
+            # --- Check 4: Validate verification test syntax ---
+            for test_category in ("numerical_tests", "algorithmic_tests", "convergence_tests"):
+                tests = task.get(test_category, [])
+                for test in tests:
+                    test_name = test.get("name", "unnamed")
+                    test_cmd = test.get("command", "")
+                    if test_cmd:
+                        valid, err = _validate_verify_script_syntax(test_cmd)
+                        if not valid:
+                            msg = (
+                                f"{task_id}: {test_category}/{test_name} "
+                                f"has syntax error: {err}"
+                            )
+                            warnings.append(msg)
+                            print(f"  ✗ {msg}")
+                    else:
+                        msg = f"{task_id}: {test_category}/{test_name} has empty command"
+                        warnings.append(msg)
+                        print(f"  ✗ {msg}")
+
+            # --- Check 5: Scientific tasks should have verification tests ---
+            if task.get("verification_level") == "scientific":
+                has_tests = any(
+                    len(task.get(cat, [])) > 0
+                    for cat in ("numerical_tests", "algorithmic_tests", "convergence_tests")
+                )
+                if not has_tests:
+                    msg = (
+                        f"{task_id}: verification_level=scientific but "
+                        f"no verification tests generated"
+                    )
+                    warnings.append(msg)
+                    print(f"  ⚠ {msg}")
+
         # Summary
         total = len(tasks)
         above = len([
@@ -716,6 +822,9 @@ class FeaturePlanner:
         """
         # Phase 1: PLAN
         plan_data = await self.phase1_plan(spec_content)
+
+        # Phase 1.5: VERIFY — Generate verification tests from papers + search
+        plan_data = await self.phase1_5_verify(plan_data, spec_content)
 
         # Phase 2: REFINE
         plan_data = await self.phase2_refine(plan_data)
