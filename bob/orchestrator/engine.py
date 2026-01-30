@@ -304,19 +304,52 @@ class Orchestrator:
             success, error = await self._execute_with_client(None, prompt)
 
             if success:
-                # Ralph Wiggum Loop: Verify outputs before claiming victory
+                # Verify outputs before claiming victory
                 from bob.orchestrator.verifier import verify_task_outputs
                 verified, verify_msg = verify_task_outputs(task, self.project_dir)
                 
                 if not verified:
-                    # Outputs not verified - treat as failure, retry
-                    print(f"\n🔍 Output verification failed for {task.spec_id}:")
+                    # === DEBUG MODE ===
+                    # Instead of blind retry, give Claude the verification errors
+                    # and let it debug its own code. This is the key difference
+                    # from the old "Ralph Wiggum" approach.
+                    print(f"\n🔍 Verification failed for {task.spec_id}:")
                     print(verify_msg)
-                    error_msg = f"Output verification failed: {verify_msg}"
-                    return await self._handle_failure(task, error_msg)
+                    print(f"\n🐛 Entering debug mode — feeding errors back to Claude...")
+                    
+                    debug_prompt = self._build_debug_prompt(task, prompt, verify_msg)
+                    debug_success, debug_error = await self._execute_with_client(None, debug_prompt)
+                    
+                    if debug_success:
+                        # Re-verify after debug attempt
+                        verified2, verify_msg2 = verify_task_outputs(task, self.project_dir)
+                        if verified2:
+                            print(f"\n✅ Debug fix worked! Verification passed for {task.spec_id}")
+                            deps_met, deps_status = self._check_dependencies(task)
+                            self.escalation.record_attempt(
+                                task_id=task.id,
+                                success=True,
+                                deps_met=deps_met,
+                            )
+                            self.db.update_task(task.id, status=TaskStatus.COMPLETED)
+                            return TaskStatus.COMPLETED, None
+                        else:
+                            # Debug didn't fix it — now escalate with full context
+                            print(f"\n🔍 Debug attempt didn't fix verification:")
+                            print(verify_msg2)
+                            error_msg = (
+                                f"Verification failed after debug attempt.\n"
+                                f"Original errors:\n{verify_msg}\n"
+                                f"After debug:\n{verify_msg2}"
+                            )
+                            return await self._handle_failure(task, error_msg)
+                    else:
+                        # Debug execution itself failed
+                        error_msg = f"Debug attempt failed: {debug_error}\nOriginal verification: {verify_msg}"
+                        return await self._handle_failure(task, error_msg)
                 
                 # Outputs verified - record success
-                print(f"\n✅ Output verification passed for {task.spec_id}")
+                print(f"\n✅ Verification passed for {task.spec_id}")
                 deps_met, deps_status = self._check_dependencies(task)
                 self.escalation.record_attempt(
                     task_id=task.id,
@@ -355,6 +388,76 @@ class Orchestrator:
                     self.db.update_task(task.id, status=TaskStatus.FAILED)
             except Exception:
                 pass  # Don't let safety net itself cause issues
+
+    def _build_debug_prompt(self, task: Task, original_prompt: str, verify_errors: str) -> str:
+        """
+        Build a debug prompt that feeds verification errors back to Claude.
+        
+        Instead of retrying blind, this tells Claude:
+        1. What files it already created
+        2. What the verification errors are
+        3. To READ its own code and FIX the specific issues
+        
+        This turns "retry from scratch" into "iterative debugging."
+        """
+        # List files that exist in the expected outputs
+        existing_files = []
+        for output in task.expected_outputs:
+            file_path = self.project_dir / output.path
+            if file_path.exists():
+                try:
+                    line_count = sum(1 for line in open(file_path) if line.strip())
+                    existing_files.append(f"  - {output.path} ({line_count} lines)")
+                except Exception:
+                    existing_files.append(f"  - {output.path} (exists)")
+        
+        files_section = "\n".join(existing_files) if existing_files else "  (no files created yet)"
+        
+        # Include the verify_script so Claude can run it itself
+        verify_section = ""
+        if task.verify_script:
+            verify_section = f"""
+## Verify Script (run this to check your fix)
+```bash
+{task.verify_script.strip()}
+```
+"""
+        
+        debug_prompt = f"""# DEBUG MODE: Fix Verification Failures
+
+## Task: {task.title} ({task.spec_id})
+
+## What Happened
+You already implemented this task. The code exists but FAILED verification.
+DO NOT start over. READ your existing code and FIX the specific issues below.
+
+## Your Existing Files
+{files_section}
+
+## Verification Errors (FIX THESE)
+```
+{verify_errors}
+```
+
+## What To Do
+1. READ each file listed above — understand what you already wrote
+2. For each error above, find the root cause in your code
+3. FIX the specific issues — don't rewrite from scratch
+4. Run the verify script yourself to confirm the fix works
+
+{verify_section}
+## Original Task Requirements (for reference)
+{original_prompt}
+
+## IMPORTANT
+- Do NOT delete and rewrite files — edit them to fix the issues
+- If a class is named wrong, rename it
+- If a method is missing, add it
+- If a pattern is forbidden, remove it
+- If an assertion fails, debug WHY and fix the logic
+- Run the verify script after each fix to check progress
+"""
+        return debug_prompt
 
     async def _execute_with_client(
         self,
