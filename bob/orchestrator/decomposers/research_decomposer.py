@@ -41,6 +41,35 @@ from bob.orchestrator.work_unit import (
 from bob.orchestrator.claude_executor import execute_task_with_claude
 
 
+REFERENCE_PRIORITIZATION_PROMPT = """\
+You are helping prioritize reference materials for verifying a scientific computing task.
+
+## Task to Verify
+{query}
+
+## Available References
+{references}
+
+## Instructions
+Rank these references by relevance to generating VERIFICATION TESTS for the task above.
+
+Consider:
+- Which papers contain exact numerical values usable as test oracles?
+- Which describe the algorithm being implemented?
+- Which have benchmark results at the same scale?
+- Which discuss convergence properties?
+
+Output ONLY valid JSON:
+{{
+  "priority_order": ["label1", "label2", ...],
+  "analysis": [
+    {{"label": "...", "relevance": 0.95, "look_for": "Table 3: ground state energies for Heisenberg chain"}},
+    ...
+  ]
+}}
+"""
+
+
 RESEARCH_SEARCH_PROMPT = """\
 Search for reference values related to: {query}
 
@@ -111,6 +140,21 @@ class ResearchDecomposer(Decomposer):
                 implementation=1.0,
                 verification=0.92,
                 reason="Web search ready",
+            )
+
+        elif source_type == "prioritization":
+            # Reference prioritization is a lightweight task — always ready
+            refs = content.get("references", [])
+            if refs:
+                return ConfidenceScore(
+                    implementation=1.0,
+                    verification=0.95,
+                    reason=f"Reference prioritization ready ({len(refs)} refs)",
+                )
+            return ConfidenceScore(
+                implementation=1.0,
+                verification=0.3,
+                reason="Prioritization requested but no references",
             )
 
         elif source_type == "compute":
@@ -208,6 +252,8 @@ class ResearchDecomposer(Decomposer):
             return self._execute_paper(content)
         elif source_type == "web":
             return await self._execute_web(content)
+        elif source_type == "prioritization":
+            return await self._execute_prioritization(content)
         elif source_type == "compute":
             return self._execute_compute(content)
         else:
@@ -279,6 +325,84 @@ class ResearchDecomposer(Decomposer):
         return {
             "finding": "",
             "source": f"Web search failed: {result.error or 'unknown'}",
+        }
+
+    async def _execute_prioritization(self, content: dict) -> dict[str, Any]:
+        """Prioritize references for a specific task using Claude."""
+        query = content.get("query", "")
+        references = content.get("references", [])
+
+        if not references:
+            return {"finding": "", "source": "No references to prioritize", "priority_order": []}
+
+        # Format references for the prompt
+        ref_lines = []
+        for i, ref in enumerate(references, 1):
+            label = ref.get("label", ref.get("path", f"ref_{i}"))
+            details = []
+            if ref.get("path"):
+                details.append(f"file: {ref['path']}")
+            if ref.get("url"):
+                details.append(f"url: {ref['url']}")
+            if ref.get("sections"):
+                details.append(f"sections: {', '.join(ref['sections'])}")
+            if ref.get("focus"):
+                details.append("PRIMARY")
+            detail_str = f" ({', '.join(details)})" if details else ""
+            ref_lines.append(f"{i}. {label}{detail_str}")
+
+        prompt = REFERENCE_PRIORITIZATION_PROMPT.format(
+            query=query,
+            references="\n".join(ref_lines),
+        )
+
+        result = await execute_task_with_claude(
+            project_dir=self.project_dir,
+            prompt=prompt,
+            model=self.model,
+            timeout_seconds=self.timeout_seconds,
+            non_interactive=True,
+            stall_timeout=0,
+        )
+
+        if not result.success:
+            # Fallback: return references in original order
+            labels = [r.get("label", f"ref_{i}") for i, r in enumerate(references, 1)]
+            return {
+                "finding": "Prioritization failed — using original order",
+                "source": "prioritization (fallback)",
+                "priority_order": labels,
+            }
+
+        # Parse the JSON response
+        import re
+        text = result.output.strip()
+        text = re.sub(r'^```(?:json)?\s*\n', '', text)
+        text = re.sub(r'\n```\s*$', '', text)
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end > start:
+                try:
+                    data = json.loads(text[start:end + 1])
+                except json.JSONDecodeError:
+                    data = {}
+            else:
+                data = {}
+
+        priority_order = data.get("priority_order", [])
+        analysis = data.get("analysis", [])
+        analysis_text = "\n".join(
+            f"- {a.get('label', '?')} (relevance={a.get('relevance', '?')}): {a.get('look_for', '')}"
+            for a in analysis
+        ) if analysis else "No detailed analysis"
+
+        return {
+            "finding": f"Reference priority analysis:\n{analysis_text}",
+            "source": "prioritization",
+            "priority_order": priority_order,
         }
 
     def _execute_compute(self, content: dict) -> dict[str, Any]:

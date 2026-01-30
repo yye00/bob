@@ -156,7 +156,10 @@ class VerificationDecomposer(Decomposer):
         """Decompose into research work units if needed.
 
         If we have research/references → no decomposition needed (execute directly).
-        If we don't → spawn research units for papers and web search.
+        If we don't → spawn research units:
+          1. A reference prioritization unit (ranks references by relevance to task)
+          2. Paper reading units for each reference (processed in priority order)
+          3. A web search unit for supplementary data
         """
         content = unit.content
         has_research = bool(content.get("research_findings"))
@@ -172,20 +175,53 @@ class VerificationDecomposer(Decomposer):
         task_title = content.get("task_title", "")
         task_desc = content.get("task_description", "")
 
-        # Paper research (for each reference)
-        for ref in self.references:
+        if self.references:
+            # Step 1: Prioritize references for this specific task
+            # This is itself a research unit — Bob figures out which
+            # papers matter most for verifying THIS task
+            ref_summary = "\n".join(
+                f"- {r.get('label', r.get('path', 'unknown'))}"
+                + (f" (priority: {r['priority']})" if 'priority' in r else "")
+                for r in self.references
+            )
             children.append(WorkUnit(
                 kind=WorkUnitKind.RESEARCH,
                 content={
-                    "query": f"Extract reference values from: {ref.get('label', ref.get('path', ''))}",
-                    "source_type": "paper",
-                    "paper_path": ref.get("path", ""),
-                    "paper_sections": ref.get("sections"),
+                    "query": (
+                        f"Rank these references by relevance to verifying: {task_title}\n\n"
+                        f"Task description: {task_desc[:300]}\n\n"
+                        f"References:\n{ref_summary}\n\n"
+                        f"Output a JSON list of reference labels in priority order, "
+                        f"with a relevance score (0-1) and what to look for in each."
+                    ),
+                    "source_type": "prioritization",
+                    "references": self.references,
                     "task_context": task_title,
                 },
             ))
 
-        # Web search research
+            # Step 2: Paper research units for each reference
+            # These will be processed after prioritization results are available
+            for ref in self.references:
+                # Use explicit priority if provided, otherwise Bob will figure it out
+                children.append(WorkUnit(
+                    kind=WorkUnitKind.RESEARCH,
+                    content={
+                        "query": f"Extract reference values from: {ref.get('label', ref.get('path', ''))}",
+                        "source_type": "paper",
+                        "paper_path": ref.get("path", ""),
+                        "paper_url": ref.get("url", ""),
+                        "paper_sections": ref.get("sections"),
+                        "paper_label": ref.get("label", ""),
+                        "priority": ref.get("priority"),  # None if not provided
+                        "task_context": task_title,
+                    },
+                ))
+        else:
+            # No references at all — web search only
+            pass
+
+        # Step 3: Web search for supplementary reference values
         children.append(WorkUnit(
             kind=WorkUnitKind.RESEARCH,
             content={
@@ -207,36 +243,82 @@ class VerificationDecomposer(Decomposer):
         """
         content = unit.content
 
-        # Collect research findings from children
-        findings = []
+        # Collect research findings from children, organized by type
+        prioritization = None
+        paper_findings = []
+        web_findings = []
+
         for child_id in unit.children:
             child = tree.get(child_id)
-            if child and child.kind == WorkUnitKind.RESEARCH and child.result:
-                finding = child.result.get("finding", "")
-                source = child.result.get("source", "unknown")
+            if not child or child.kind != WorkUnitKind.RESEARCH or not child.result:
+                continue
+            source_type = child.content.get("source_type", "unknown")
+            finding = child.result.get("finding", "")
+            source = child.result.get("source", source_type)
+
+            if source_type == "prioritization":
+                prioritization = child.result
+            elif source_type == "paper":
+                label = child.content.get("paper_label", source)
                 if finding:
-                    findings.append(f"[{source}]: {finding}")
+                    paper_findings.append({
+                        "label": label,
+                        "finding": finding,
+                        "priority": child.content.get("priority"),
+                    })
+            elif source_type == "web":
+                if finding:
+                    web_findings.append(f"[web]: {finding}")
+
+        # Sort paper findings by priority if prioritization result is available
+        if prioritization and isinstance(prioritization.get("priority_order"), list):
+            priority_order = {label: i for i, label in enumerate(prioritization["priority_order"])}
+            paper_findings.sort(
+                key=lambda f: (
+                    f.get("priority") if f.get("priority") is not None
+                    else priority_order.get(f["label"], 999)
+                )
+            )
+        elif paper_findings:
+            # Sort by explicit priority field if present
+            paper_findings.sort(key=lambda f: f.get("priority") or 999)
 
         # Also collect from content (if research was done before decomposition)
         if content.get("research_findings"):
-            findings.append(content["research_findings"])
+            web_findings.append(content["research_findings"])
 
-        # Read reference papers directly
+        # Read reference papers directly (fallback if children didn't extract)
         paper_texts = []
-        for ref in self.references:
-            path = ref.get("path")
-            if path:
-                paper_path = Path(self.workspace_dir) / path
-                if paper_path.exists():
-                    from bob.orchestrator.verification_researcher import _extract_paper_text
-                    text = _extract_paper_text(paper_path, ref.get("sections"))
-                    label = ref.get("label", path)
-                    paper_texts.append(f"### {label}\n{text}")
+        if not paper_findings:
+            for ref in self.references:
+                path = ref.get("path")
+                if path:
+                    paper_path = Path(self.workspace_dir) / path
+                    if paper_path.exists():
+                        from bob.orchestrator.verification_researcher import _extract_paper_text
+                        text = _extract_paper_text(paper_path, ref.get("sections"))
+                        label = ref.get("label", path)
+                        paper_texts.append(f"### {label}\n{text}")
 
-        # Build research context
-        research_context = "\n\n".join(findings)
+        # Build research context — papers first (in priority order), then web
+        research_parts = []
+        if paper_findings:
+            research_parts.append("### From Papers (priority order)")
+            for pf in paper_findings:
+                research_parts.append(f"#### {pf['label']}\n{pf['finding']}")
         if paper_texts:
-            research_context += "\n\n### From Papers\n" + "\n\n".join(paper_texts)
+            research_parts.append("### From Papers (direct extraction)")
+            research_parts.extend(paper_texts)
+        if web_findings:
+            research_parts.append("### From Web Search")
+            research_parts.extend(web_findings)
+        if prioritization:
+            # Include prioritization rationale
+            rationale = prioritization.get("finding", "")
+            if rationale:
+                research_parts.insert(0, f"### Reference Priority Analysis\n{rationale}")
+
+        research_context = "\n\n".join(research_parts)
 
         if not research_context.strip():
             research_context = "(no research findings available — use domain knowledge)"
