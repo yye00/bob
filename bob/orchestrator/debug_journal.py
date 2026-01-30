@@ -209,13 +209,42 @@ Task passed verification after {attempt_number} debug attempt(s).
             attempt_count = content.count("## Debug Attempt")
             resolved = "RESOLVED" in content
             spec_id = path.stem
+            size_kb = path.stat().st_size / 1024
             journals.append({
                 "spec_id": spec_id,
                 "attempts": attempt_count,
                 "resolved": resolved,
                 "path": str(path),
+                "size_kb": round(size_kb, 1),
             })
         return journals
+
+    def cleanup_resolved(self) -> list[str]:
+        """Remove journals for tasks that were resolved.
+        
+        Returns list of spec_ids that were cleaned up.
+        """
+        cleaned = []
+        for path in self.debug_dir.glob("*.md"):
+            content = path.read_text()
+            if "RESOLVED" in content:
+                spec_id = path.stem
+                path.unlink()
+                cleaned.append(spec_id)
+        return cleaned
+
+    def cleanup_all(self) -> int:
+        """Remove all debug journals. Returns count of files removed."""
+        count = 0
+        for path in self.debug_dir.glob("*.md"):
+            path.unlink()
+            count += 1
+        return count
+
+    def total_size_kb(self) -> float:
+        """Get total size of all debug journals in KB."""
+        total = sum(p.stat().st_size for p in self.debug_dir.glob("*.md"))
+        return round(total / 1024, 1)
     
     @staticmethod
     def _auto_summarize_error(error_text: str) -> str:

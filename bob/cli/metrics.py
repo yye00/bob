@@ -285,3 +285,58 @@ def _show_task_history(runs: list[Path], task_spec_id: str, json_output: bool) -
 
     console.print(table)
     console.print()
+
+
+@metrics.command()
+@click.option("--resolved-only", is_flag=True, help="Only clean up resolved journals")
+@click.pass_context
+def cleanup(ctx, resolved_only):
+    """Clean up debug journal files.
+    
+    By default, removes ALL debug journals. Use --resolved-only to
+    keep journals for tasks still being debugged.
+    """
+    from bob.orchestrator.debug_journal import DebugJournal
+    
+    project = _get_active_project(ctx)
+    if not project:
+        return
+    
+    journal = DebugJournal(project.workspace_dir)
+    
+    # Show what we have
+    journals = journal.list_journals()
+    if not journals:
+        click.echo("No debug journals found.")
+        return
+    
+    total_kb = journal.total_size_kb()
+    resolved = sum(1 for j in journals if j["resolved"])
+    unresolved = len(journals) - resolved
+    
+    click.echo(f"Debug journals: {len(journals)} files ({total_kb} KB)")
+    click.echo(f"  Resolved: {resolved}")
+    click.echo(f"  Unresolved: {unresolved}")
+    
+    if resolved_only:
+        cleaned = journal.cleanup_resolved()
+        click.echo(f"\nCleaned up {len(cleaned)} resolved journal(s): {', '.join(cleaned) if cleaned else 'none'}")
+    else:
+        count = journal.cleanup_all()
+        click.echo(f"\nRemoved all {count} debug journal(s).")
+
+
+def _get_active_project(ctx):
+    """Get the active project from context."""
+    from bob.database.manager import DatabaseManager
+    
+    db_path = ctx.obj.db_path
+    db = DatabaseManager(db_path)
+    
+    # Try to find active project
+    projects = db.list_projects()
+    active = [p for p in projects if p.status.value == "active"]
+    if not active:
+        click.echo("No active project found.", err=True)
+        return None
+    return active[0]

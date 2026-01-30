@@ -219,6 +219,16 @@ class Orchestrator:
 
         return True, None
 
+    def _cleanup_task_debug(self, task: Task) -> None:
+        """Clean up debug journal for a completed task.
+        
+        Called automatically when a task completes successfully.
+        The journal has already been marked RESOLVED, so we can
+        safely remove it to prevent accumulation.
+        """
+        if self.debug_journal.has_journal(task.spec_id):
+            self.debug_journal.clear_journal(task.spec_id)
+
     def _check_dependencies(self, task: Task) -> tuple[bool, dict[str, str]]:
         """
         Check if all dependencies for a task are met.
@@ -435,6 +445,7 @@ class Orchestrator:
                             deps_met=deps_met,
                         )
                         self.db.update_task(task.id, status=TaskStatus.COMPLETED)
+                        self._cleanup_task_debug(task)  # Remove journal after success
                         self.telemetry.set_task_final_status(task.id, "completed")
                         return TaskStatus.COMPLETED, None
                     else:
@@ -456,6 +467,7 @@ class Orchestrator:
                 )
                 # Update task status to completed
                 self.db.update_task(task.id, status=TaskStatus.COMPLETED)
+                self._cleanup_task_debug(task)  # Remove any leftover journal
                 self.telemetry.end_task_attempt(task.id, success=True)
                 self.telemetry.set_task_final_status(task.id, "completed")
                 return TaskStatus.COMPLETED, None
