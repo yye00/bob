@@ -240,12 +240,13 @@ class TestLogsCommand:
 
             assert result.exit_code == 0
 
-            # Parse the JSON output
+            # Parse the JSON output (skip non-JSON lines like DB migration messages)
             lines = [line for line in result.output.strip().split("\n") if line]
-            assert len(lines) >= 1
+            json_lines = [line for line in lines if line.strip().startswith("{")]
+            assert len(json_lines) >= 1
 
             # Verify it's valid JSON
-            log_entry = json.loads(lines[0])
+            log_entry = json.loads(json_lines[0])
             assert log_entry["message"] == "Test JSON message"
             assert log_entry["event_type"] == "task_started"
             assert log_entry["level"] == "INFO"

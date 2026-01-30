@@ -22,7 +22,7 @@ class TestCostsCommand:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        self.runner = CliRunner()
+        self.runner = CliRunner(mix_stderr=False)
 
     def test_costs_with_no_projects(self, tmp_path: Path) -> None:
         """Test costs command with no projects."""
@@ -117,7 +117,9 @@ class TestCostsCommand:
             )
 
             assert result.exit_code == 1
-            assert "Project not found" in result.output
+            # Error message goes to stderr with mix_stderr=False
+            combined = result.output + (getattr(result, 'stderr', '') or '')
+            assert "not found" in combined.lower()
 
     def test_costs_json_output_single_project(self, tmp_path: Path) -> None:
         """Test costs command JSON output for single project."""

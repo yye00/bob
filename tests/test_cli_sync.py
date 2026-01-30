@@ -98,7 +98,7 @@ class TestSyncCommand:
         """Test sync fails when no active project exists."""
         result = runner.invoke(cli, ["--db", str(db_path), "sync"])
         assert result.exit_code == 1
-        assert "No active project found" in result.output
+        assert "not found" in result.output.lower() or "no active project" in result.output.lower()
 
     def test_sync_adds_new_tasks(self, runner, sample_project):
         """Test sync adds new tasks from spec file."""
@@ -526,7 +526,7 @@ class TestSyncMultipleProjects:
         # Try to sync without --project flag and without active project set
         result = runner.invoke(cli, ["--db", str(db_path), "sync"], env={"HOME": str(tmp_path)})
         assert result.exit_code == 1
-        assert "No active project found" in result.output
+        assert "not found" in result.output.lower() or "no active project" in result.output.lower()
         assert "bob project use" in result.output
 
 

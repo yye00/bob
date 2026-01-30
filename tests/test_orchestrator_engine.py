@@ -201,16 +201,12 @@ class TestExecuteTask:
 
         orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir)
 
-        # Mock create_research_client
-        with patch('bob.orchestrator.engine.create_research_client') as mock_create_research:
-            mock_client = MagicMock()
-            mock_create_research.return_value = mock_client
+        # Engine now passes None as client and uses Claude CLI directly
+        with patch.object(orchestrator, '_execute_with_client', return_value=(True, None)) as mock_exec:
+            await orchestrator.execute_task(sample_task, "Test prompt")
 
-            with patch.object(orchestrator, '_execute_with_client', return_value=(True, None)):
-                await orchestrator.execute_task(sample_task, "Test prompt")
-
-            # Research client should have been created
-            mock_create_research.assert_called_once()
+            # _execute_with_client should have been called
+            mock_exec.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_execute_task_without_research(
@@ -221,16 +217,12 @@ class TestExecuteTask:
 
         orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir)
 
-        # Mock create_client
-        with patch('bob.orchestrator.engine.create_client') as mock_create:
-            mock_client = MagicMock()
-            mock_create.return_value = mock_client
+        # Engine now passes None as client and uses Claude CLI directly
+        with patch.object(orchestrator, '_execute_with_client', return_value=(True, None)) as mock_exec:
+            await orchestrator.execute_task(sample_task, "Test prompt")
 
-            with patch.object(orchestrator, '_execute_with_client', return_value=(True, None)):
-                await orchestrator.execute_task(sample_task, "Test prompt")
-
-            # Regular client should have been created
-            mock_create.assert_called_once()
+            # _execute_with_client should have been called
+            mock_exec.assert_called_once()
 
 
 class TestHandleFailure:
