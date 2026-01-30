@@ -14,6 +14,7 @@ The Orchestrator coordinates the execution of tasks by:
 """
 
 import asyncio
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -34,6 +35,7 @@ from bob.orchestrator.task_decomposer import TaskDecomposer
 from bob.orchestrator.research_controller import ResearchController
 from bob.observability.cost_tracker import CostTracker
 from bob.observability.telemetry import RunTelemetry
+from bob.orchestrator.debug_journal import DebugJournal
 from bob.config import ConfigManager
 
 
@@ -129,6 +131,9 @@ class Orchestrator:
 
         # Initialize telemetry
         self.telemetry = RunTelemetry(workspace=project_dir)
+
+        # Initialize debug journal (MemGPT-style on-disk debug history)
+        self.debug_journal = DebugJournal(project_dir)
 
         # Current execution state
         self.current_task: Optional[Task] = None
@@ -333,15 +338,26 @@ class Orchestrator:
                 self.telemetry.record_verification(task.id, verified, verify_msg)
 
                 if not verified:
-                    # === MULTI-DEBUG LOOP ===
-                    # Instead of a single debug attempt, loop up to max_debug_attempts.
-                    # Each iteration feeds verification errors back to Claude.
+                    # === MULTI-DEBUG LOOP (MemGPT-style) ===
+                    # Instead of stuffing all error history into the prompt (which
+                    # eats the context window), we:
+                    # 1. Store full debug history in a journal file on disk
+                    # 2. Inject only a compact summary into the debug prompt
+                    # 3. Tell Claude where the journal is so it can read on-demand
                     max_debug = self.config.max_debug_attempts
                     print(f"\n🔍 Verification failed for {task.spec_id}:")
                     print(verify_msg)
                     print(f"\n🐛 Entering debug mode (up to {max_debug} attempts)...")
 
-                    previous_errors = [verify_msg]
+                    # Record first failure to journal
+                    self.debug_journal.record_attempt(
+                        spec_id=task.spec_id,
+                        task_title=task.title,
+                        attempt_number=0,
+                        verification_error=verify_msg,
+                        approach_taken="Initial implementation",
+                    )
+
                     debug_succeeded = False
 
                     for debug_attempt in range(max_debug):
@@ -356,8 +372,10 @@ class Orchestrator:
                             debug_attempt_number=debug_attempt + 1,
                         )
 
+                        # Build a LEAN debug prompt using journal summary
+                        # (not full error history — Claude can read the journal file)
                         debug_prompt = self._build_debug_prompt(
-                            task, prompt, verify_msg, debug_attempt, previous_errors
+                            task, prompt, verify_msg, debug_attempt
                         )
                         debug_success, debug_error = await self._execute_with_client(None, debug_prompt)
 
@@ -368,15 +386,21 @@ class Orchestrator:
 
                             if verified2:
                                 print(f"\n✅ Debug fix worked on attempt {debug_attempt + 1}! Verification passed for {task.spec_id}")
+                                self.debug_journal.record_success(task.spec_id, debug_attempt + 1)
                                 self.telemetry.record_debug(task.id, debug_attempt + 1, success=True)
                                 self.telemetry.end_task_attempt(task.id, success=True)
                                 debug_succeeded = True
                                 break
                             else:
-                                # Debug didn't fix it — accumulate errors
+                                # Debug didn't fix it — record to journal, continue
                                 print(f"\n🔍 Debug attempt {debug_attempt + 1} didn't fix verification:")
                                 print(verify_msg2)
-                                previous_errors.append(verify_msg2)
+                                self.debug_journal.record_attempt(
+                                    spec_id=task.spec_id,
+                                    task_title=task.title,
+                                    attempt_number=debug_attempt + 1,
+                                    verification_error=verify_msg2,
+                                )
                                 verify_msg = verify_msg2  # Update for next iteration
                                 self.telemetry.record_debug(
                                     task.id, debug_attempt + 1, success=False,
@@ -387,8 +411,14 @@ class Orchestrator:
                                 )
                         else:
                             # Debug execution itself failed
-                            error_detail = f"Debug attempt {debug_attempt + 1} execution failed: {debug_error}"
-                            previous_errors.append(error_detail)
+                            error_detail = f"Debug execution failed: {debug_error}"
+                            self.debug_journal.record_attempt(
+                                spec_id=task.spec_id,
+                                task_title=task.title,
+                                attempt_number=debug_attempt + 1,
+                                verification_error=error_detail,
+                                approach_taken="Debug execution crashed",
+                            )
                             self.telemetry.record_debug(
                                 task.id, debug_attempt + 1, success=False,
                                 error_message=error_detail,
@@ -469,25 +499,23 @@ class Orchestrator:
         original_prompt: str,
         verify_errors: str,
         debug_attempt: int = 0,
-        previous_errors: Optional[list[str]] = None,
     ) -> str:
         """
-        Build a debug prompt that feeds verification errors back to Claude.
+        Build a LEAN debug prompt using MemGPT-style retrieval.
         
-        Instead of retrying blind, this tells Claude:
-        1. What files it already created
-        2. What the verification errors are
-        3. To READ its own code and FIX the specific issues
-        4. Full file inventory of the workspace
+        Instead of stuffing all debug history into the prompt (which eats
+        the context window and degrades reasoning), we:
         
-        This turns "retry from scratch" into "iterative debugging."
+        1. Include ONLY the current error (what needs fixing NOW)
+        2. Include a compact summary of previous attempts (~1 line each)
+        3. Point Claude to the on-disk debug journal for full details
+        4. List existing files (so Claude knows what to read/edit)
+        5. Include the verify script (so Claude can test its fix)
         
-        Args:
-            task: The task being debugged
-            original_prompt: The original task prompt
-            verify_errors: Current verification error message
-            debug_attempt: Which debug attempt this is (0-indexed)
-            previous_errors: List of all previous error messages
+        The original task spec is NOT duplicated here — Claude can read it
+        from the spec file or the journal if needed.
+        
+        Target: ~500-800 tokens for the debug prompt itself (vs 3000+ before).
         """
         # List files that exist in the expected outputs
         existing_files = []
@@ -502,65 +530,54 @@ class Orchestrator:
         
         files_section = "\n".join(existing_files) if existing_files else "  (no files created yet)"
         
-        # Build workspace file inventory
-        workspace_inventory = self._get_workspace_inventory()
-        
         # Include the verify_script so Claude can run it itself
         verify_section = ""
         if task.verify_script:
             verify_section = f"""
-## Verify Script (run this to check your fix)
+## Verify Script
 ```bash
 {task.verify_script.strip()}
 ```
 """
         
-        # Build previous errors section
-        prev_errors_section = ""
-        if previous_errors and len(previous_errors) > 1:
-            prev_errors_section = "\n## Previous Debug Attempts (ALREADY TRIED)\n"
-            for i, err in enumerate(previous_errors[:-1]):
-                prev_errors_section += f"\n### Attempt {i + 1} errors:\n```\n{err}\n```\n"
-            prev_errors_section += "\nDo NOT repeat the same fixes that already failed. Try a DIFFERENT approach.\n"
+        # Get compact journal summary (1 line per previous attempt)
+        # Full history is on disk — Claude can read it if needed
+        journal_summary = self.debug_journal.get_compact_summary(task.spec_id)
+        journal_path = self.debug_journal.journal_path(task.spec_id)
+        rel_journal = os.path.relpath(journal_path, self.project_dir)
         
-        attempt_info = f"(Debug attempt {debug_attempt + 1})" if debug_attempt > 0 else ""
+        journal_section = ""
+        if journal_summary:
+            journal_section = f"""
+## Debug History (compact — read `{rel_journal}` for full traces)
+{journal_summary}
+"""
         
-        debug_prompt = f"""# DEBUG MODE: Fix Verification Failures {attempt_info}
+        attempt_num = debug_attempt + 1
+        
+        debug_prompt = f"""# DEBUG MODE: Fix Verification Failures (attempt {attempt_num})
 
 ## Task: {task.title} ({task.spec_id})
 
-## What Happened
-You already implemented this task. The code exists but FAILED verification.
-DO NOT start over. READ your existing code and FIX the specific issues below.
+Your code exists but FAILED verification. DO NOT rewrite from scratch.
+READ your code, find the bug, FIX it.
 
-## Your Existing Files
+## Your Files
 {files_section}
 
-## Full Workspace File Inventory
-{workspace_inventory}
-
-## Verification Errors (FIX THESE)
+## Current Error (FIX THIS)
 ```
 {verify_errors}
 ```
-{prev_errors_section}
-## What To Do
-1. READ each file listed above — understand what you already wrote
-2. For each error above, find the root cause in your code
-3. FIX the specific issues — don't rewrite from scratch
-4. Run the verify script yourself to confirm the fix works
-
+{journal_section}
+## Instructions
+1. READ each file listed above
+2. Find the root cause of the error
+3. FIX the specific issue — edit, don't rewrite
+4. Run the verify script to confirm
 {verify_section}
-## Original Task Requirements (for reference)
-{original_prompt}
-
-## IMPORTANT
-- Do NOT delete and rewrite files — edit them to fix the issues
-- If a class is named wrong, rename it
-- If a method is missing, add it
-- If a pattern is forbidden, remove it
-- If an assertion fails, debug WHY and fix the logic
-- Run the verify script after each fix to check progress
+If you need the original task requirements, they're in the task spec.
+If you need full error traces from previous attempts, read: `{rel_journal}`
 """
         return debug_prompt
 

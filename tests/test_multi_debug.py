@@ -113,45 +113,51 @@ class TestWorkspaceInventory:
 
 
 class TestBuildDebugPrompt:
-    """Test _build_debug_prompt with new parameters."""
+    """Test _build_debug_prompt with MemGPT-style journal approach."""
 
     def test_debug_prompt_includes_attempt_info(self, db_manager, temp_project_dir, sample_task):
         """Test that debug prompt includes attempt number."""
         orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir)
+        # Record some journal entries so the summary appears
+        orchestrator.debug_journal.record_attempt("F001", "Test Task", 1, "Error 1")
+        orchestrator.debug_journal.record_attempt("F001", "Test Task", 2, "Error 2")
         prompt = orchestrator._build_debug_prompt(
             task=sample_task,
             original_prompt="Original task prompt",
             verify_errors="Missing file: output.py",
             debug_attempt=2,
-            previous_errors=["Error 1", "Error 2", "Missing file: output.py"],
         )
-        assert "Debug attempt 3" in prompt  # 0-indexed + 1
-        assert "Previous Debug Attempts" in prompt
-        assert "Error 1" in prompt
-        assert "DIFFERENT approach" in prompt
+        assert "attempt 3" in prompt  # 0-indexed + 1
+        assert "Debug History" in prompt
+        assert "debug journal" in prompt.lower() or ".bob/debug" in prompt
 
-    def test_debug_prompt_includes_workspace_inventory(self, db_manager, temp_project_dir, sample_task):
-        """Test that debug prompt includes workspace file inventory."""
+    def test_debug_prompt_is_lean(self, db_manager, temp_project_dir, sample_task):
+        """Test that the new debug prompt is compact (no full error history)."""
         orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir)
         prompt = orchestrator._build_debug_prompt(
             task=sample_task,
             original_prompt="Original task prompt",
             verify_errors="Something broke",
         )
-        assert "Full Workspace File Inventory" in prompt
-        assert "main.py" in prompt
+        # Should NOT contain the original prompt duplicated
+        assert "Original task prompt" not in prompt
+        # Should reference journal file for full context
+        assert ".bob/debug" in prompt
+        # Should be reasonably compact
+        assert len(prompt) < 3000  # Under 3K chars
 
-    def test_debug_prompt_no_previous_errors(self, db_manager, temp_project_dir, sample_task):
-        """Test debug prompt without previous errors."""
+    def test_debug_prompt_no_journal_yet(self, db_manager, temp_project_dir, sample_task):
+        """Test debug prompt when no journal exists yet."""
         orchestrator = Orchestrator(db_manager, "proj-1", temp_project_dir)
         prompt = orchestrator._build_debug_prompt(
             task=sample_task,
             original_prompt="Original task prompt",
             verify_errors="First error",
             debug_attempt=0,
-            previous_errors=None,
         )
-        assert "Previous Debug Attempts" not in prompt
+        # Should still work without journal entries
+        assert "First error" in prompt
+        assert "DEBUG MODE" in prompt
 
 
 class TestMultiDebugLoop:
