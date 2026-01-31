@@ -301,9 +301,31 @@ async def _read_references(
             summaries.append(f"### {label}\n(File not found: {full_path})\n")
             continue
 
-        # Read the file
+        # Read the file (handle PDFs specially)
         try:
-            content = full_path.read_text(errors="replace")
+            if full_path.suffix.lower() == ".pdf":
+                # Use pdftotext for PDF files (falls back to error message)
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["pdftotext", "-layout", str(full_path), "-"],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        content = result.stdout
+                    else:
+                        summaries.append(f"### {label}\n(Failed to extract PDF text: {result.stderr.strip()})\n")
+                        continue
+                except FileNotFoundError:
+                    summaries.append(f"### {label}\n(pdftotext not installed — cannot read PDF)\n")
+                    continue
+                except subprocess.TimeoutExpired:
+                    summaries.append(f"### {label}\n(PDF extraction timed out)\n")
+                    continue
+            else:
+                content = full_path.read_text(errors="replace")
+            # Strip null bytes that can corrupt API calls
+            content = content.replace("\x00", "")
             # Truncate very long files
             if len(content) > 50000:
                 content = content[:50000] + "\n\n[... truncated at 50K chars ...]"

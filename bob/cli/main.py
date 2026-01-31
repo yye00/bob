@@ -12,6 +12,7 @@ import click
 # Import project commands
 from bob.cli import config as config_commands
 from bob.cli import costs as costs_commands
+from bob.cli import critical_path as critical_path_commands
 from bob.cli import init as init_commands
 from bob.cli import logs as logs_commands
 from bob.cli import metrics as metrics_commands
@@ -210,6 +211,9 @@ cli.add_command(research_commands.research)
 
 # Add status command
 cli.add_command(status_commands.status)
+
+# Add critical path analysis command
+cli.add_command(critical_path_commands.critical_path)
 
 # Sync command is added directly from sync_commands module
 

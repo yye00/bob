@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from bob.database.manager import DatabaseManager
 from bob.models import Project
 from bob.observability.cost_tracker import CostTracker
+from bob.orchestrator.critical_path import CriticalPathAnalyzer
 
 
 def format_cost(amount: float) -> str:
@@ -32,6 +33,18 @@ def format_percentage(value: int, total: int) -> str:
     return click.style(f"{pct:.1f}%", fg=color)
 
 
+def format_duration(hours: float) -> str:
+    """Format duration in a human-readable way."""
+    if hours < 1:
+        minutes = int(hours * 60)
+        return f"{minutes}m"
+    elif hours < 24:
+        return f"{hours:.1f}h"
+    else:
+        days = hours / 24
+        return f"{days:.1f}d"
+
+
 def get_project_summary(db: DatabaseManager, project: Project) -> Dict[str, Any]:
     """Get summary statistics for a project."""
     # Get task counts
@@ -53,12 +66,41 @@ def get_project_summary(db: DatabaseManager, project: Project) -> Dict[str, Any]
     cost_tracker = CostTracker(db)
     costs = cost_tracker.get_project_costs(project.id)
 
+    # Get critical path analysis (only if we have tasks)
+    critical_path_info = None
+    if tasks:
+        try:
+            analyzer = CriticalPathAnalyzer(db, project.id)
+            analysis = analyzer.analyze()
+            
+            if not analysis.errors:
+                # Find current bottleneck (highest scoring non-completed task)
+                current_bottleneck = None
+                if analysis.bottleneck_scores:
+                    incomplete_tasks = {spec_id: score for spec_id, score in analysis.bottleneck_scores.items() 
+                                      if any(t.spec_id == spec_id and t.status.value not in ['completed'] 
+                                           for t in tasks)}
+                    if incomplete_tasks:
+                        bottleneck_spec_id = max(incomplete_tasks.items(), key=lambda x: x[1])[0]
+                        current_bottleneck = next((t for t in tasks if t.spec_id == bottleneck_spec_id), None)
+                
+                critical_path_info = {
+                    'critical_path_length': len(analysis.critical_path),
+                    'estimated_remaining_hours': analysis.total_estimated_duration,
+                    'current_bottleneck': current_bottleneck,
+                    'parallelism_opportunities': len(analysis.parallelism_groups)
+                }
+        except Exception:
+            # Don't let critical path analysis errors break status display
+            critical_path_info = None
+
     return {
         'project': project,
         'task_counts': task_counts,
         'active_sessions': len(active_sessions),
         'total_sessions': len(sessions),
         'costs': costs,
+        'critical_path': critical_path_info,
     }
 
 
@@ -142,6 +184,19 @@ def display_text_status(
         project_cost = costs.total_cost if costs else 0
         click.echo(f"    Cost: {format_cost(project_cost)}")
 
+        # Critical path information (brief summary)
+        critical_path = summary.get('critical_path')
+        if critical_path:
+            click.echo(f"    Critical Path: {critical_path['critical_path_length']} tasks, " +
+                      f"~{format_duration(critical_path['estimated_remaining_hours'])} remaining")
+            
+            if critical_path['current_bottleneck']:
+                bottleneck = critical_path['current_bottleneck']
+                click.echo(f"    Current Bottleneck: {click.style(bottleneck.spec_id, fg='red')} - {bottleneck.title}")
+                
+            if show_details and critical_path['parallelism_opportunities'] > 0:
+                click.echo(f"    Parallelism: {critical_path['parallelism_opportunities']} groups can run in parallel")
+
         click.echo()
 
     # Cost breakdown
@@ -175,6 +230,22 @@ def display_json_status(summaries: List[Dict[str, Any]], total_costs: Any) -> No
             'by_agent': costs.by_agent if costs else {},
         } if costs else {'total': 0}
 
+        # Convert critical path info if available
+        critical_path_dict = None
+        if summary.get('critical_path'):
+            cp = summary['critical_path']
+            critical_path_dict = {
+                'critical_path_length': cp['critical_path_length'],
+                'estimated_remaining_hours': cp['estimated_remaining_hours'],
+                'current_bottleneck': {
+                    'spec_id': cp['current_bottleneck'].spec_id,
+                    'title': cp['current_bottleneck'].title,
+                    'priority': cp['current_bottleneck'].priority,
+                    'status': cp['current_bottleneck'].status.value
+                } if cp['current_bottleneck'] else None,
+                'parallelism_opportunities': cp['parallelism_opportunities']
+            }
+
         projects.append({
             'id': project.id,
             'name': project.name,
@@ -184,6 +255,7 @@ def display_json_status(summaries: List[Dict[str, Any]], total_costs: Any) -> No
             'active_sessions': summary['active_sessions'],
             'total_sessions': summary['total_sessions'],
             'costs': costs_dict,
+            'critical_path': critical_path_dict,
         })
 
     # Convert total_costs to dict if it's a ProjectCostSummary
