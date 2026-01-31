@@ -26,6 +26,30 @@ from typing import Any
 
 from bob.orchestrator.claude_executor import execute_task_with_claude
 
+try:
+    from bob.orchestrator.claude_sdk_executor import execute_task_with_sdk as _sdk_execute
+    _USE_SDK = True
+except ImportError:
+    _USE_SDK = False
+
+
+async def _execute(project_dir, prompt, model, timeout_seconds, **kwargs):
+    """Execute via SDK (preferred) or CLI (fallback)."""
+    if _USE_SDK:
+        return await _sdk_execute(
+            project_dir=project_dir,
+            prompt=prompt,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
+    return await execute_task_with_claude(
+        project_dir=project_dir,
+        prompt=prompt,
+        model=model,
+        timeout_seconds=timeout_seconds,
+        **kwargs,
+    )
+
 
 # The main prompt that Opus uses to extract features from the spec
 FEATURE_EXTRACTION_PROMPT = """\
@@ -189,7 +213,7 @@ async def extract_features(
     )
 
     # Step 3: Call Opus
-    result = await execute_task_with_claude(
+    result = await _execute(
         project_dir=project_dir,
         prompt=prompt,
         model=model,
@@ -297,7 +321,7 @@ async def _read_references(
                 app_description=app_description[:2000],
             )
 
-            result = await execute_task_with_claude(
+            result = await _execute(
                 project_dir=project_dir,
                 prompt=summary_prompt,
                 model=model,

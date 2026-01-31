@@ -34,6 +34,13 @@ from bob.orchestrator.work_unit import (
 )
 from bob.orchestrator.claude_executor import execute_task_with_claude
 
+# Prefer SDK executor when available
+try:
+    from bob.orchestrator.claude_sdk_executor import execute_task_with_sdk as _sdk_execute
+    _USE_SDK = True
+except ImportError:
+    _USE_SDK = False
+
 
 # Prompt for generating verification tests from research findings
 VERIFICATION_GEN_PROMPT = """\
@@ -375,14 +382,22 @@ class VerificationDecomposer(Decomposer):
             if verify_script_section:
                 prompt += verify_script_section
 
-            result = await execute_task_with_claude(
-                project_dir=self.project_dir,
-                prompt=prompt,
-                model=self.model,
-                timeout_seconds=self.timeout_seconds,
-                non_interactive=True,
-                stall_timeout=0,
-            )
+            if _USE_SDK:
+                result = await _sdk_execute(
+                    project_dir=self.project_dir,
+                    prompt=prompt,
+                    model=self.model,
+                    timeout_seconds=self.timeout_seconds,
+                )
+            else:
+                result = await execute_task_with_claude(
+                    project_dir=self.project_dir,
+                    prompt=prompt,
+                    model=self.model,
+                    timeout_seconds=self.timeout_seconds,
+                    non_interactive=True,
+                    stall_timeout=0,
+                )
 
             if not result.success:
                 print(f"    ⚠ Verification generation failed for '{task_title}' "

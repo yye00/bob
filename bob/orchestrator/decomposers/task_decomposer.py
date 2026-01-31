@@ -37,6 +37,13 @@ from bob.orchestrator.work_unit import (
 )
 from bob.orchestrator.claude_executor import execute_task_with_claude
 
+# Prefer SDK executor when available
+try:
+    from bob.orchestrator.claude_sdk_executor import execute_task_with_sdk as _sdk_execute
+    _USE_SDK = True
+except ImportError:
+    _USE_SDK = False
+
 
 # Prompt for task decomposition (breaking big tasks into sub-tasks)
 TASK_DECOMPOSE_PROMPT = """\
@@ -307,15 +314,23 @@ class TaskDecomposer(Decomposer):
             task_id=content.get("id", "T"),
         )
 
-        result = await execute_task_with_claude(
-            project_dir=self.project_dir,
-            prompt=prompt,
-            model=self.model,
-            timeout_seconds=self.timeout_seconds,
-            non_interactive=True,
-            enable_thinking=True,
-            stall_timeout=0,
-        )
+        if _USE_SDK:
+            result = await _sdk_execute(
+                project_dir=self.project_dir,
+                prompt=prompt,
+                model=self.model,
+                timeout_seconds=self.timeout_seconds,
+            )
+        else:
+            result = await execute_task_with_claude(
+                project_dir=self.project_dir,
+                prompt=prompt,
+                model=self.model,
+                timeout_seconds=self.timeout_seconds,
+                non_interactive=True,
+                enable_thinking=True,
+                stall_timeout=0,
+            )
 
         if not result.success:
             return []  # Can't decompose — engine will execute as-is

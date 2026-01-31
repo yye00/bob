@@ -29,6 +29,13 @@ from bob.models.base import (
 )
 from bob.orchestrator.client import create_client, create_research_client
 from bob.orchestrator.claude_executor import ClaudeExecutor, execute_task_with_claude
+
+# SDK executor — preferred, falls back to CLI if SDK unavailable
+try:
+    from bob.orchestrator.claude_sdk_executor import execute_task_with_sdk
+    _SDK_AVAILABLE = True
+except ImportError:
+    _SDK_AVAILABLE = False
 from bob.orchestrator.escalation import EscalationController
 from bob.orchestrator.failure_classifier import classify_failure, ClassificationResult
 from bob.orchestrator.task_decomposer import TaskDecomposer
@@ -684,7 +691,7 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
         prompt: str,
     ) -> tuple[bool, Optional[str]]:
         """
-        Execute task with Claude CLI.
+        Execute task with Claude Code SDK (preferred) or CLI (fallback).
 
         Args:
             client: Claude SDK client (unused, kept for API compatibility)
@@ -693,17 +700,27 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
         Returns:
             Tuple of (success, error_message)
         """
-        # Use Claude CLI executor for reliable execution
-        result = await execute_task_with_claude(
-            project_dir=self.project_dir,
-            prompt=prompt,
-            model=self.current_model,
-            timeout_seconds=3600,  # 1 hour timeout
-            non_interactive=self.config.non_interactive,
-            enable_thinking=self.config.enable_thinking,
-            thinking_budget=self.config.thinking_budget,
-            stall_timeout=self.config.stall_timeout,
-        )
+        if _SDK_AVAILABLE:
+            # Use the Claude Code SDK (Python package)
+            result = await execute_task_with_sdk(
+                project_dir=self.project_dir,
+                prompt=prompt,
+                model=self.current_model,
+                timeout_seconds=3600,  # 1 hour timeout
+                verbose=True,  # Show tool use for monitoring
+            )
+        else:
+            # Fallback to CLI executor
+            result = await execute_task_with_claude(
+                project_dir=self.project_dir,
+                prompt=prompt,
+                model=self.current_model,
+                timeout_seconds=3600,
+                non_interactive=self.config.non_interactive,
+                enable_thinking=self.config.enable_thinking,
+                thinking_budget=self.config.thinking_budget,
+                stall_timeout=self.config.stall_timeout,
+            )
 
         # Record stall detection if it occurred
         if result.exit_code == -2 and self.current_task:
