@@ -783,42 +783,47 @@ def _run_auto_select(
         non_interactive: Whether to run in non-interactive mode
         ctx: Click context
     """
-    # Get next ready task
-    next_task = queue.get_next_task()
+    session_count = 0
+    unlimited = (max_sessions == 0)
 
-    if not next_task:
-        if json_output:
-            click.echo(json.dumps({
-                "status": "no_tasks",
-                "message": "No tasks ready to execute"
-            }))
-        else:
-            click.echo("✗ No tasks ready to execute")
-            click.echo()
-            click.echo("All tasks may be blocked by dependencies or already completed.")
-            click.echo("Run 'bob task list --status pending' to see pending tasks.")
-        return
+    while unlimited or session_count < max_sessions:
+        # Get next ready task
+        next_task = queue.get_next_task()
 
-    # Run with single task path
-    _run_single_task(
-        db=db,
-        project=project,
-        queue=queue,
-        task_id=next_task.spec_id,
-        max_turns=max_turns,
-        max_sessions=max_sessions,
-        model=model,
-        dry_run=dry_run,
-        json_output=json_output,
-        non_interactive=non_interactive,
-        use_opus_default=use_opus_default,
-        enable_thinking=enable_thinking,
-        thinking_budget=thinking_budget,
-        force_research=force_research,
-        max_debug_attempts=max_debug_attempts,
-        stall_timeout=stall_timeout,
-        ctx=ctx,
-    )
+        if not next_task:
+            if json_output:
+                click.echo(json.dumps({
+                    "status": "no_tasks",
+                    "message": "No tasks ready to execute"
+                }))
+            else:
+                click.echo("✗ No tasks ready to execute")
+                click.echo()
+                click.echo("All tasks may be blocked by dependencies or already completed.")
+                click.echo("Run 'bob task list --status pending' to see pending tasks.")
+            return
+
+        # Run with single task path
+        _run_single_task(
+            db=db,
+            project=project,
+            queue=queue,
+            task_id=next_task.spec_id,
+            max_turns=max_turns,
+            max_sessions=1,  # One session per task in the loop
+            model=model,
+            dry_run=dry_run,
+            json_output=json_output,
+            non_interactive=non_interactive,
+            use_opus_default=use_opus_default,
+            enable_thinking=enable_thinking,
+            thinking_budget=thinking_budget,
+            force_research=force_research,
+            max_debug_attempts=max_debug_attempts,
+            stall_timeout=stall_timeout,
+            ctx=ctx,
+        )
+        session_count += 1
 
 
 def _run_resume(
