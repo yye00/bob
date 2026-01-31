@@ -526,7 +526,7 @@ def _tree_to_plan_data(tree: dict, spec_data: dict) -> dict:
 
         task_content = unit.content.copy()
 
-        # Merge verification tests from children
+        # Merge verification tests from execute() result
         if unit.result and isinstance(unit.result, dict):
             result_task = unit.result.get("task", {})
             if isinstance(result_task, dict):
@@ -534,9 +534,34 @@ def _tree_to_plan_data(tree: dict, spec_data: dict) -> dict:
                     if cat in result_task and result_task[cat]:
                         task_content[cat] = result_task[cat]
 
+        # Also check children directly as a fallback — in case execute()
+        # was not called or didn't merge properly
+        for child_id in unit.children:
+            child = tree.get(child_id)
+            if not child or child.kind != WorkUnitKind.VERIFICATION:
+                continue
+            if child.result and isinstance(child.result, dict):
+                for cat in ("numerical_tests", "algorithmic_tests", "convergence_tests"):
+                    tests = child.result.get(cat, [])
+                    if tests and cat not in task_content:
+                        task_content[cat] = tests
+
+        # Recompute verification confidence based on actual test coverage
+        ver_score = 0.3
+        verify_script = task_content.get("verify_script", "")
+        if verify_script and verify_script.strip():
+            ver_score += 0.25
+        if task_content.get("numerical_tests"):
+            ver_score += min(0.2, len(task_content["numerical_tests"]) * 0.1)
+        if task_content.get("algorithmic_tests"):
+            ver_score += min(0.15, len(task_content["algorithmic_tests"]) * 0.1)
+        if task_content.get("convergence_tests"):
+            ver_score += min(0.15, len(task_content["convergence_tests"]) * 0.1)
+        ver_score = min(1.0, ver_score)
+
         # Add confidence metadata
         task_content["implementation_confidence"] = unit.confidence.implementation
-        task_content["verification_confidence"] = unit.confidence.verification
+        task_content["verification_confidence"] = ver_score
 
         tasks.append(task_content)
 

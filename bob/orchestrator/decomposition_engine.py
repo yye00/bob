@@ -245,10 +245,11 @@ class DecompositionEngine:
         for child in children:
             await self.process(child)
 
-        # Step 6: After children complete, re-evaluate parent
-        # (children may have produced results that improve parent confidence)
+        # Step 6: After children complete, execute the parent to collect
+        # child results (e.g., verification tests from child verification units
+        # get merged into the parent task's content).
         if unit.status == WorkUnitStatus.DECOMPOSING:
-            unit.status = WorkUnitStatus.DONE
+            await self._execute(unit)
 
     async def run(self, initial_units: list[WorkUnit]) -> dict[str, WorkUnit]:
         """Run the engine on a set of initial work units.

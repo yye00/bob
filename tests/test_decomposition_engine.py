@@ -332,6 +332,60 @@ class TestDecompositionEngine:
         assert unit.result == {"status": "executed-anyway"}
 
 
+    @pytest.mark.asyncio
+    async def test_parent_execute_called_after_children_complete(self):
+        """After children complete, parent's execute() must be called
+        so it can collect child results (e.g., verification tests).
+        
+        This is the fix for the bug where verification tests were generated
+        by child verification units but never merged into the parent task.
+        """
+
+        class ParentDecomposer(Decomposer):
+            """Decomposes into one child, then execute() collects child results."""
+
+            def __init__(self):
+                self.execute_calls = []
+
+            async def evaluate(self, unit, tree):
+                return ConfidenceScore(implementation=0.3, verification=0.3)
+
+            async def decompose(self, unit, tree):
+                return [
+                    WorkUnit(
+                        kind=WorkUnitKind.RESEARCH,
+                        content={"query": "verify", "title": "Verification"},
+                    )
+                ]
+
+            async def execute(self, unit, tree):
+                self.execute_calls.append(unit.id)
+                # Collect child results
+                child_results = []
+                for child_id in unit.children:
+                    child = tree.get(child_id)
+                    if child and child.result:
+                        child_results.append(child.result)
+                return {"status": "collected", "child_results": child_results}
+
+        parent_decomposer = ParentDecomposer()
+
+        engine = DecompositionEngine(threshold=0.9)
+        engine.register(WorkUnitKind.TASK, parent_decomposer)
+        engine.register(WorkUnitKind.RESEARCH, AlwaysConfidentDecomposer())
+
+        parent = WorkUnit(kind=WorkUnitKind.TASK, content={"title": "Parent"})
+        tree = await engine.run([parent])
+
+        # Parent's execute() should have been called
+        assert parent.id in parent_decomposer.execute_calls
+        # Parent should have result with collected child data
+        assert parent.result is not None
+        assert parent.result["status"] == "collected"
+        assert len(parent.result["child_results"]) == 1
+        assert parent.result["child_results"][0] == {"status": "executed"}
+
+
 # ---------------------------------------------------------------------------
 # Tests: Decomposer interface
 # ---------------------------------------------------------------------------

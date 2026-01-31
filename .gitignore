@@ -69,3 +69,6 @@ harness_logs/summary.txt
 
 # Lock files
 .~lock.*
+decomposition_history.json
+decomposition_tree.json
+generated_spec.yaml

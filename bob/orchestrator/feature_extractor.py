@@ -169,7 +169,8 @@ async def extract_features(
     """
     # Step 1: Read reference material (if local files exist)
     reference_summaries = await _read_references(
-        references, spec_description, project_dir, model, timeout_seconds
+        references, spec_description, project_dir, model, timeout_seconds,
+        workspace_dir=workspace_dir,
     )
 
     # Step 2: Build the extraction prompt
@@ -218,6 +219,7 @@ async def _read_references(
     project_dir: Path,
     model: str,
     timeout_seconds: int,
+    workspace_dir: str = "",
 ) -> str:
     """Read and summarize reference materials.
 
@@ -237,10 +239,17 @@ async def _read_references(
             summaries.append(f"### {label}\n(No path provided)\n")
             continue
 
-        # Resolve relative paths
+        # Resolve relative paths — try workspace first, then project dir
         full_path = Path(path)
         if not full_path.is_absolute():
-            full_path = project_dir / path
+            ws_path = Path(workspace_dir) / path if workspace_dir else None
+            proj_path = project_dir / path
+            if ws_path and ws_path.exists():
+                full_path = ws_path
+            elif proj_path.exists():
+                full_path = proj_path
+            else:
+                full_path = ws_path or proj_path  # Use workspace path for error message
 
         if not full_path.exists():
             summaries.append(f"### {label}\n(File not found: {full_path})\n")
