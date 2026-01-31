@@ -500,8 +500,21 @@ class TestCriticalPathCLI:
         
         assert result.exit_code == 0
         
+        # Extract JSON from output (skip database migration messages)
+        output_lines = result.output.strip().split('\n')
+        json_lines = []
+        found_json_start = False
+        
+        for line in output_lines:
+            if line.strip().startswith('{'):
+                found_json_start = True
+            if found_json_start:
+                json_lines.append(line)
+        
+        json_output = '\n'.join(json_lines)
+        
         # Parse JSON output
-        output_data = json.loads(result.output)
+        output_data = json.loads(json_output)
         
         assert "critical_path" in output_data
         assert "critical_path_duration_hours" in output_data
