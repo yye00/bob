@@ -20,6 +20,7 @@ and enforces the context budget constraint.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections import deque
@@ -69,6 +70,7 @@ class DecompositionEngine:
         self.context_window_tokens = context_window_tokens
         self.context_budget_tokens = int(context_window_tokens * context_budget_pct)
         self.max_total_units = max_total_units
+        self.max_concurrent = 4  # Limit concurrent Claude calls
         self.output_dir = output_dir
 
         # State
@@ -291,9 +293,14 @@ class DecompositionEngine:
         print(f"  Max depth: {initial_units[0].max_depth if initial_units else 3}")
         print()
 
-        # Process each initial unit
-        for unit in initial_units:
-            await self.process(unit)
+        # Process initial units concurrently (bounded by max_concurrent)
+        semaphore = asyncio.Semaphore(self.max_concurrent)
+
+        async def _bounded_process(u: WorkUnit) -> None:
+            async with semaphore:
+                await self.process(u)
+
+        await asyncio.gather(*[_bounded_process(u) for u in initial_units])
 
         # Summary
         elapsed = time.time() - self._start_time

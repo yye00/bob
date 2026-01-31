@@ -112,9 +112,14 @@ class WorkUnit:
     context_tokens: int = 0
     created_at: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> dict:
-        """Serialize for logging and persistence."""
-        return {
+    def to_dict(self, include_content: bool = False) -> dict:
+        """Serialize for logging and persistence.
+
+        Args:
+            include_content: If True, include full content and result dicts.
+                             Default False to keep tree dumps small.
+        """
+        d = {
             "id": self.id,
             "kind": self.kind.value,
             "content_keys": list(self.content.keys()),
@@ -126,6 +131,20 @@ class WorkUnit:
             "children": self.children,
             "context_tokens": self.context_tokens,
         }
+        if include_content:
+            d["content"] = self.content
+            d["result"] = self.result
+        else:
+            # Always include result summary for debugging
+            if isinstance(self.result, dict):
+                d["result_keys"] = list(self.result.keys())
+                # For verification units, include test counts
+                for cat in ("numerical_tests", "algorithmic_tests", "convergence_tests"):
+                    if cat in self.result:
+                        d[f"result_{cat}_count"] = len(self.result[cat])
+            elif self.result is not None:
+                d["result_type"] = type(self.result).__name__
+        return d
 
     def __repr__(self) -> str:
         return (

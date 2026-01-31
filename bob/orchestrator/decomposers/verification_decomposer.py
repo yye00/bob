@@ -79,11 +79,20 @@ Working directory: {workspace_dir}
 - Better parameters give better results
 - Algorithm reaches stable fixed point
 
-Output ONLY valid JSON:
+IMPORTANT: Output ONLY the raw JSON object below. No markdown fences. No explanation. No commentary.
+Do NOT write to files. Do NOT use any tools. Just output the JSON directly.
+Every category MUST have at least 2 tests — never return empty arrays.
+
 {{
-  "numerical_tests": [{{"name": "...", "command": "cd {workspace_dir} && python -c \\"...\\"", "timeout": 60, "source": "..."}}],
-  "algorithmic_tests": [{{"name": "...", "command": "...", "timeout": 120, "source": "..."}}],
-  "convergence_tests": [{{"name": "...", "command": "...", "timeout": 180, "source": "..."}}]
+  "numerical_tests": [
+    {{"name": "descriptive_snake_case_name", "command": "cd {workspace_dir} && python -c \\"import numpy as np; ...; assert ...; print('PASS')\\"", "timeout": 60, "source": "description of reference value source"}}
+  ],
+  "algorithmic_tests": [
+    {{"name": "descriptive_snake_case_name", "command": "cd {workspace_dir} && python -c \\"...; assert ...; print('PASS')\\"", "timeout": 120, "source": "what this tests"}}
+  ],
+  "convergence_tests": [
+    {{"name": "descriptive_snake_case_name", "command": "cd {workspace_dir} && python -c \\"...; assert ...; print('PASS')\\"", "timeout": 180, "source": "what convergence property this verifies"}}
+  ]
 }}
 """
 
@@ -338,32 +347,70 @@ class VerificationDecomposer(Decomposer):
         criteria = content.get("acceptance_criteria", [])
         criteria_str = "\n".join(f"- {c}" for c in criteria) if criteria else "(none)"
 
-        # Call Claude to generate tests
-        prompt = VERIFICATION_GEN_PROMPT.format(
-            task_title=content.get("task_title", ""),
-            task_description=content.get("task_description", ""),
-            acceptance_criteria=criteria_str,
-            constraints=constraints_str,
-            expected_outputs=outputs_str,
-            research_findings=research_context,
-            workspace_dir=self.workspace_dir,
-        )
+        # Include verify_script as additional context for test generation
+        verify_script = content.get("verify_script", "")
+        verify_script_section = ""
+        if verify_script and verify_script.strip():
+            verify_script_section = (
+                f"\n## Existing Verify Script (use as inspiration)\n"
+                f"```bash\n{verify_script}\n```\n"
+            )
 
-        result = await execute_task_with_claude(
-            project_dir=self.project_dir,
-            prompt=prompt,
-            model=self.model,
-            timeout_seconds=self.timeout_seconds,
-            non_interactive=True,
-            stall_timeout=0,
-        )
+        # Call Claude to generate tests — with retry on empty results
+        task_title = content.get("task_title", "")
+        max_attempts = 3
+        empty = {"numerical_tests": [], "algorithmic_tests": [], "convergence_tests": []}
 
-        if not result.success:
-            return {"numerical_tests": [], "algorithmic_tests": [], "convergence_tests": []}
+        for attempt in range(1, max_attempts + 1):
+            prompt = VERIFICATION_GEN_PROMPT.format(
+                task_title=task_title,
+                task_description=content.get("task_description", ""),
+                acceptance_criteria=criteria_str,
+                constraints=constraints_str,
+                expected_outputs=outputs_str,
+                research_findings=research_context,
+                workspace_dir=self.workspace_dir,
+            )
+            # Append verify script context
+            if verify_script_section:
+                prompt += verify_script_section
 
-        # Parse tests
-        tests = _parse_tests(result.output)
-        return tests
+            result = await execute_task_with_claude(
+                project_dir=self.project_dir,
+                prompt=prompt,
+                model=self.model,
+                timeout_seconds=self.timeout_seconds,
+                non_interactive=True,
+                stall_timeout=0,
+            )
+
+            if not result.success:
+                print(f"    ⚠ Verification generation failed for '{task_title}' "
+                      f"(attempt {attempt}/{max_attempts}): Claude returned error")
+                if attempt < max_attempts:
+                    continue
+                return empty
+
+            # Parse tests
+            tests = _parse_tests(result.output)
+            total = sum(len(tests[cat]) for cat in tests)
+
+            if total > 0:
+                print(f"    ✓ Generated {total} tests for '{task_title}' "
+                      f"(attempt {attempt})")
+                return tests
+
+            # Zero tests — log raw output for debugging
+            output_preview = (result.output or "")[:500]
+            print(f"    ⚠ Zero tests parsed for '{task_title}' "
+                  f"(attempt {attempt}/{max_attempts})")
+            print(f"      Raw output preview: {output_preview!r}")
+
+            if attempt < max_attempts:
+                print(f"      Retrying...")
+
+        print(f"    ✗ All {max_attempts} attempts failed for '{task_title}'")
+        return empty
 
     def estimate_context_tokens(self, unit: WorkUnit) -> int:
         """Estimate tokens for verification generation context."""
@@ -391,31 +438,71 @@ class VerificationDecomposer(Decomposer):
 
 
 def _parse_tests(output: str) -> dict:
-    """Parse Claude's JSON output into test categories."""
+    """Parse Claude's JSON output into test categories.
+
+    Lenient parser: handles markdown fences, extra commentary,
+    and tests with missing 'name' field (auto-generates name).
+    """
     text = output.strip()
+
+    # Strip markdown fences (multiple patterns)
     text = re.sub(r'^```(?:json)?\s*\n', '', text)
     text = re.sub(r'\n```\s*$', '', text)
+    # Also handle fences in the middle of output
+    text = re.sub(r'```(?:json)?\s*\n', '', text)
+    text = re.sub(r'\n```', '', text)
+
+    data = None
+
+    # Try 1: Direct parse
     try:
         data = json.loads(text.strip())
     except json.JSONDecodeError:
+        pass
+
+    # Try 2: Find outermost JSON object
+    if data is None:
         start = text.find('{')
         end = text.rfind('}')
         if start != -1 and end > start:
             try:
                 data = json.loads(text[start:end + 1])
             except json.JSONDecodeError:
-                return {"numerical_tests": [], "algorithmic_tests": [], "convergence_tests": []}
-        else:
-            return {"numerical_tests": [], "algorithmic_tests": [], "convergence_tests": []}
+                pass
+
+    # Try 3: Find JSON between specific markers
+    if data is None:
+        # Claude sometimes wraps JSON in explanation
+        for pattern in [
+            r'\{[^{}]*"numerical_tests"[^{}]*\[.*?\].*?\}',
+        ]:
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                except json.JSONDecodeError:
+                    pass
+
+    if data is None:
+        return {"numerical_tests": [], "algorithmic_tests": [], "convergence_tests": []}
 
     result = {"numerical_tests": [], "algorithmic_tests": [], "convergence_tests": []}
-    for cat in result:
-        for test in data.get(cat, []):
-            if isinstance(test, dict) and "name" in test and "command" in test:
-                result[cat].append({
-                    "name": test["name"],
-                    "command": test["command"],
-                    "timeout": test.get("timeout", 120),
-                    "source": test.get("source", "auto-generated"),
-                })
+    for cat_idx, cat in enumerate(result):
+        for test_idx, test in enumerate(data.get(cat, [])):
+            if not isinstance(test, dict):
+                continue
+
+            # Accept test if it has at least a 'command'
+            command = test.get("command", test.get("cmd", test.get("script", "")))
+            if not command:
+                continue
+
+            name = test.get("name", test.get("title", f"{cat}_{test_idx}"))
+
+            result[cat].append({
+                "name": name,
+                "command": command,
+                "timeout": test.get("timeout", 120),
+                "source": test.get("source", "auto-generated"),
+            })
     return result
