@@ -143,7 +143,7 @@ class ClaudeExecutor:
         self,
         project_dir: Path,
         model: str = "claude-sonnet-4-20250514",
-        timeout_seconds: int = 3600,  # 1 hour default
+        timeout_seconds: int = 0,  # 1 hour default
         on_output: Optional[Callable[[str], None]] = None,
         non_interactive: bool = False,
         enable_thinking: bool = False,
@@ -282,18 +282,19 @@ class ClaudeExecutor:
                 
                 def _run_pexpect():
                     shell_cmd = "claude -p --dangerously-skip-permissions " + shlex.quote(prompt)
+                    effective_timeout = self.timeout_seconds if self.timeout_seconds > 0 else None
                     child = pexpect.spawn(
                         "/bin/bash", ["-c", shell_cmd],
                         cwd=str(self.project_dir),
                         env=env,
-                        timeout=self.timeout_seconds,
+                        timeout=effective_timeout,
                         encoding="utf-8",
                         codec_errors="replace",
                         maxread=1024 * 1024,  # 1MB buffer
                     )
                     child.logfile_read = None
                     try:
-                        child.expect(pexpect.EOF, timeout=self.timeout_seconds)
+                        child.expect(pexpect.EOF, timeout=effective_timeout)
                         output = child.before or ""
                         child.close()
                         return output, child.exitstatus or 0
@@ -327,10 +328,13 @@ class ClaudeExecutor:
             else:
                 # Collect output with timeout (script or direct subprocess path)
                 try:
-                    stdout, stderr = await asyncio.wait_for(
-                        self._process.communicate(),
-                        timeout=self.timeout_seconds
-                    )
+                    if self.timeout_seconds > 0:
+                        stdout, stderr = await asyncio.wait_for(
+                            self._process.communicate(),
+                            timeout=self.timeout_seconds
+                        )
+                    else:
+                        stdout, stderr = await self._process.communicate()
                 except asyncio.TimeoutError:
                     self._process.kill()
                     await self._process.wait()
@@ -468,7 +472,7 @@ async def execute_task_with_claude(
     project_dir: Path,
     prompt: str,
     model: str = "claude-sonnet-4-20250514",
-    timeout_seconds: int = 3600,
+    timeout_seconds: int = 0,
     non_interactive: bool = False,
     enable_thinking: bool = False,
     thinking_budget: int = 10000,

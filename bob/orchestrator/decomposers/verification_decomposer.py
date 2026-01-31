@@ -117,7 +117,7 @@ class VerificationDecomposer(Decomposer):
         project_dir: Path,
         references: list[dict] | None = None,
         model: str = "claude-sonnet-4-5-20250929",
-        timeout_seconds: int = 300,
+        timeout_seconds: int = 0,
     ):
         self.workspace_dir = workspace_dir
         self.project_dir = project_dir

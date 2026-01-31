@@ -69,7 +69,7 @@ async def execute_with_sdk(
     project_dir: Path,
     prompt: str,
     model: str = "claude-sonnet-4-5-20250929",
-    timeout_seconds: int = 3600,
+    timeout_seconds: int = 0,
     max_turns: int = 200,
     system_prompt: Optional[str] = None,
     on_text: Optional[Callable[[str], None]] = None,
@@ -129,7 +129,7 @@ async def execute_with_sdk(
     error_msg: Optional[str] = None
 
     try:
-        async with asyncio.timeout(timeout_seconds):
+        async with asyncio.timeout(timeout_seconds if timeout_seconds > 0 else None):
             async for msg in query(prompt=prompt, options=options):
                 msg_type = type(msg).__name__
 
@@ -195,7 +195,7 @@ async def execute_task_with_sdk(
     project_dir: Path,
     prompt: str,
     model: str = "claude-sonnet-4-5-20250929",
-    timeout_seconds: int = 3600,
+    timeout_seconds: int = 0,
     non_interactive: bool = True,
     enable_thinking: bool = True,
     thinking_budget: int = 16000,

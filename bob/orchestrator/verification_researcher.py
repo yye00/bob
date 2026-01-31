@@ -390,7 +390,7 @@ class VerificationResearcher:
         project_dir: Path,
         references: list[dict] | None = None,
         model: str = "claude-sonnet-4-5-20250929",
-        timeout_seconds: int = 300,
+        timeout_seconds: int = 0,
         enable_research: bool = True,
     ):
         """

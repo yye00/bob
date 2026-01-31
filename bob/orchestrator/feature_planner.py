@@ -419,7 +419,7 @@ class FeaturePlanner:
         confidence_threshold: float = 0.9,
         max_refinement_iterations: int = 3,
         enable_research: bool = True,
-        timeout_seconds: int = 600,
+        timeout_seconds: int = 0,
     ):
         self.workspace_dir = workspace_dir
         self.project_dir = project_dir
@@ -858,7 +858,7 @@ async def generate_feature_plan(
     model: str = "claude-opus-4-5-20251101",
     enable_thinking: bool = True,
     thinking_budget: int = 16000,
-    timeout_seconds: int = 600,
+    timeout_seconds: int = 0,
     confidence_threshold: float = 0.9,
     max_refinement_iterations: int = 3,
     enable_research: bool = True,

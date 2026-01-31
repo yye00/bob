@@ -173,7 +173,7 @@ async def extract_features(
     workspace_dir: str,
     project_dir: Path,
     model: str = "claude-opus-4-5-20251101",
-    timeout_seconds: int = 1200,
+    timeout_seconds: int = 0,  # 0 = unlimited (planning can take arbitrarily long)
     environment_notes: str = "",
 ) -> list[dict]:
     """Extract implementation tasks from an application specification.
@@ -347,7 +347,7 @@ async def _read_references(
                 project_dir=project_dir,
                 prompt=summary_prompt,
                 model=model,
-                timeout_seconds=min(timeout_seconds, 600),
+                timeout_seconds=timeout_seconds,  # no artificial cap on reference reading
                 non_interactive=True,
                 enable_thinking=True,
                 stall_timeout=0,

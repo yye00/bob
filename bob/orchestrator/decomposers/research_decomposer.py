@@ -93,7 +93,7 @@ class ResearchDecomposer(Decomposer):
         workspace_dir: str,
         project_dir: Path,
         model: str = "claude-sonnet-4-5-20250929",
-        timeout_seconds: int = 120,
+        timeout_seconds: int = 0,
     ):
         self.workspace_dir = workspace_dir
         self.project_dir = project_dir
