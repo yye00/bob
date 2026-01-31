@@ -290,10 +290,11 @@ class Orchestrator:
         1. Checks cost limits before starting
         2. Updates task status to in_progress
         3. Creates appropriate client based on task needs
-        4. Executes the task with the Claude SDK
-        5. Handles failures with classification and escalation
-        6. Updates task status based on result
-        7. Returns final status and any error message
+        4. Includes research findings in prompt if available
+        5. Executes the task with the Claude SDK
+        6. Handles failures with classification and escalation
+        7. Updates task status based on result
+        8. Returns final status and any error message
 
         Args:
             task: Task to execute
@@ -352,11 +353,14 @@ class Orchestrator:
         # Note: attempts will be incremented by record_attempt in escalation controller
         self.db.update_task(task.id, status=TaskStatus.IN_PROGRESS)
 
+        # Include research findings in prompt if available
+        enhanced_prompt = self._build_enhanced_prompt(task, prompt)
+
         try:
             # Execute task using Claude CLI executor
             # Note: The CLI executor handles all Claude interactions directly
             # via pexpect/subprocess. The SDK client is not needed.
-            success, error = await self._execute_with_client(None, prompt)
+            success, error = await self._execute_with_client(None, enhanced_prompt)
 
             if success:
                 # Verify outputs before claiming victory
@@ -414,6 +418,9 @@ class Orchestrator:
                             is_debug=True,
                             debug_attempt_number=debug_attempt + 1,
                         )
+
+                        # Record file snapshot before this debug attempt
+                        self.debug_journal.record_file_snapshot(task)
 
                         # Build a LEAN debug prompt using journal summary
                         # (not full error history — Claude can read the journal file)
@@ -605,6 +612,10 @@ class Orchestrator:
         journal_path = self.debug_journal.journal_path(task.spec_id)
         rel_journal = os.path.relpath(journal_path, self.project_dir)
         
+        # Get diff summary and failed approaches for diff-aware debugging
+        diff_summary = self.debug_journal.get_diff_summary(task.spec_id)
+        failed_approaches = self.debug_journal.get_failed_approaches(task.spec_id)
+        
         journal_section = ""
         if journal_summary:
             journal_section = f"""
@@ -612,6 +623,48 @@ class Orchestrator:
 {journal_summary}
 """
         
+        # Add diff summary section if there are changes
+        diff_section = ""
+        if diff_summary:
+            diff_section = f"""
+## What Changed Last Attempt
+```
+{diff_summary}
+```
+"""
+        
+        # Add failed approaches section if there are any
+        approaches_section = ""
+        if failed_approaches:
+            approaches_section = f"""
+## What NOT To Try (failed approaches from previous attempts)
+{failed_approaches}
+"""
+        
+        attempt_num = debug_attempt + 1
+
+        # Include research findings if available (from research mode)
+        research_section = ""
+        if task.research_findings:
+            findings = task.research_findings
+            if "research_results" in findings:
+                research_section = f"""
+## Research Findings (use these to guide your fix)
+{findings['research_results'][:2000]}
+"""
+            if "diagnosis" in findings:
+                diag = findings["diagnosis"]
+                failure_type = diag.get("failure_type", "unknown")
+                diag_reason = diag.get("reason", "")
+                diag_suggestions = diag.get("suggestions", [])
+                suggestions_text = "\n".join(f"  - {s}" for s in diag_suggestions) if diag_suggestions else ""
+                research_section += f"""
+## Root Cause Analysis
+- **Failure type:** {failure_type}
+- **Analysis:** {diag_reason}
+{f'- **Suggested approaches:**{chr(10)}{suggestions_text}' if suggestions_text else ''}
+"""
+
         attempt_num = debug_attempt + 1
         
         debug_prompt = f"""# DEBUG MODE: Fix Verification Failures (attempt {attempt_num})
@@ -628,7 +681,7 @@ READ your code, find the bug, FIX it.
 ```
 {verify_errors}
 ```
-{journal_section}
+{diff_section}{approaches_section}{journal_section}{research_section}
 ## Instructions
 1. READ each file listed above
 2. Find the root cause of the error
@@ -684,6 +737,37 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
             inventory_lines.append(f"  ... and {len(inventory_lines) - 100} more files")
         
         return "\n".join(inventory_lines)
+
+    def _build_enhanced_prompt(self, task: Task, original_prompt: str) -> str:
+        """Build enhanced prompt that includes research findings if available.
+        
+        Args:
+            task: Task being executed
+            original_prompt: Original prompt from CLI
+            
+        Returns:
+            Enhanced prompt with research context
+        """
+        # If task has research findings, include them in the prompt
+        if task.research_complete and task.research_findings:
+            research_context = self.research_controller.get_implementation_context(task)
+            if research_context:
+                # Insert research findings after any existing content but before task description
+                enhanced_lines = []
+                enhanced_lines.append(original_prompt)
+                enhanced_lines.append("")
+                enhanced_lines.append(research_context)
+                enhanced_lines.append("")
+                enhanced_lines.append("---")
+                enhanced_lines.append("")
+                enhanced_lines.append("Please use the research findings above to inform your implementation approach.")
+                enhanced_lines.append("Focus on the specific recommendations and code examples provided.")
+                enhanced_lines.append("")
+                
+                return "\n".join(enhanced_lines)
+        
+        # No research findings, return original prompt
+        return original_prompt
 
     async def _execute_with_client(
         self,
@@ -887,14 +971,37 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
             return TaskStatus.PENDING, "Escalated to better model"
 
         elif action == EscalationAction.RESEARCH:
-            # Needs research before continuing
+            # Actually execute research before continuing
+            print(f"\n🔍 Executing research for {task.spec_id}...")
+            
+            # Set research required flag first
             self.db.update_task(
                 task.id,
                 research_required=True,
                 research_complete=False,
-                status=TaskStatus.PENDING
             )
-            return TaskStatus.PENDING, "Needs research"
+            
+            # Execute research using the research controller
+            research_success = await self.research_controller.execute_research(task)
+            
+            if research_success:
+                # Research completed successfully - reload task to get updated findings
+                task = self.db.get_task(task.id)
+                
+                # Build research-informed retry prompt that includes the findings
+                research_context = self.research_controller.get_implementation_context(task)
+                
+                print(f"   Research completed. Found {len(task.research_findings)} findings.")
+                print(f"   Setting task back to PENDING with research context.")
+                
+                # Set task back to PENDING so it retries with research context
+                self.db.update_task(task.id, status=TaskStatus.PENDING)
+                return TaskStatus.PENDING, "Research completed, retrying with findings"
+            else:
+                # Research failed - still set to PENDING for retry but note the failure
+                print(f"   Research failed for {task.spec_id}")
+                self.db.update_task(task.id, status=TaskStatus.PENDING)
+                return TaskStatus.PENDING, "Research failed, retrying without findings"
 
         elif action == EscalationAction.DECOMPOSE:
             # Decompose into subtasks
@@ -912,6 +1019,7 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
         elif action == EscalationAction.DIAGNOSE:
             # Run root cause analysis after Opus exhausts retries
             print(f"\n🔬 Running diagnosis for {task.spec_id}...")
+
             # Classify the failure using full error history
             error_history = task.research_findings.get("error_history", [])
             deps_met, deps_status = self._check_dependencies(task)
@@ -921,15 +1029,39 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
                 error_history=error_history,
                 deps_status=deps_status,
             )
+
             # Record the diagnosis result
             self.escalation.record_diagnosis(
                 task.id,
                 failure_type=diagnosis.failure_type,
                 research_queries=diagnosis.research_queries if diagnosis.research_queries else None,
             )
+
+            # Store diagnosis in task.research_findings so it feeds into retry prompts
+            findings = task.research_findings.copy() if task.research_findings else {}
+            findings["diagnosis"] = {
+                "failure_type": diagnosis.failure_type.value if diagnosis.failure_type else "unknown",
+                "reason": diagnosis.reason,
+                "confidence": diagnosis.confidence,
+                "suggestions": diagnosis.research_queries or [],
+                "timestamp": datetime.now().isoformat(),
+            }
+            # Also store the error history for the retry prompt
+            if error_history:
+                # Extract error patterns — what approaches were tried
+                approaches_tried = []
+                for eh in error_history[-5:]:  # Last 5 attempts
+                    err_msg = eh.get("error_msg", eh.get("error", ""))
+                    model_used = eh.get("model", "unknown")
+                    approaches_tried.append(f"[{model_used}] {err_msg[:150]}")
+                findings["approaches_tried"] = approaches_tried
+
+            self.db.update_task(task.id, research_findings=findings)
+
             print(f"   Diagnosis: {diagnosis.failure_type.value} "
                   f"(confidence: {diagnosis.confidence:.0%})")
             print(f"   Reason: {diagnosis.reason}")
+
             # Re-evaluate now that diagnosis is recorded — this will call
             # _get_post_diagnosis_action which routes to DECOMPOSE/RESEARCH/etc.
             post_action, post_context = self.escalation.get_next_action(

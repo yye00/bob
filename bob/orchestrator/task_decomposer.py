@@ -34,6 +34,10 @@ class SubTask:
     priority: str = "medium"
     category: str = "functional"
     created_from_decomposition: bool = True
+    # Verification fields inherited from parent
+    verify_script: str = ""
+    expected_outputs: list = field(default_factory=list)
+    acceptance_criteria: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +50,9 @@ class SubTask:
             "priority": self.priority,
             "category": self.category,
             "created_from_decomposition": self.created_from_decomposition,
+            "verify_script": self.verify_script,
+            "expected_outputs": self.expected_outputs,
+            "acceptance_criteria": self.acceptance_criteria,
         }
 
 
@@ -151,15 +158,15 @@ class TaskDecomposer:
                 error=f"Task {task_id} not found",
             )
 
-        # Create sub-tasks with proper spec IDs
-        next_id = self.get_next_spec_id(parent.project_id)
+        # Create sub-tasks with spec IDs derived from parent (T001a, T001b, ...)
         created_subs: list[SubTask] = []
         id_mapping: dict[str, str] = {}  # internal_name -> actual_spec_id
 
-        # First pass: assign spec IDs
+        # First pass: assign spec IDs using parent's ID + letter suffix
         for i, st_spec in enumerate(sub_tasks):
             internal_name = st_spec.get("internal_name", f"sub_{i+1}")
-            new_spec_id = f"F{next_id + i:03d}"
+            suffix = chr(ord('a') + i)  # a, b, c, ...
+            new_spec_id = f"{parent.spec_id}{suffix}"
             id_mapping[internal_name] = new_spec_id
 
         # Second pass: create sub-tasks with proper dependencies
@@ -191,37 +198,111 @@ class TaskDecomposer:
                 parent_spec_id=parent.spec_id,
                 priority=st_spec.get("priority", parent.priority),
                 category=st_spec.get("category", parent.category),
+                verify_script=st_spec.get("verify_script", ""),
+                expected_outputs=st_spec.get("expected_outputs", []),
+                acceptance_criteria=st_spec.get("acceptance_criteria",
+                                                st_spec.get("steps", [])),
             )
             created_subs.append(sub)
 
         # Add sub-tasks to the database
         for sub in created_subs:
-            task = Task(
+            new_task = Task(
                 id=f"task-{uuid.uuid4().hex[:12]}",
                 project_id=parent.project_id,
                 spec_id=sub.spec_id,
                 title=sub.title,
                 description=sub.description,
-                acceptance_criteria=[],  # Sub-tasks inherit from steps
+                acceptance_criteria=sub.acceptance_criteria,
                 steps=sub.steps,
                 depends_on=sub.depends_on,
                 priority=sub.priority,
                 category=sub.category,
                 labels=parent.labels + ["decomposed-subtask"],
+                expected_outputs=sub.expected_outputs,
+                verify_script=sub.verify_script,
             )
-            self.db_manager.create_task(task)
+            self.db_manager.create_task(new_task)
 
-        # Mark parent as decomposed (deprecated but not deleted for reference)
-        self.db_manager.update_task(
-            task_id=task_id,
-            status=TaskStatus.DEPRECATED,
+        # Create an INTEGRATION task that depends on ALL sub-tasks
+        # and runs the parent's original verify_script + tests
+        integration_spec_id = f"{parent.spec_id}-integration"
+        integration_deps = [sub.spec_id for sub in created_subs]
+
+        # Build integration verify script that runs the original parent's full verification
+        integration_verify = parent.verify_script or ""
+
+        # Build integration description
+        sub_list = "\n".join(f"  - {s.spec_id}: {s.title}" for s in created_subs)
+        integration_desc = (
+            f"Integration task for {parent.spec_id} ({parent.title}).\n\n"
+            f"This task verifies that all sub-tasks work together correctly.\n"
+            f"Sub-tasks:\n{sub_list}\n\n"
+            f"Run the original verify script and all verification tests from the "
+            f"parent task to ensure the pieces integrate properly.\n"
+            f"If integration fails, examine the interfaces between sub-tasks "
+            f"and fix any incompatibilities."
         )
 
-        # Return result
+        integration_task = Task(
+            id=f"task-{uuid.uuid4().hex[:12]}",
+            project_id=parent.project_id,
+            spec_id=integration_spec_id,
+            title=f"Integration: {parent.title}",
+            description=integration_desc,
+            acceptance_criteria=parent.acceptance_criteria,
+            steps=[
+                f"Review code from all sub-tasks: {', '.join(s.spec_id for s in created_subs)}",
+                "Ensure all modules import and work together",
+                "Fix any interface mismatches between sub-task outputs",
+                "Run the full verify script to confirm integration",
+            ],
+            depends_on=integration_deps,
+            priority=parent.priority,
+            category=parent.category,
+            labels=parent.labels + ["integration-task"],
+            expected_outputs=parent.expected_outputs,
+            verify_script=integration_verify,
+            numerical_tests=parent.numerical_tests,
+            algorithmic_tests=parent.algorithmic_tests,
+            convergence_tests=parent.convergence_tests,
+        )
+        self.db_manager.create_task(integration_task)
+
+        # Mark parent as decomposed
+        self.db_manager.update_task(
+            task_id=task_id,
+            status=TaskStatus.DECOMPOSED,
+        )
+
+        # Store decomposition metadata on parent for reference
+        decomp_meta = parent.research_findings.copy() if parent.research_findings else {}
+        decomp_meta["decomposition"] = {
+            "sub_tasks": [s.spec_id for s in created_subs],
+            "integration_task": integration_spec_id,
+            "reasoning": reasoning,
+            "timestamp": datetime.now().isoformat(),
+        }
+        self.db_manager.update_task(task_id, research_findings=decomp_meta)
+
+        # Return result (include integration task in sub_tasks list)
+        integration_sub = SubTask(
+            spec_id=integration_spec_id,
+            title=f"Integration: {parent.title}",
+            description=integration_desc,
+            steps=integration_task.steps,
+            depends_on=integration_deps,
+            parent_spec_id=parent.spec_id,
+            priority=parent.priority,
+            verify_script=integration_verify,
+            expected_outputs=parent.expected_outputs,
+            acceptance_criteria=parent.acceptance_criteria,
+        )
+
         result = DecompositionResult(
             parent_task_id=task_id,
             parent_spec_id=parent.spec_id,
-            sub_tasks=created_subs,
+            sub_tasks=created_subs + [integration_sub],
             reasoning=reasoning,
             success=True,
         )
@@ -286,7 +367,11 @@ Create a JSON file `decomposition_plan.json` with this structure:
       ],
       "internal_deps": [],  // References to other sub-task internal_names
       "priority": "high",
-      "category": "{task.category}"
+      "category": "{task.category}",
+      "expected_outputs": [
+        {{"path": "src/module.py", "min_lines": 50, "must_contain": ["class Foo"]}}
+      ],
+      "verify_script": "cd ... && python -c \\"import module; assert ...\\""
     }},
     {{
       "internal_name": "implement_core",
@@ -295,7 +380,9 @@ Create a JSON file `decomposition_plan.json` with this structure:
       "steps": [...],
       "internal_deps": ["setup_base"],  // Depends on setup_base
       "priority": "high",
-      "category": "{task.category}"
+      "category": "{task.category}",
+      "expected_outputs": [...],
+      "verify_script": "..."
     }}
   ]
 }}
@@ -308,8 +395,15 @@ Create a JSON file `decomposition_plan.json` with this structure:
 - User-facing features should come later, depending on infrastructure
 - Each sub-task should be testable with a clear pass/fail criteria
 - Don't create too many sub-tasks (2-5 is ideal)
+- Each sub-task MUST have its own `expected_outputs` and `verify_script`
+- Sub-task verify_scripts should test ONLY what that sub-task produces
+- An integration task will be auto-generated that runs the parent's original verify_script
 
-After creating the decomposition plan, call the `decompose_task` function to update the database.
+**IMPORTANT:** You do NOT need to create an integration task — one will be created
+automatically that depends on all sub-tasks and runs the parent's full verification.
+Focus on making each sub-task independently testable.
+
+After creating the decomposition plan, write it to `decomposition_plan.json`.
 """
 
 

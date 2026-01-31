@@ -199,28 +199,33 @@ class TestTaskDecomposer:
         assert result.success is True
         assert result.parent_task_id == "task-parent"
         assert result.parent_spec_id == "F001"
-        assert len(result.sub_tasks) == 2
+        # 2 sub-tasks + 1 integration task = 3
+        assert len(result.sub_tasks) == 3
         assert result.reasoning == "Task is too complex"
 
-        # Check sub-task IDs
-        assert result.sub_tasks[0].spec_id == "F002"
-        assert result.sub_tasks[1].spec_id == "F003"
+        # Check sub-task IDs use parent's ID + letter suffix
+        assert result.sub_tasks[0].spec_id == "F001a"
+        assert result.sub_tasks[1].spec_id == "F001b"
+        assert result.sub_tasks[2].spec_id == "F001-integration"
 
         # Check dependencies
         assert result.sub_tasks[0].depends_on == []
-        assert result.sub_tasks[1].depends_on == ["F002"]
+        assert result.sub_tasks[1].depends_on == ["F001a"]
+        # Integration depends on both sub-tasks
+        assert set(result.sub_tasks[2].depends_on) == {"F001a", "F001b"}
 
-        # Check parent is deprecated
+        # Check parent is decomposed
         parent_updated = db_manager.get_task("task-parent")
-        assert parent_updated.status == TaskStatus.DEPRECATED
+        assert parent_updated.status in (TaskStatus.DEPRECATED, TaskStatus.DECOMPOSED)
 
-        # Check sub-tasks are in database
+        # Check sub-tasks + integration are in database
         tasks = db_manager.list_tasks(project.id)
-        assert len(tasks) == 3  # parent + 2 subs
+        assert len(tasks) == 4  # parent + 2 subs + 1 integration
 
         # Find sub-tasks
-        sub1 = next((t for t in tasks if t.spec_id == "F002"), None)
-        sub2 = next((t for t in tasks if t.spec_id == "F003"), None)
+        sub1 = next((t for t in tasks if t.spec_id == "F001a"), None)
+        sub2 = next((t for t in tasks if t.spec_id == "F001b"), None)
+        integration = next((t for t in tasks if t.spec_id == "F001-integration"), None)
 
         assert sub1 is not None
         assert sub1.title == "Set up infrastructure"
@@ -229,7 +234,11 @@ class TestTaskDecomposer:
 
         assert sub2 is not None
         assert sub2.title == "Implement feature"
-        assert sub2.depends_on == ["F002"]
+        assert sub2.depends_on == ["F001a"]
+
+        assert integration is not None
+        assert "integration-task" in integration.labels
+        assert set(integration.depends_on) == {"F001a", "F001b"}
 
 
 class TestGenerateDecompositionPrompt:

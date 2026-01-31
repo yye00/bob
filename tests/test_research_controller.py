@@ -452,6 +452,258 @@ class TestHasPerplexityAvailable:
         assert controller.has_perplexity_available() is False
 
 
+class TestExecuteResearch:
+    """Test execute_research method with Claude SDK."""
+
+    @pytest.mark.asyncio
+    async def test_execute_research_basic(self, sample_task):
+        """Test basic execute_research functionality."""
+        db, task, tmpdir = sample_task
+
+        controller = ResearchController(
+            db_manager=db,
+            workspace_dir=Path(tmpdir),
+        )
+
+        # Mock the SDK execution to avoid actual API calls in tests
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        mock_result = type('MockResult', (), {
+            'success': True,
+            'output': '''# Research Results
+
+## Codebase Findings
+Found similar patterns in auth.py module.
+
+## Error Analysis  
+The main issue is missing JWT validation.
+
+## Implementation Recommendations
+1. Use PyJWT library for token validation
+2. Add middleware for authentication checks
+3. Implement proper error handling
+
+## Key References
+- auth.py: line 45 for token validation
+- middleware.py: authentication patterns
+''',
+            'error': None
+        })()
+
+        with patch('bob.orchestrator.claude_sdk_executor.execute_task_with_sdk', 
+                  new_callable=AsyncMock) as mock_execute:
+            mock_execute.return_value = mock_result
+            
+            result = await controller.execute_research(task)
+
+        assert result is True
+
+        # Verify task updated
+        updated_task = db.get_task(task.id)
+        assert updated_task.research_complete is True
+        assert updated_task.research_findings is not None
+        assert "research_conducted" in updated_task.research_findings
+        assert updated_task.research_findings["research_conducted"] is True
+
+    @pytest.mark.asyncio
+    async def test_execute_research_with_error_history(self, sample_task):
+        """Test execute_research with error history."""
+        db, task, tmpdir = sample_task
+
+        # Add error history to task
+        error_history = [
+            {
+                "timestamp": "2024-01-01T10:00:00",
+                "model": "claude-sonnet-4",
+                "error_msg": "JWT token validation failed",
+                "attempt": 1,
+            },
+            {
+                "timestamp": "2024-01-01T11:00:00", 
+                "model": "claude-sonnet-4",
+                "error_msg": "Authentication middleware not found",
+                "attempt": 2,
+            }
+        ]
+        
+        task.research_findings = {"error_history": error_history}
+        
+        # Import FailureType enum
+        from bob.models.base import FailureType
+        task.failure_type = FailureType.MISSING_INFO
+        
+        db.update_task(
+            task.id,
+            research_findings={"error_history": error_history},
+            failure_type=FailureType.MISSING_INFO
+        )
+
+        controller = ResearchController(
+            db_manager=db,
+            workspace_dir=Path(tmpdir),
+        )
+
+        # Check that the research prompt includes error history
+        prompt = controller._build_research_prompt(task)
+        
+        assert "Error History" in prompt
+        assert "JWT token validation failed" in prompt
+        assert "Authentication middleware not found" in prompt
+        assert "**Failure Type:** missing_info" in prompt
+
+    @pytest.mark.asyncio
+    async def test_execute_research_failure(self, sample_task):
+        """Test execute_research handles failures gracefully."""
+        db, task, tmpdir = sample_task
+
+        controller = ResearchController(
+            db_manager=db,
+            workspace_dir=Path(tmpdir),
+        )
+
+        from unittest.mock import AsyncMock, patch
+
+        # Mock SDK execution to fail
+        mock_result = type('MockResult', (), {
+            'success': False,
+            'output': '',
+            'error': 'Connection timeout'
+        })()
+
+        with patch('bob.orchestrator.claude_sdk_executor.execute_task_with_sdk',
+                  new_callable=AsyncMock) as mock_execute:
+            mock_execute.return_value = mock_result
+            
+            result = await controller.execute_research(task)
+
+        assert result is False
+
+        # Verify error recorded
+        updated_task = db.get_task(task.id)
+        assert updated_task.research_findings is not None
+        assert "error" in updated_task.research_findings
+        assert updated_task.research_findings["error"] == "Research execution failed"
+
+    @pytest.mark.asyncio
+    async def test_execute_research_no_sdk(self, sample_task):
+        """Test execute_research falls back when SDK not available."""
+        db, task, tmpdir = sample_task
+
+        controller = ResearchController(
+            db_manager=db,
+            workspace_dir=Path(tmpdir),
+        )
+
+        from unittest.mock import patch
+
+        # Mock SDK import to fail
+        with patch.dict('sys.modules', {'bob.orchestrator.claude_sdk_executor': None}):
+            with patch.object(controller, 'run_research', return_value=True) as mock_run:
+                result = await controller.execute_research(task)
+
+        assert result is True
+        mock_run.assert_called_once_with(task)
+
+    def test_build_research_prompt_comprehensive(self, sample_task):
+        """Test research prompt building with all elements."""
+        db, task, tmpdir = sample_task
+        
+        # Set up task with comprehensive data
+        task.acceptance_criteria = ["Must authenticate users", "Must handle errors"]
+        task.steps = ["Implement JWT", "Add middleware", "Test auth"]
+        
+        # Import FailureType enum
+        from bob.models.base import FailureType
+        task.failure_type = FailureType.MISSING_INFO
+        task.research_queries = ["How to implement JWT?", "Best auth middleware?"]
+        
+        error_history = [
+            {
+                "timestamp": "2024-01-01T10:00:00",
+                "model": "claude-sonnet-4",
+                "error_msg": "ImportError: No module named 'jwt'",
+                "attempt": 1,
+            }
+        ]
+        task.research_findings = {"error_history": error_history}
+
+        controller = ResearchController(
+            db_manager=db,
+            workspace_dir=Path(tmpdir),
+        )
+
+        prompt = controller._build_research_prompt(task)
+
+        # Verify all sections are included
+        assert "# Research Task" in prompt
+        assert "Test Task" in prompt  # Title
+        assert "Acceptance Criteria" in prompt
+        assert "Must authenticate users" in prompt
+        assert "Implementation Steps" in prompt
+        assert "Implement JWT" in prompt
+        assert "Error History" in prompt
+        assert "ImportError: No module named 'jwt'" in prompt
+        assert "Failure Classification" in prompt
+        assert "missing_info" in prompt
+        assert "Specific Research Queries" in prompt
+        assert "How to implement JWT?" in prompt
+        assert "Research Instructions" in prompt
+        assert "Codebase Analysis" in prompt
+        assert "Expected Output Format" in prompt
+
+    def test_parse_research_output(self, sample_task):
+        """Test parsing of research output from Claude."""
+        db, task, tmpdir = sample_task
+
+        controller = ResearchController(
+            db_manager=db,
+            workspace_dir=Path(tmpdir),
+        )
+
+        # Sample research output from Claude
+        output = """# Research Results
+
+## Codebase Findings
+Found existing auth patterns in the codebase:
+- user.py has basic user model
+- auth.py contains placeholder for JWT validation
+
+## Documentation Insights  
+JWT library documentation shows best practices:
+- Use RS256 algorithm for production
+- Set proper expiration times
+
+## Error Analysis
+The main error "ImportError: No module named 'jwt'" indicates:
+- Missing PyJWT dependency in requirements
+- Need to install and configure JWT library
+
+## Implementation Recommendations
+1. Add PyJWT to requirements.txt
+2. Create JWT validation function in auth.py
+3. Add authentication middleware to app.py
+4. Implement proper error handling
+
+## Key References
+- auth.py: Line 45 (JWT validation placeholder)
+- requirements.txt: Add PyJWT dependency
+- user.py: User model for JWT payload
+"""
+
+        findings = controller._parse_research_output(output, task)
+
+        assert findings["research_conducted"] is True
+        assert "codebase_findings" in findings
+        assert "user.py has basic user model" in findings["codebase_findings"]
+        assert "error_analysis" in findings
+        assert "ImportError: No module named 'jwt'" in findings["error_analysis"]
+        assert "implementation_recommendations" in findings
+        assert "Add PyJWT to requirements.txt" in findings["implementation_recommendations"]
+        assert len(findings["suggestions"]) > 0
+        assert "Add PyJWT to requirements.txt" in findings["suggestions"]
+
+
 class TestIntegration:
     """Integration tests for research workflow."""
 

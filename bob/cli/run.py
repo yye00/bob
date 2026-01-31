@@ -134,13 +134,45 @@ def _build_task_prompt(task: Task, project) -> str:
         prompt_parts.append("")
     
     if task.research_findings:
-        prompt_parts.append("## Research Findings")
-        # Handle case where research_findings might be a dict
         findings = task.research_findings
         if isinstance(findings, dict):
-            findings = str(findings)
-        prompt_parts.append(findings)
-        prompt_parts.append("")
+            # Format structured findings
+            if "research_results" in findings:
+                prompt_parts.append("## Research Findings")
+                prompt_parts.append(str(findings["research_results"])[:3000])
+                prompt_parts.append("")
+
+            if "diagnosis" in findings:
+                diag = findings["diagnosis"]
+                prompt_parts.append("## Previous Failure Analysis")
+                prompt_parts.append(f"**Failure type:** {diag.get('failure_type', 'unknown')}")
+                prompt_parts.append(f"**Root cause:** {diag.get('reason', 'unknown')}")
+                if diag.get("suggestions"):
+                    prompt_parts.append("**Suggested approaches:**")
+                    for s in diag["suggestions"]:
+                        prompt_parts.append(f"  - {s}")
+                prompt_parts.append("")
+
+            if "approaches_tried" in findings:
+                prompt_parts.append("## Approaches Already Tried (DO NOT repeat these)")
+                for approach in findings["approaches_tried"]:
+                    prompt_parts.append(f"- {approach}")
+                prompt_parts.append("")
+
+            # Fallback for unstructured findings
+            remaining_keys = set(findings.keys()) - {
+                "research_results", "diagnosis", "approaches_tried",
+                "error_history", "decomposition",
+            }
+            if remaining_keys:
+                prompt_parts.append("## Additional Context")
+                for key in remaining_keys:
+                    prompt_parts.append(f"**{key}:** {str(findings[key])[:500]}")
+                prompt_parts.append("")
+        else:
+            prompt_parts.append("## Research Findings")
+            prompt_parts.append(str(findings))
+            prompt_parts.append("")
     
     prompt_parts.extend([
         "## Instructions",

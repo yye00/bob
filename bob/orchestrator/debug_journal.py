@@ -8,11 +8,15 @@ the context window and puts Claude in the "dumb zone"), we:
 1. Store full debug history on disk at .bob/debug/<task_id>.md
 2. Inject only a compact summary into the debug prompt (~200 tokens)
 3. Tell Claude where the journal is so it can read it on-demand via tools
+4. Track file snapshots between debug attempts to show what changed
+5. Generate diff summaries to prevent repeating failed approaches
 
 This keeps the working context lean while giving Claude full access to
-debug history through its file-read tools.
+debug history and diff context through its file-read tools.
 """
 
+import difflib
+import hashlib
 import json
 import os
 import threading
@@ -41,6 +45,8 @@ class DebugJournal:
         # Per-task locks for concurrent access (parallel execution)
         self._locks: dict[str, threading.Lock] = {}
         self._locks_lock = threading.Lock()  # Protects _locks dict itself
+        # File snapshots for diff tracking
+        self._snapshots: dict[str, dict[str, dict]] = {}  # spec_id -> attempt_num -> file_snapshots
 
     def _get_lock(self, spec_id: str) -> threading.Lock:
         """Get or create a lock for a specific task's journal."""
@@ -66,6 +72,242 @@ class DebugJournal:
             return 0
         content = path.read_text()
         return content.count("## Debug Attempt")
+
+    def record_file_snapshot(self, task) -> None:
+        """Record snapshots of files for diff tracking.
+        
+        Takes snapshots of all expected output files before a debug attempt.
+        Stores file contents (for small files) or hashes + key lines (for large files).
+        Thread-safe using per-task locks.
+        
+        Args:
+            task: Task object with expected_outputs list
+        """
+        spec_id = task.spec_id
+        lock = self._get_lock(spec_id)
+        
+        with lock:
+            if spec_id not in self._snapshots:
+                self._snapshots[spec_id] = {}
+            
+            # Use the next available attempt number (length of current snapshots)
+            attempt_num = len(self._snapshots[spec_id])
+            snapshot = {}
+            
+            for output in task.expected_outputs:
+                file_path = self.project_dir / output.path
+                if file_path.exists():
+                    try:
+                        content = file_path.read_text(encoding='utf-8', errors='ignore')
+                        lines = content.split('\n')
+                        
+                        # For small files (< 100 lines), store full content
+                        # For large files, store hash + key lines (functions, classes, etc.)
+                        if len(lines) <= 100:
+                            snapshot[output.path] = {
+                                'type': 'full',
+                                'content': content,
+                                'lines': len(lines),
+                                'hash': hashlib.md5(content.encode()).hexdigest()[:8],
+                                'exists': True
+                            }
+                        else:
+                            # Extract key lines for large files
+                            key_lines = self._extract_key_lines(lines)
+                            snapshot[output.path] = {
+                                'type': 'summary',
+                                'key_lines': key_lines,
+                                'lines': len(lines),
+                                'hash': hashlib.md5(content.encode()).hexdigest()[:8],
+                                'exists': True
+                            }
+                    except Exception as e:
+                        # File exists but can't be read (binary, permission, etc.)
+                        snapshot[output.path] = {
+                            'type': 'error',
+                            'error': str(e),
+                            'exists': True
+                        }
+                else:
+                    snapshot[output.path] = {
+                        'type': 'missing',
+                        'exists': False
+                    }
+            
+            self._snapshots[spec_id][attempt_num] = snapshot
+
+    def _extract_key_lines(self, lines: list[str]) -> dict[str, list[str]]:
+        """Extract key lines from a file for compact diff tracking.
+        
+        Identifies function definitions, class definitions, imports,
+        and other structural elements that are most relevant for debugging.
+        """
+        key_lines = {
+            'functions': [],
+            'classes': [],
+            'imports': [],
+            'other': []
+        }
+        
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            
+            # Check for TODO/FIXME first (even in comments)
+            if any(keyword in stripped for keyword in ['TODO', 'FIXME', 'XXX', 'HACK']):
+                key_lines['other'].append(f"{i+1}: {stripped}")
+                continue
+                
+            # Skip other comments
+            if stripped.startswith('#'):
+                continue
+                
+            # Python patterns
+            if stripped.startswith('def '):
+                key_lines['functions'].append(f"{i+1}: {stripped}")
+            elif stripped.startswith('class '):
+                key_lines['classes'].append(f"{i+1}: {stripped}")
+            elif stripped.startswith(('import ', 'from ')) and 'import' in stripped:
+                key_lines['imports'].append(f"{i+1}: {stripped}")
+            elif stripped.startswith('@'):  # Decorators
+                key_lines['other'].append(f"{i+1}: {stripped}")
+                
+        return key_lines
+
+    def get_diff_summary(self, spec_id: str, max_lines: int = 50) -> str:
+        """Get a human-readable diff between the last two attempts.
+        
+        Compares file snapshots from the previous attempt with the current one
+        to show what changed. Keeps output compact for prompt injection.
+        
+        Args:
+            spec_id: Task spec ID
+            max_lines: Maximum lines in the diff summary
+            
+        Returns:
+            Human-readable diff summary, or empty string if no changes/attempts
+        """
+        lock = self._get_lock(spec_id)
+        
+        with lock:
+            if spec_id not in self._snapshots:
+                return ""
+            
+            snapshots = self._snapshots[spec_id]
+            attempt_nums = sorted(snapshots.keys())
+            
+            if len(attempt_nums) < 2:
+                return ""
+            
+            # Get the last two attempts
+            prev_attempt = attempt_nums[-2]
+            current_attempt = attempt_nums[-1]
+            
+            prev_snap = snapshots[prev_attempt]
+            current_snap = snapshots[current_attempt]
+            
+            changes = []
+            all_files = set(prev_snap.keys()) | set(current_snap.keys())
+            
+            for file_path in sorted(all_files):
+                prev_info = prev_snap.get(file_path, {'type': 'missing', 'exists': False})
+                current_info = current_snap.get(file_path, {'type': 'missing', 'exists': False})
+                
+                # File creation/deletion
+                if not prev_info['exists'] and current_info['exists']:
+                    changes.append(f"+ Created {file_path} ({current_info.get('lines', 0)} lines)")
+                    continue
+                elif prev_info['exists'] and not current_info['exists']:
+                    changes.append(f"- Deleted {file_path}")
+                    continue
+                elif not prev_info['exists'] and not current_info['exists']:
+                    continue  # Both missing, no change
+                
+                # File modification detection
+                prev_hash = prev_info.get('hash', '')
+                current_hash = current_info.get('hash', '')
+                
+                if prev_hash == current_hash:
+                    continue  # No changes
+                
+                # Show line count change
+                prev_lines = prev_info.get('lines', 0)
+                current_lines = current_info.get('lines', 0)
+                line_diff = current_lines - prev_lines
+                
+                if line_diff > 0:
+                    changes.append(f"~ Modified {file_path} (+{line_diff} lines)")
+                elif line_diff < 0:
+                    changes.append(f"~ Modified {file_path} ({line_diff} lines)")
+                else:
+                    changes.append(f"~ Modified {file_path} (same line count)")
+                
+                # For full content files, show actual diff
+                if (prev_info.get('type') == 'full' and 
+                    current_info.get('type') == 'full' and 
+                    len(changes) < max_lines // 3):  # Leave room for other files
+                    
+                    prev_content = prev_info.get('content', '').split('\n')
+                    current_content = current_info.get('content', '').split('\n')
+                    
+                    diff_lines = list(difflib.unified_diff(
+                        prev_content, current_content,
+                        fromfile=f"{file_path} (attempt {prev_attempt})",
+                        tofile=f"{file_path} (attempt {current_attempt})",
+                        lineterm='', n=2
+                    ))
+                    
+                    if diff_lines:
+                        # Skip header lines and show just the changes
+                        relevant_diff = [line for line in diff_lines[2:] 
+                                       if line.startswith(('+', '-')) and 
+                                       not line.startswith(('+++', '---'))]
+                        
+                        if relevant_diff and len(relevant_diff) <= 10:  # Show small diffs
+                            changes.append("  " + "\n  ".join(relevant_diff[:10]))
+            
+            if not changes:
+                return "No file changes detected between attempts."
+            
+            # Truncate if too long
+            if len(changes) > max_lines:
+                changes = changes[:max_lines]
+                changes.append(f"... ({len(all_files) - max_lines} more files changed)")
+            
+            return "\n".join(changes)
+
+    def get_failed_approaches(self, spec_id: str, max_approaches: int = 5) -> str:
+        """Get a summary of approaches that failed in previous attempts.
+        
+        Extracts approach descriptions from previous journal entries
+        to help Claude avoid repeating the same failed attempts.
+        
+        Returns:
+            Formatted list of failed approaches, or empty string if none
+        """
+        path = self.journal_path(spec_id)
+        if not path.exists():
+            return ""
+        
+        content = path.read_text()
+        approaches = []
+        
+        # Extract approach lines from journal entries
+        for line in content.split('\n'):
+            if line.startswith('**Approach:**'):
+                approach = line.replace('**Approach:**', '').strip()
+                if approach and approach not in approaches:
+                    approaches.append(approach)
+        
+        if not approaches:
+            return ""
+        
+        # Truncate if too many
+        if len(approaches) > max_approaches:
+            approaches = approaches[:max_approaches]
+            
+        return "\n".join(f"  × {approach}" for approach in approaches)
     
     def record_attempt(
         self,
@@ -219,6 +461,9 @@ Task passed verification after {attempt_number} debug attempt(s).
             path = self.journal_path(spec_id)
             if path.exists():
                 path.unlink()
+            # Also clear snapshots from memory
+            if spec_id in self._snapshots:
+                del self._snapshots[spec_id]
     
     def list_journals(self) -> list[dict]:
         """List all debug journals with basic info."""

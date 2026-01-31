@@ -88,6 +88,293 @@ class ResearchController:
             and len(task.research_queries) > 0
         )
 
+    async def execute_research(self, task: Task) -> bool:
+        """Execute research for a task using Claude Code SDK.
+        
+        This method:
+        1. Takes a task that has research_required=True
+        2. Builds a research prompt from the task's error history and failure classification
+        3. Calls Claude (via the SDK executor) with a prompt that asks it to:
+           a. Search the codebase for related patterns
+           b. Read any reference papers mentioned in the task description
+           c. Analyze the error messages and suggest concrete fixes
+        4. Stores findings in task.research_findings (a JSON dict field in the DB)
+        5. Sets research_complete=True on the task
+
+        Args:
+            task: Task to research
+
+        Returns:
+            True if research completed successfully, False otherwise
+        """
+        if not task.research_required or task.research_complete:
+            return False
+
+        # Import SDK executor
+        try:
+            from bob.orchestrator.claude_sdk_executor import execute_task_with_sdk
+        except ImportError:
+            # Fallback to current implementation if SDK not available
+            return self.run_research(task)
+
+        # Build research prompt from task's error history and failure classification
+        research_prompt = self._build_research_prompt(task)
+
+        # Execute research using Claude SDK
+        try:
+            result = await execute_task_with_sdk(
+                project_dir=self.workspace_dir,
+                prompt=research_prompt,
+                model="claude-sonnet-4-5-20250929",  # Use Sonnet for research
+                timeout_seconds=1800,  # 30 minutes timeout for research
+                verbose=True,  # Show tool use for monitoring
+            )
+
+            if result.success and result.output:
+                # Parse the research findings from Claude's output
+                findings = self._parse_research_output(result.output, task)
+                
+                # Store findings in task.research_findings
+                task.research_findings = findings
+                task.research_complete = True
+
+                # Update database
+                self.db_manager.update_task(
+                    task.id,
+                    research_complete=True,
+                    research_findings=findings,
+                )
+
+                return True
+            else:
+                # Research failed - store error info
+                error_findings = {
+                    "error": "Research execution failed",
+                    "error_details": result.error or "Unknown error",
+                    "timestamp": datetime.now().isoformat(),
+                }
+                
+                # Update database with error
+                self.db_manager.update_task(
+                    task.id,
+                    research_findings=error_findings,
+                )
+                
+                return False
+
+        except Exception as e:
+            # Handle unexpected errors
+            error_findings = {
+                "error": "Research execution exception",
+                "error_details": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
+            
+            # Update database with error
+            self.db_manager.update_task(
+                task.id,
+                research_findings=error_findings,
+            )
+            
+            return False
+
+    def _build_research_prompt(self, task: Task) -> str:
+        """Build a research prompt from the task's error history and failure classification."""
+        prompt_lines = [
+            "# Research Task",
+            "",
+            f"You are conducting research for the following task:",
+            f"**Task ID:** {task.spec_id}",
+            f"**Title:** {task.title}",
+            f"**Description:** {task.description}",
+            "",
+        ]
+
+        # Add acceptance criteria if available
+        if task.acceptance_criteria:
+            prompt_lines.extend([
+                "**Acceptance Criteria:**",
+                *[f"- {criterion}" for criterion in task.acceptance_criteria],
+                "",
+            ])
+
+        # Add steps if available
+        if task.steps:
+            prompt_lines.extend([
+                "**Implementation Steps:**",
+                *[f"{i+1}. {step}" for i, step in enumerate(task.steps)],
+                "",
+            ])
+
+        # Add error history if available
+        error_history = task.research_findings.get("error_history", [])
+        if error_history:
+            prompt_lines.extend([
+                "## Error History",
+                "",
+                "This task has failed multiple times. Here are the previous errors:",
+                "",
+            ])
+            
+            for i, error in enumerate(error_history[-3:], 1):  # Last 3 errors
+                prompt_lines.extend([
+                    f"### Error {i}",
+                    f"- **Attempt:** {error.get('attempt', 'Unknown')}",
+                    f"- **Model:** {error.get('model', 'Unknown')}",
+                    f"- **Timestamp:** {error.get('timestamp', 'Unknown')}",
+                    f"- **Error:** {error.get('error_msg', error.get('error', 'Unknown error'))}",
+                    "",
+                ])
+
+        # Add failure type if available
+        if task.failure_type:
+            failure_type_str = task.failure_type.value if hasattr(task.failure_type, 'value') else str(task.failure_type)
+            prompt_lines.extend([
+                f"## Failure Classification",
+                "",
+                f"**Failure Type:** {failure_type_str}",
+                "",
+            ])
+
+        # Add research queries if available
+        if task.research_queries:
+            prompt_lines.extend([
+                "## Specific Research Queries",
+                "",
+                "Please investigate these specific questions:",
+                *[f"- {query}" for query in task.research_queries],
+                "",
+            ])
+
+        # Add the actual research instructions
+        prompt_lines.extend([
+            "## Research Instructions",
+            "",
+            "Please conduct thorough research to help implement this task successfully. Your research should include:",
+            "",
+            "1. **Codebase Analysis:**",
+            "   - Search the current codebase for related patterns, functions, or modules",
+            "   - Identify existing implementations that could be referenced or extended",
+            "   - Look for similar functionality that already works",
+            "",
+            "2. **Documentation Review:**",
+            "   - Read any reference papers, documentation, or specs mentioned in the task description",
+            "   - Review relevant API documentation or technical specifications",
+            "   - Check for existing tests that show expected behavior",
+            "",
+            "3. **Error Analysis:**",
+            "   - Analyze the error messages from previous attempts",
+            "   - Identify root causes and common failure patterns",
+            "   - Suggest specific fixes for the identified issues",
+            "",
+            "4. **Implementation Recommendations:**",
+            "   - Provide concrete, actionable implementation suggestions",
+            "   - Include code examples or patterns where helpful",
+            "   - Suggest the best approach based on your findings",
+            "",
+            "## Expected Output Format",
+            "",
+            "Please structure your research findings as follows:",
+            "",
+            "### Codebase Findings",
+            "[What you found in the existing codebase]",
+            "",
+            "### Documentation Insights",
+            "[Key insights from documentation/papers/specs]",
+            "",
+            "### Error Analysis",
+            "[Analysis of the error patterns and root causes]",
+            "",
+            "### Implementation Recommendations",
+            "[Specific, actionable recommendations with code examples]",
+            "",
+            "### Key References",
+            "[Important files, functions, or documentation to reference]",
+            "",
+            "Be thorough but practical. Focus on actionable insights that will help implement this task successfully.",
+        ])
+
+        return "\n".join(prompt_lines)
+
+    def _parse_research_output(self, output: str, task: Task) -> dict:
+        """Parse research output from Claude and structure it as findings."""
+        findings = {
+            "research_conducted": True,
+            "timestamp": datetime.now().isoformat(),
+            "model_used": "claude-sonnet-4-5-20250929",
+            "raw_output": output,
+        }
+
+        # Try to extract structured sections from the output
+        sections = {
+            "codebase_findings": [],
+            "documentation_insights": [],
+            "error_analysis": [],
+            "implementation_recommendations": [],
+            "key_references": [],
+            "suggestions": [],
+        }
+
+        # Simple parsing - look for section headers and extract content
+        lines = output.split('\n')
+        current_section = None
+        current_content = []
+
+        section_map = {
+            "codebase findings": "codebase_findings",
+            "documentation insights": "documentation_insights", 
+            "error analysis": "error_analysis",
+            "implementation recommendations": "implementation_recommendations",
+            "key references": "key_references",
+        }
+
+        for line in lines:
+            line_lower = line.lower().strip()
+            
+            # Check if this line is a section header
+            found_section = None
+            for header, section_key in section_map.items():
+                if header in line_lower and ('###' in line or '##' in line or line.startswith('#')):
+                    found_section = section_key
+                    break
+            
+            if found_section:
+                # Save previous section
+                if current_section and current_content:
+                    content_text = '\n'.join(current_content).strip()
+                    if content_text:
+                        sections[current_section] = content_text
+                
+                # Start new section
+                current_section = found_section
+                current_content = []
+            elif current_section:
+                # Add content to current section
+                current_content.append(line)
+
+        # Save last section
+        if current_section and current_content:
+            content_text = '\n'.join(current_content).strip()
+            if content_text:
+                sections[current_section] = content_text
+
+        # Extract actionable suggestions
+        suggestions = []
+        if sections.get("implementation_recommendations"):
+            # Look for bullet points or numbered items
+            for line in sections["implementation_recommendations"].split('\n'):
+                line = line.strip()
+                if line.startswith(('-', '*', '•')) or (len(line) > 0 and line[0].isdigit() and '.' in line[:5]):
+                    suggestion = line.lstrip('- *•0123456789. ').strip()
+                    if len(suggestion) > 10:  # Filter out very short items
+                        suggestions.append(suggestion)
+
+        # Store structured findings
+        findings.update(sections)
+        findings["suggestions"] = suggestions
+
+        return findings
+
     def run_research(
         self,
         task: Task,
@@ -367,37 +654,77 @@ Please provide detailed, actionable research findings."""
             "",
         ]
 
-        for query, findings in task.research_findings.items():
-            lines.append(f"### Query: {query}")
+        # Handle new format (from execute_research) - direct findings dict
+        if "research_conducted" in task.research_findings:
+            findings = task.research_findings
+            
+            lines.append("### Research Summary")
             lines.append("")
-
-            if findings.get("success", True):
-                lines.append(findings.get("findings", "No findings available"))
+            
+            # Add structured sections from new format
+            if findings.get("codebase_findings"):
+                lines.append("**Codebase Analysis:**")
+                lines.append(findings["codebase_findings"])
+                lines.append("")
+            
+            if findings.get("error_analysis"):
+                lines.append("**Error Analysis:**") 
+                lines.append(findings["error_analysis"])
+                lines.append("")
+                
+            if findings.get("implementation_recommendations"):
+                lines.append("**Implementation Recommendations:**")
+                lines.append(findings["implementation_recommendations"])
+                lines.append("")
+                
+            if findings.get("key_references"):
+                lines.append("**Key References:**")
+                lines.append(findings["key_references"])
+                lines.append("")
+                
+            if findings.get("suggestions"):
+                lines.append("**Actionable Steps:**")
+                for suggestion in findings["suggestions"][:5]:
+                    lines.append(f"- {suggestion}")
+                lines.append("")
+        
+        # Handle old format (from run_research) - query->findings mapping  
+        else:
+            for query, findings in task.research_findings.items():
+                # Skip non-query keys like error_history
+                if query in ["error_history"]:
+                    continue
+                    
+                lines.append(f"### Query: {query}")
                 lines.append("")
 
-                if findings.get("sources"):
-                    lines.append("**Sources:**")
-                    for source in findings["sources"][:3]:
-                        lines.append(f"- {source}")
+                if isinstance(findings, dict) and findings.get("success", True):
+                    lines.append(findings.get("findings", "No findings available"))
                     lines.append("")
 
-                if findings.get("suggestions"):
-                    lines.append("**Recommendations:**")
-                    for suggestion in findings["suggestions"][:3]:
-                        lines.append(f"- {suggestion}")
-                    lines.append("")
+                    if findings.get("sources"):
+                        lines.append("**Sources:**")
+                        for source in findings["sources"][:3]:
+                            lines.append(f"- {source}")
+                        lines.append("")
 
-                if findings.get("code_examples"):
-                    lines.append("**Code Examples:**")
-                    for i, example in enumerate(findings["code_examples"][:2], 1):
-                        lines.append(f"```")
-                        lines.append(example)
-                        lines.append(f"```")
+                    if findings.get("suggestions"):
+                        lines.append("**Recommendations:**")
+                        for suggestion in findings["suggestions"][:3]:
+                            lines.append(f"- {suggestion}")
+                        lines.append("")
+
+                    if findings.get("code_examples"):
+                        lines.append("**Code Examples:**")
+                        for i, example in enumerate(findings["code_examples"][:2], 1):
+                            lines.append(f"```")
+                            lines.append(example)
+                            lines.append(f"```")
+                        lines.append("")
+                elif isinstance(findings, dict):
+                    error = findings.get("error", "Research failed")
+                    lines.append(f"⚠️  Research failed: {error}")
                     lines.append("")
-            else:
-                error = findings.get("error", "Research failed")
-                lines.append(f"⚠️  Research failed: {error}")
-                lines.append("")
 
         lines.append("---")
         lines.append(
