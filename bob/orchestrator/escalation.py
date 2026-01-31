@@ -23,6 +23,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
+from bob.config import get_config_manager
 from bob.database.manager import DatabaseManager
 from bob.models.base import EscalationAction, FailureType, ModelTier, Task
 
@@ -31,8 +32,8 @@ from bob.models.base import EscalationAction, FailureType, ModelTier, Task
 MAX_ATTEMPTS_PER_MODEL = 3  # Attempts before escalating to next model
 MAX_DIAGNOSIS_ATTEMPTS = 2  # Times to retry after diagnosis before giving up
 
-# Model names for each tier
-MODEL_NAMES = {
+# Default model names for each tier (fallback if config not available)
+DEFAULT_MODEL_NAMES = {
     ModelTier.TIER1: "claude-sonnet-4-5-20250929",
     ModelTier.SONNET: "claude-sonnet-4-5-20250929",
     ModelTier.TIER2: "claude-opus-4-5-20251101",
@@ -57,6 +58,18 @@ class EscalationController:
         """
         self.db = db_manager
         self.project_id = project_id
+        
+        # Load configuration for model names
+        config = get_config_manager()
+        self.model_names = {
+            ModelTier.TIER1: config.get("escalation.models.tier1", DEFAULT_MODEL_NAMES[ModelTier.TIER1]),
+            ModelTier.SONNET: config.get("escalation.models.tier1", DEFAULT_MODEL_NAMES[ModelTier.SONNET]),
+            ModelTier.TIER2: config.get("escalation.models.tier2", DEFAULT_MODEL_NAMES[ModelTier.TIER2]),
+            ModelTier.OPUS: config.get("escalation.models.tier2", DEFAULT_MODEL_NAMES[ModelTier.OPUS]),
+        }
+        
+        # Load escalation limits from config
+        self.max_attempts_per_model = config.get("escalation.max_attempts_per_model", MAX_ATTEMPTS_PER_MODEL)
 
     def record_attempt(
         self,
@@ -171,15 +184,15 @@ class EscalationController:
         attempts_at_current_tier = task.attempts
 
         # Check if we need to escalate model
-        if attempts_at_current_tier >= MAX_ATTEMPTS_PER_MODEL:
+        if attempts_at_current_tier >= self.max_attempts_per_model:
             # Get current tier from escalation_tier field
             current_tier = task.escalation_tier
 
             if current_tier == ModelTier.TIER1 or current_tier == ModelTier.SONNET:
                 # Escalate to Opus
                 return EscalationAction.ESCALATE_MODEL, {
-                    "from_model": MODEL_NAMES[ModelTier.SONNET],
-                    "to_model": MODEL_NAMES[ModelTier.OPUS],
+                    "from_model": self.model_names[ModelTier.SONNET],
+                    "to_model": self.model_names[ModelTier.OPUS],
                     "attempts": attempts_at_current_tier,
                 }
             elif (current_tier == ModelTier.TIER2 or current_tier == ModelTier.OPUS):
@@ -264,7 +277,7 @@ class EscalationController:
             self.db.update_task(
                 task_id,
                 escalation_tier=ModelTier.OPUS,
-                current_model=MODEL_NAMES[ModelTier.OPUS],
+                current_model=self.model_names[ModelTier.OPUS],
                 attempts=0,  # Reset attempts at new tier
             )
             return ModelTier.OPUS
@@ -354,7 +367,7 @@ class EscalationController:
                 (
                     0,
                     ModelTier.SONNET.value,
-                    MODEL_NAMES[ModelTier.SONNET],
+                    self.model_names[ModelTier.SONNET],
                     json.dumps(research_findings),
                     task_id,
                 ),
@@ -403,7 +416,7 @@ class EscalationController:
 
             if (
                 (task.escalation_tier == ModelTier.TIER2 or task.escalation_tier == ModelTier.OPUS) and
-                task.attempts >= MAX_ATTEMPTS_PER_MODEL and
+                task.attempts >= self.max_attempts_per_model and
                 task.research_findings.get("diagnosis_done", False)
             ):
                 stuck_count += 1
@@ -425,7 +438,7 @@ class EscalationController:
         for task in tasks:
             if (
                 (task.escalation_tier == ModelTier.TIER2 or task.escalation_tier == ModelTier.OPUS) and
-                task.attempts >= MAX_ATTEMPTS_PER_MODEL and
+                task.attempts >= self.max_attempts_per_model and
                 task.research_findings.get("diagnosis_done", False)
             ):
                 error_history = task.research_findings.get("error_history", [])

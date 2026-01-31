@@ -21,13 +21,13 @@ from bob.orchestrator.escalation import (
     EscalationController,
     MAX_ATTEMPTS_PER_MODEL,
     MAX_DIAGNOSIS_ATTEMPTS,
-    MODEL_NAMES,
+    DEFAULT_MODEL_NAMES,
 )
 
 
-# Model name constants for assertions
-SONNET_MODEL = MODEL_NAMES[ModelTier.SONNET]
-OPUS_MODEL = MODEL_NAMES[ModelTier.OPUS]
+# Model name constants for assertions  
+SONNET_MODEL = DEFAULT_MODEL_NAMES[ModelTier.SONNET]
+OPUS_MODEL = DEFAULT_MODEL_NAMES[ModelTier.OPUS]
 
 
 @pytest.fixture
