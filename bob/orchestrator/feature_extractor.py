@@ -84,6 +84,9 @@ Analyze this specification thoroughly and produce a COMPLETE list of implementat
 
 ## Output Format
 
+IMPORTANT: Output the JSON directly to stdout. Do NOT write it to a file. Do NOT use any tools.
+Just print the raw JSON object below as your response.
+
 Output ONLY valid JSON (no markdown fences, no commentary):
 {{
   "tasks": [
@@ -204,6 +207,25 @@ async def extract_features(
 
     # Step 4: Parse the output
     tasks = _parse_tasks(result.output)
+
+    # Fallback: Claude may have written a tasks.json file instead of printing JSON
+    if not tasks:
+        for candidate in [
+            project_dir / "tasks.json",
+            Path(workspace_dir) / "tasks.json",
+        ]:
+            if candidate.exists():
+                try:
+                    import json as _json
+                    data = _json.loads(candidate.read_text())
+                    tasks = data.get("tasks", data if isinstance(data, list) else [])
+                    if tasks:
+                        # Clean up the file
+                        candidate.unlink(missing_ok=True)
+                        break
+                except Exception:
+                    continue
+
     if not tasks:
         raise RuntimeError(
             f"Feature extraction produced no tasks.\n"

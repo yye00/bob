@@ -1,0 +1,503 @@
+{
+  "tasks": [
+    {
+      "id": "T001",
+      "title": "Pure NumPy MPS Data Structure",
+      "description": "Rewrite DistributedMPS to store plain numpy arrays internally instead of quimb Tensor objects.\n\nCurrent problem: DistributedMPS stores quimb Tensor objects in self.local_tensors and uses tensor.data / tensor.modify() throughout. The spec requires ALL core computation to use plain numpy arrays only.\n\nWhat to implement:\n- Modify DistributedMPS.__init__ so that when given a quimb MPS, it extracts numpy arrays and converts them to the standard 3D convention: shape (chi_left, d, chi_right) for ALL sites (including first/last with chi=1 boundaries).\n- self.local_tensors: Dict[int, np.ndarray] stores raw numpy arrays.\n- Remove all .data and .modify() calls from the class.\n- Keep the quimb MPS constructor parameter but convert immediately to numpy.\n- Add a from_numpy_arrays(arrays, comm) classmethod that takes a list of numpy arrays directly.\n- The random() classmethod should create arrays using np.random directly (not quimb), with proper bond dimensions: chi_i = min(d^i, d^(L-i), max_bond_dim). Each rank generates only its local tensors using a shared random seed.\n- Preserve all existing public methods: has_local_site, get_local_tensor, set_local_tensor, __getitem__, __setitem__, local_sites, exchange_boundaries, left_canonicalize_local, right_canonicalize_local, mixed_canonicalize_local, canonical_form, local_bond_dims, local_norm, normalize, compress_local, gather.\n- exchange_boundaries must send/recv raw numpy arrays (not quimb tensors).\n- gather() should return a list of numpy arrays on root rank (or optionally reconstruct quimb MPS if quimb is available, but this is not required for core algorithm).\n\nTensor shape convention:\n  All MPS tensors: (chi_left, d, chi_right)\n  First site: (1, d, chi_right)\n  Last site: (chi_left, d, 1)\n  This matches the LocalDMRGOptimizer convention.",
+      "depends_on": [],
+      "priority": "critical",
+      "labels": ["data-structure", "mps", "core"],
+      "acceptance_criteria": [
+        "DistributedMPS stores np.ndarray (not quimb Tensor) in local_tensors",
+        "All tensors have shape (chi_left, d, chi_right) with chi=1 at boundaries",
+        "from_numpy_arrays classmethod works without quimb",
+        "random() classmethod creates numpy arrays without quimb, only using np.random with shared seed",
+        "exchange_boundaries sends/receives raw numpy arrays via MPI",
+        "left_canonicalize_local, right_canonicalize_local work with numpy arrays using QR",
+        "compress_local works with numpy arrays using SVD",
+        "normalize works with numpy arrays via MPI allreduce",
+        "gather returns list of numpy arrays on root rank",
+        "Constructor still accepts quimb MPS but converts to numpy internally"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/mps.py",
+          "min_lines": 450,
+          "must_contain": ["class DistributedMPS", "np.ndarray", "from_numpy_arrays", "def exchange_boundaries", "def left_canonicalize_local", "def right_canonicalize_local", "np.linalg.qr", "np.linalg.svd", "partition_sites"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys, os\nsys.path.insert(0, '.')\nimport numpy as np\n\n# Mock MPI for single-rank testing\nfrom unittest.mock import Mock\nmock_comm = Mock()\nmock_comm.Get_rank.return_value = 0\nmock_comm.Get_size.return_value = 1\nmock_comm.allreduce = lambda val, op: val\nmock_comm.bcast = lambda x, root: x\nmock_comm.gather = lambda x, root: [x]\n\nfrom src.distributed.mps import DistributedMPS, partition_sites\n\n# Test partition_sites\nparts = partition_sites(12, 3)\nassert parts == [(0, 4), (4, 8), (8, 12)], f'partition_sites failed: {parts}'\n\n# Test from_numpy_arrays\nL = 8\nd = 2\nbond_dim = 4\narrays = []\nfor i in range(L):\n    cl = 1 if i == 0 else min(d**i, bond_dim)\n    cr = 1 if i == L-1 else min(d**(i+1), bond_dim)\n    if i > 0: cl = arrays[i-1].shape[2]\n    arrays.append(np.random.randn(cl, d, cr) + 1j*np.random.randn(cl, d, cr))\n\ndmps = DistributedMPS.from_numpy_arrays(arrays, comm=mock_comm)\nassert dmps.L == L\nassert len(dmps.local_tensors) == L\nfor site in range(L):\n    t = dmps[site]\n    assert isinstance(t, np.ndarray), f'Site {site} is {type(t)}, not ndarray'\n    assert t.ndim == 3, f'Site {site} shape {t.shape} is not 3D'\nassert dmps[0].shape[0] == 1, 'First site left bond should be 1'\nassert dmps[L-1].shape[2] == 1, 'Last site right bond should be 1'\n\n# Test canonicalization\ndmps.left_canonicalize_local()\nfor site in range(L):\n    assert isinstance(dmps[site], np.ndarray)\n    assert dmps[site].ndim == 3\n\n# Test local_norm\nnorm = dmps.local_norm()\nassert norm > 0 and np.isfinite(norm)\n\nprint('T001 PASSED: DistributedMPS stores numpy arrays correctly')\n\""
+    },
+    {
+      "id": "T002",
+      "title": "Pure NumPy MPO Data Structure",
+      "description": "Rewrite DistributedMPO to store plain numpy arrays internally instead of quimb Tensor objects.\n\nCurrent problem: DistributedMPO stores quimb Tensor objects and uses quimb's SpinHam1D to build Heisenberg MPO. The spec requires core computation to use plain numpy arrays only.\n\nWhat to implement:\n- Modify DistributedMPO.__init__ so that when given a quimb MPO, it extracts numpy arrays and converts to standard 4D convention: shape (m_left, d_in, d_out, m_right).\n- self.local_tensors: Dict[int, np.ndarray] stores raw numpy arrays.\n- Remove all quimb Tensor wrapping from from_arrays().\n- Add heisenberg_numpy(L, J=1.0, comm=None) classmethod that builds Heisenberg XXX MPO using the 5-state automaton representation WITHOUT quimb:\n  - States: 0=identity, 1=Sx, 2=Sy, 3=Sz, 4=identity\n  - First site: (1, 2, 2, 5), Last site: (5, 2, 2, 1), Bulk: (5, 2, 2, 5)\n  - This MPO is already correctly implemented in optimizer.py._build_heisenberg_mpo - extract and reuse that logic.\n- Keep the quimb MPO constructor parameter but convert immediately to numpy.\n- Keep the heisenberg() classmethod using quimb for backward compatibility but mark as deprecated.\n- Preserve all public methods: has_local_site, get_local_tensor, set_local_tensor, __getitem__, __setitem__, local_sites, n_sites, gather, local_bond_dims, boundary methods.\n- gather() returns list of numpy arrays on root.\n\nMPO tensor convention:\n  All MPO tensors: (m_left, d_in, d_out, m_right)\n  First site: (1, d, d, m)\n  Last site: (m, d, d, 1)\n  This matches LocalDMRGOptimizer convention.",
+      "depends_on": ["T001"],
+      "priority": "critical",
+      "labels": ["data-structure", "mpo", "core"],
+      "acceptance_criteria": [
+        "DistributedMPO stores np.ndarray (not quimb Tensor) in local_tensors",
+        "All tensors have shape (m_left, d_in, d_out, m_right)",
+        "heisenberg_numpy classmethod builds correct MPO without quimb",
+        "from_arrays stores numpy arrays directly without quimb wrapping",
+        "Constructor accepts quimb MPO but converts to numpy internally",
+        "gather returns list of numpy arrays on root rank"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/mpo.py",
+          "min_lines": 300,
+          "must_contain": ["class DistributedMPO", "np.ndarray", "heisenberg_numpy", "def from_arrays", "partition_sites"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nimport numpy as np\nfrom unittest.mock import Mock\n\nmock_comm = Mock()\nmock_comm.Get_rank.return_value = 0\nmock_comm.Get_size.return_value = 1\nmock_comm.gather = lambda x, root: [x]\n\nfrom src.distributed.mpo import DistributedMPO\n\n# Test heisenberg_numpy\nL = 8\ndmpo = DistributedMPO.heisenberg_numpy(L, J=1.0, comm=mock_comm)\nassert dmpo.L == L\nassert len(dmpo.local_tensors) == L\n\n# Check tensor shapes\nfor site in range(L):\n    t = dmpo[site]\n    assert isinstance(t, np.ndarray), f'Site {site} is {type(t)}'\n    assert t.ndim == 4, f'Site {site} shape {t.shape} not 4D'\n    assert t.shape[1] == 2 and t.shape[2] == 2, f'Physical dims wrong at site {site}'\nassert dmpo[0].shape[0] == 1, 'First site m_left should be 1'\nassert dmpo[L-1].shape[3] == 1, 'Last site m_right should be 1'\nassert dmpo[0].shape[3] == 5, 'First site m_right should be 5'\nassert dmpo[L-1].shape[0] == 5, 'Last site m_left should be 5'\n\n# Test from_arrays\narrays = [dmpo[i] for i in range(L)]\ndmpo2 = DistributedMPO.from_arrays(arrays, comm=mock_comm)\nfor site in range(L):\n    np.testing.assert_array_equal(dmpo2[site], dmpo[site])\n\nprint('T002 PASSED: DistributedMPO stores numpy arrays correctly')\n\""
+    },
+    {
+      "id": "T003",
+      "title": "Consolidate and Fix LocalDMRGOptimizer Core",
+      "description": "Consolidate the three optimizer files (optimizer.py, optimizer_fixed.py, optimizer_final.py) into a single, correct, tested LocalDMRGOptimizer in optimizer.py.\n\nCurrent problem: There are three different optimizer implementations with inconsistent MPO conventions and untested correctness. The main optimizer.py has a different MPO convention in _build_heisenberg_mpo (first site starts operator creation) vs optimizer_fixed.py (first site propagates identity). Only one should exist.\n\nWhat to implement:\n1. Keep optimizer.py as the single implementation. Delete optimizer_fixed.py and optimizer_final.py.\n2. The MPO convention in optimizer.py already matches the standard 5-state automaton:\n   - First site W[0,:,:,1]=Sx, W[0,:,:,2]=Sy, W[0,:,:,3]=Sz, W[0,:,:,4]=I\n   - Last site W[0,:,:,0]=I, W[1,:,:,0]=Sx, W[2,:,:,0]=Sy, W[3,:,:,0]=Sz\n   - Bulk: W[0,:,:,0]=I, W[1,:,:,0]=Sx, ... W[4,:,:,1]=Sx, ... W[4,:,:,4]=I\n   This is correct for H = sum_i S_i . S_{i+1}.\n3. Ensure _convert_quimb_mps correctly handles all quimb tensor shapes.\n4. Ensure _convert_quimb_mpo correctly extracts quimb MPO arrays.\n5. Make the constructor accept EITHER:\n   a. Lists of numpy arrays (primary interface)\n   b. quimb MPS/MPO objects (convenience, auto-converts)\n6. Verify compute_energy matches quimb's expectation value.\n7. Verify the L=8 Heisenberg ground state energy matches -3.374932... to within 1e-6.\n\nKey methods to preserve:\n- left_canonicalize_mps, right_canonicalize_mps (module-level)\n- build_left_environment, build_right_environment (module-level)\n- LocalDMRGOptimizer.__init__, run, compute_energy\n- _optimize_bond, sweep_left_to_right, sweep_right_to_left\n- effective_hamiltonian_matvec\n- build_heisenberg_mpo_numpy, create_random_mps_numpy (module-level utilities)",
+      "depends_on": [],
+      "priority": "critical",
+      "labels": ["algorithm", "optimizer", "core"],
+      "acceptance_criteria": [
+        "Only optimizer.py exists (optimizer_fixed.py and optimizer_final.py deleted)",
+        "LocalDMRGOptimizer accepts list of numpy arrays directly",
+        "LocalDMRGOptimizer accepts quimb objects and converts correctly",
+        "L=8 Heisenberg ground state energy matches -3.3749... within 1e-6",
+        "L=10 Heisenberg ground state energy matches -4.2581... within 1e-5",
+        "compute_energy returns correct variational energy",
+        "Convergence within 20 sweeps for bond_dim=32"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/optimizer.py",
+          "min_lines": 500,
+          "must_contain": ["class LocalDMRGOptimizer", "def run", "def compute_energy", "def effective_hamiltonian_matvec", "build_left_environment", "build_right_environment", "left_canonicalize_mps", "right_canonicalize_mps", "build_heisenberg_mpo_numpy", "create_random_mps_numpy", "eigsh", "LinearOperator", "np.linalg.svd"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nimport numpy as np\nfrom src.distributed.optimizer import (\n    LocalDMRGOptimizer, build_heisenberg_mpo_numpy, create_random_mps_numpy,\n    left_canonicalize_mps, right_canonicalize_mps\n)\n\n# Verify optimizer_fixed and optimizer_final are deleted\nimport os\nassert not os.path.exists('src/distributed/optimizer_fixed.py'), 'optimizer_fixed.py should be deleted'\nassert not os.path.exists('src/distributed/optimizer_final.py'), 'optimizer_final.py should be deleted'\n\n# Test L=8 Heisenberg\nL = 8\nnp.random.seed(42)\nmps = create_random_mps_numpy(L, d=2, bond_dim=4)\nmpo = build_heisenberg_mpo_numpy(L)\n\nopt = LocalDMRGOptimizer(mps, mpo, verbose=False)\nenergy = opt.run(n_sweeps=20, bond_dim=32, tol=1e-12)\n\nexact_8 = -3.374932598688\nerror_8 = abs(energy - exact_8)\nprint(f'L=8: energy={energy:.10f}, exact={exact_8:.10f}, error={error_8:.2e}')\nassert error_8 < 1e-6, f'L=8 energy error {error_8} > 1e-6'\n\n# Test L=10 Heisenberg\nL = 10\nnp.random.seed(42)\nmps = create_random_mps_numpy(L, d=2, bond_dim=4)\nmpo = build_heisenberg_mpo_numpy(L)\n\nopt = LocalDMRGOptimizer(mps, mpo, verbose=False)\nenergy = opt.run(n_sweeps=20, bond_dim=32, tol=1e-12)\n\nexact_10 = -4.258035207282\nerror_10 = abs(energy - exact_10)\nprint(f'L=10: energy={energy:.10f}, exact={exact_10:.10f}, error={error_10:.2e}')\nassert error_10 < 1e-5, f'L=10 energy error {error_10} > 1e-5'\n\n# Test canonicalization\nmps2 = create_random_mps_numpy(6, d=2, bond_dim=4)\nmps_left = left_canonicalize_mps(mps2)\nmps_right = right_canonicalize_mps(mps2)\nassert len(mps_left) == 6\nassert len(mps_right) == 6\nfor t in mps_left:\n    assert t.ndim == 3\n\nprint('T003 PASSED: LocalDMRGOptimizer produces correct energies')\n\""
+    },
+    {
+      "id": "T004",
+      "title": "Environment Building and Caching Module",
+      "description": "Extract environment building logic into a standalone module that can be used by both serial and distributed DMRG.\n\nCurrently build_left_environment and build_right_environment are in optimizer.py. For the distributed case, we need environments that can be built incrementally for a LOCAL subset of sites, and can accept boundary environments received from neighboring MPI ranks.\n\nWhat to implement in src/distributed/environments.py:\n\n1. build_left_environment(mps, mpo, left_env, site) - same as current but standalone\n2. build_right_environment(mps, mpo, right_env, site) - same as current but standalone\n3. build_all_left_environments(mps, mpo) -> List[np.ndarray]\n   - Builds environments for all sites left-to-right\n   - left_envs[0] = ones((1,1,1)), left_envs[i] = env left of site i\n4. build_all_right_environments(mps, mpo) -> List[np.ndarray]\n   - Builds environments for all sites right-to-left\n   - right_envs[L-1] = ones((1,1,1)), right_envs[i] = env right of site i\n5. build_local_environments(mps_local, mpo_local, left_boundary_env, right_boundary_env)\n   - For distributed case: given local MPS/MPO arrays and boundary environments from neighbors,\n     builds all environments within the local partition.\n   - left_boundary_env: (chi_bra, m, chi_ket) environment received from left neighbor\n   - right_boundary_env: same from right neighbor\n   - Returns (left_envs, right_envs) for local sites only.\n\nAll functions work with plain numpy arrays. Index conventions:\n  MPS: (chi_left, d, chi_right)\n  MPO: (m_left, d_in, d_out, m_right)\n  Environment: (chi_bra, m_mpo, chi_ket)",
+      "depends_on": ["T003"],
+      "priority": "critical",
+      "labels": ["algorithm", "environments", "core"],
+      "acceptance_criteria": [
+        "Module src/distributed/environments.py exists",
+        "build_left_environment and build_right_environment work identically to optimizer.py versions",
+        "build_all_left_environments builds correct chain of environments",
+        "build_all_right_environments builds correct chain of environments",
+        "build_local_environments accepts boundary environments and builds local env chain",
+        "All functions use plain numpy arrays only",
+        "Energy computed via environments matches LocalDMRGOptimizer.compute_energy()"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/environments.py",
+          "min_lines": 200,
+          "must_contain": ["build_left_environment", "build_right_environment", "build_all_left_environments", "build_all_right_environments", "build_local_environments", "np.tensordot"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nimport numpy as np\nfrom src.distributed.optimizer import (\n    LocalDMRGOptimizer, build_heisenberg_mpo_numpy, create_random_mps_numpy,\n    left_canonicalize_mps\n)\nfrom src.distributed.environments import (\n    build_left_environment, build_right_environment,\n    build_all_left_environments, build_all_right_environments,\n    build_local_environments\n)\n\n# Create test system\nL = 6\nnp.random.seed(42)\nmps = left_canonicalize_mps(create_random_mps_numpy(L))\nmpo = build_heisenberg_mpo_numpy(L)\n\n# Test full environment building\nleft_envs = build_all_left_environments(mps, mpo)\nright_envs = build_all_right_environments(mps, mpo)\nassert len(left_envs) == L\nassert len(right_envs) == L\nassert left_envs[0].shape == (1, 1, 1)\nassert right_envs[L-1].shape == (1, 1, 1)\n\n# Test that <psi|H|psi> is correct\nenv = np.ones((1, 1, 1), dtype=complex)\nfor i in range(L):\n    env = build_left_environment(mps, mpo, env, i)\nenergy_env = env.item().real\n\nopt = LocalDMRGOptimizer(mps, mpo, verbose=False)\nenergy_opt = opt.compute_energy()\nprint(f'Energy via environments: {energy_env:.10f}')\nprint(f'Energy via optimizer:    {energy_opt:.10f}')\nassert abs(energy_env - energy_opt) < 1e-10, f'Energy mismatch: {abs(energy_env - energy_opt)}'\n\n# Test local environments with boundary\nlocal_mps = mps[2:5]  # sites 2,3,4\nlocal_mpo = mpo[2:5]\nleft_boundary = left_envs[2]\nright_boundary = right_envs[4]\nlocal_left, local_right = build_local_environments(local_mps, local_mpo, left_boundary, right_boundary)\nassert len(local_left) == 3\nassert len(local_right) == 3\n\nprint('T004 PASSED: Environment building works correctly')\n\""
+    },
+    {
+      "id": "T005",
+      "title": "MPI Boundary Environment Exchange Protocol",
+      "description": "Implement the MPI communication protocol for exchanging environment tensors between neighboring ranks in the distributed DMRG.\n\nIn PDMRG, after each rank optimizes its local sites, it needs to send updated boundary environments to neighbors. This is more complex than just exchanging MPS boundary tensors - we need to exchange the full (chi_bra, m_mpo, chi_ket) environment tensors.\n\nWhat to implement in src/distributed/mpi_comm.py:\n\n1. exchange_boundary_environments(comm, rank, size, left_env, right_env):\n   - Sends left_env to left neighbor, receives right_env from right neighbor\n   - Sends right_env to right neighbor, receives left_env from left neighbor\n   - Uses Sendrecv to avoid deadlocks\n   - Handles variable-sized tensors (bond dims may differ across ranks)\n   - Returns (received_left_env, received_right_env)\n   - None for boundaries that don't exist (rank 0 left, rank P-1 right)\n\n2. exchange_mps_boundaries(comm, rank, size, local_mps, local_start, local_end):\n   - Sends boundary MPS tensors to neighbors\n   - Left neighbor gets our leftmost tensor, right neighbor gets our rightmost\n   - Returns (left_boundary_tensor, right_boundary_tensor)\n   - Used for initializing environments at partition boundaries\n\n3. allreduce_energy(comm, local_energy):\n   - Computes global energy via MPI.Allreduce\n   - For PDMRG: local energies are from separate partitions, need proper accounting\n\n4. broadcast_convergence(comm, converged, root=0):\n   - Broadcast convergence decision from root to all ranks\n\n5. gather_mps_arrays(comm, local_tensors, local_start, local_end, L, root=0):\n   - Gather all local MPS numpy arrays to root rank\n   - Returns full list of L numpy arrays on root, None on others\n\nAll functions work with plain numpy arrays. Handle edge cases:\n- Single rank (size=1): no communication needed\n- Variable tensor sizes between ranks\n- First/last rank boundary conditions",
+      "depends_on": ["T001", "T004"],
+      "priority": "critical",
+      "labels": ["mpi", "communication", "core"],
+      "acceptance_criteria": [
+        "Module src/distributed/mpi_comm.py exists",
+        "exchange_boundary_environments handles variable-size tensors",
+        "exchange_mps_boundaries sends correct boundary tensors",
+        "allreduce_energy sums local energies correctly",
+        "broadcast_convergence works for both True and False",
+        "gather_mps_arrays reconstructs full MPS on root",
+        "All functions handle single-rank case (no MPI communication needed)",
+        "All functions use plain numpy arrays",
+        "Deadlock-free communication using Sendrecv"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/mpi_comm.py",
+          "min_lines": 250,
+          "must_contain": ["exchange_boundary_environments", "exchange_mps_boundaries", "allreduce_energy", "broadcast_convergence", "gather_mps_arrays", "Sendrecv", "MPI"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nimport numpy as np\nfrom unittest.mock import Mock, MagicMock\n\n# Mock MPI\nmock_mpi = MagicMock()\nsys.modules['mpi4py'] = MagicMock()\nsys.modules['mpi4py'].MPI = mock_mpi\n\nfrom src.distributed.mpi_comm import (\n    exchange_boundary_environments, exchange_mps_boundaries,\n    allreduce_energy, broadcast_convergence, gather_mps_arrays\n)\n\n# Test single-rank case\nmock_comm = Mock()\nmock_comm.Get_rank.return_value = 0\nmock_comm.Get_size.return_value = 1\n\nleft_env = np.ones((1, 1, 1), dtype=complex)\nright_env = np.ones((1, 1, 1), dtype=complex)\nrecv_left, recv_right = exchange_boundary_environments(mock_comm, 0, 1, left_env, right_env)\nassert recv_left is None, 'Single rank should have no left boundary'\nassert recv_right is None, 'Single rank should have no right boundary'\n\n# Test allreduce (mock)\nmock_comm.allreduce = lambda val, op: val\nenergy = allreduce_energy(mock_comm, -3.5)\nassert abs(energy - (-3.5)) < 1e-10\n\n# Test broadcast\nmock_comm.bcast = lambda val, root: val\nresult = broadcast_convergence(mock_comm, True, root=0)\nassert result == True\n\n# Test gather\nmock_comm.gather = lambda x, root: [x]\nlocal = {0: np.random.randn(1,2,4), 1: np.random.randn(4,2,4)}\nfull = gather_mps_arrays(mock_comm, local, 0, 2, 2, root=0)\nassert len(full) == 2\nassert full[0].shape == (1, 2, 4)\n\nprint('T005 PASSED: MPI communication module works')\n\""
+    },
+    {
+      "id": "T006",
+      "title": "Local DMRG Sweep for Partition Subsystem",
+      "description": "Implement a function that runs DMRG sweeps on a LOCAL partition of the MPS/MPO, given boundary environments from neighboring ranks.\n\nThis is the core computational kernel of distributed DMRG: each rank takes its local MPS tensors, local MPO tensors, and boundary environments, then performs two-site DMRG sweeps ONLY on its local sites.\n\nWhat to implement in src/distributed/local_sweep.py:\n\n1. local_dmrg_sweep(local_mps, local_mpo, left_boundary_env, right_boundary_env, bond_dim, n_local_sweeps=2, direction='right'):\n   - local_mps: list of numpy arrays for this rank's sites\n   - local_mpo: list of numpy arrays for this rank's sites\n   - left_boundary_env: (chi_bra, m, chi_ket) from left neighbor, or ones((1,1,1)) for rank 0\n   - right_boundary_env: from right neighbor, or ones((1,1,1)) for last rank\n   - Performs n_local_sweeps of two-site optimization on local sites\n   - Uses the effective Hamiltonian matvec from LocalDMRGOptimizer\n   - Updates local_mps in-place\n   - Returns: (updated_local_mps, local_energy, updated_left_env, updated_right_env)\n   - updated_left_env: environment at right edge of partition (to send to right neighbor)\n   - updated_right_env: environment at left edge of partition (to send to left neighbor)\n\n2. compute_local_energy(local_mps, local_mpo, left_boundary_env, right_boundary_env):\n   - Compute energy contribution from this partition\n   - Uses <psi_local|H_local|psi_local> with boundary environments\n\nKey considerations:\n- For partitions with < 2 sites, skip optimization but still compute energy\n- Bond truncation via SVD after each two-site optimization\n- Left-canonicalize before sweeping right, right-canonicalize before sweeping left\n- Build local environments incrementally during sweep (reuse from environments.py)",
+      "depends_on": ["T003", "T004"],
+      "priority": "critical",
+      "labels": ["algorithm", "sweep", "core"],
+      "acceptance_criteria": [
+        "local_dmrg_sweep optimizes local partition and returns updated MPS",
+        "Energy decreases monotonically during local sweeps",
+        "Updated boundary environments are correct for passing to neighbors",
+        "compute_local_energy gives correct energy for local partition",
+        "Handles edge case of 2-site partition",
+        "Uses pure numpy/scipy only (no quimb)",
+        "SVD truncation respects bond_dim limit"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/local_sweep.py",
+          "min_lines": 250,
+          "must_contain": ["local_dmrg_sweep", "compute_local_energy", "eigsh", "LinearOperator", "np.linalg.svd", "build_left_environment", "build_right_environment"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nimport numpy as np\nfrom src.distributed.optimizer import (\n    build_heisenberg_mpo_numpy, create_random_mps_numpy,\n    left_canonicalize_mps, LocalDMRGOptimizer\n)\nfrom src.distributed.environments import build_all_left_environments, build_all_right_environments\nfrom src.distributed.local_sweep import local_dmrg_sweep, compute_local_energy\n\n# Create test system\nL = 8\nnp.random.seed(42)\nmps = left_canonicalize_mps(create_random_mps_numpy(L))\nmpo = build_heisenberg_mpo_numpy(L)\n\n# Build full environments\nleft_envs = build_all_left_environments(mps, mpo)\nright_envs = build_all_right_environments(mps, mpo)\n\n# Test local sweep on middle partition (sites 2-5)\nlocal_mps = [t.copy() for t in mps[2:6]]\nlocal_mpo = mpo[2:6]\nleft_benv = left_envs[2]\nright_benv = right_envs[5]\n\n# Compute initial local energy\ninitial_energy = compute_local_energy(local_mps, local_mpo, left_benv, right_benv)\nprint(f'Initial local energy: {initial_energy:.10f}')\nassert np.isfinite(initial_energy), 'Initial energy should be finite'\n\n# Run local sweep\nupdated_mps, final_energy, new_left_env, new_right_env = local_dmrg_sweep(\n    local_mps, local_mpo, left_benv, right_benv, bond_dim=16, n_local_sweeps=3\n)\nassert len(updated_mps) == 4\nassert all(t.ndim == 3 for t in updated_mps)\nassert np.isfinite(final_energy), 'Final energy should be finite'\nprint(f'Final local energy: {final_energy:.10f}')\n\nprint('T006 PASSED: Local DMRG sweep works correctly')\n\""
+    },
+    {
+      "id": "T007",
+      "title": "Distributed PDMRG Algorithm - Core Loop",
+      "description": "Rewrite DistributedPDMRG to use the real local DMRG sweep instead of fake energy estimates.\n\nCurrent problem: The existing pdmrg.py has placeholder logic that returns fake energies like `-0.45 * local_bonds`. This is NOT real DMRG optimization. The _parallel_sweep_half method just calls compute_energy() without any actual optimization.\n\nWhat to implement (rewrite src/distributed/pdmrg.py):\n\n1. DistributedPDMRG.__init__(L, bond_dim, phys_dim, comm, verbose, mpo_arrays):\n   - Creates DistributedMPS using random numpy arrays (no quimb)\n   - Creates DistributedMPO using heisenberg_numpy or from_arrays (no quimb)\n   - Each rank stores only its local partition\n   - Initializes boundary environments as identity tensors\n\n2. solve(n_sweeps, bond_dim, tol) -> float:\n   Main PDMRG loop (Stoudenmire-White algorithm):\n   a. Initialize: left-canonicalize local MPS, build local environments\n   b. For each sweep:\n      i.  Each rank runs local_dmrg_sweep on its partition\n      ii. Exchange updated boundary environments with neighbors via MPI\n      iii. Update local boundary environments from received data\n      iv. Compute global energy: each rank computes local energy,\n          then allreduce to get total. For non-overlapping partitions,\n          we need to account for inter-partition bond energies.\n      v.  Check convergence: rank 0 decides, broadcasts to all\n      vi. If converged, break\n\n3. _compute_global_energy():\n   - Each rank computes <psi_local|H_local|psi_local> using local environments\n   - BUT: bonds between partitions are NOT included in any rank's local H\n   - Option 1: After exchanging boundaries, rank with lower index computes\n     the cross-boundary bond energy using boundary tensors\n   - Sum all contributions via allreduce\n\n4. gather_mps(root=0):\n   - Gather all local numpy arrays to root rank using gather_mps_arrays\n\nKey algorithmic details from Stoudenmire-White:\n- Even ranks sweep right while odd ranks sweep left (odd/even decomposition)\n- After half-sweep, exchange boundary environments (not just tensors)\n- Each rank's local Hamiltonian includes the MPO sites it owns\n- Cross-boundary bonds handled by environment exchange",
+      "depends_on": ["T001", "T002", "T005", "T006"],
+      "priority": "critical",
+      "labels": ["algorithm", "pdmrg", "distributed"],
+      "acceptance_criteria": [
+        "DistributedPDMRG uses real DMRG optimization (no fake energy estimates)",
+        "No quimb in the core algorithm (only numpy/scipy/mpi4py)",
+        "Local DMRG sweeps use proper two-site optimization with eigsh",
+        "Boundary environments exchanged correctly between ranks via MPI",
+        "Global energy computed via local contributions + allreduce",
+        "Convergence check broadcast from rank 0 to all ranks",
+        "gather_mps returns full numpy MPS array list on root",
+        "Works correctly with single rank (serial fallback)"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/pdmrg.py",
+          "min_lines": 350,
+          "must_contain": ["class DistributedPDMRG", "def solve", "local_dmrg_sweep", "exchange_boundary_environments", "allreduce_energy", "broadcast_convergence", "DistributedMPS", "DistributedMPO"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nimport numpy as np\nfrom unittest.mock import Mock, MagicMock\n\n# Mock MPI for single-rank test\nmock_mpi = MagicMock()\nmock_mpi.SUM = 'SUM'\nsys.modules['mpi4py'] = MagicMock()\nsys.modules['mpi4py'].MPI = mock_mpi\n\nmock_comm = Mock()\nmock_comm.Get_rank.return_value = 0\nmock_comm.Get_size.return_value = 1\nmock_comm.allreduce = lambda val, op: val\nmock_comm.bcast = lambda val, root: val\nmock_comm.gather = lambda x, root: [x]\nmock_comm.Barrier = lambda: None\n\nfrom src.distributed.pdmrg import DistributedPDMRG\n\n# Test single-rank PDMRG (should match serial DMRG)\nL = 8\nnp.random.seed(42)\npdmrg = DistributedPDMRG(L=L, bond_dim=16, comm=mock_comm, verbose=False)\nenergy = pdmrg.solve(n_sweeps=10, tol=1e-8)\n\nexact = -3.374932598688\nprint(f'PDMRG (1 rank) energy: {energy:.10f}')\nprint(f'Exact energy: {exact:.10f}')\nprint(f'Error: {abs(energy - exact):.2e}')\n\n# Single rank PDMRG should match serial DMRG closely\nassert energy < -3.0, f'Energy {energy} is too high (not optimizing at all)'\nassert abs(energy - exact) < 0.1, f'Energy error {abs(energy-exact)} too large for single rank'\n\nprint('T007 PASSED: DistributedPDMRG core loop works')\n\""
+    },
+    {
+      "id": "T008",
+      "title": "Overlapping Partition Manager for A2DMRG",
+      "description": "Implement the overlapping subdomain partitioning and blending logic for A2DMRG.\n\nA2DMRG differs from PDMRG by using OVERLAPPING subdomains. This task implements the partition management, overlap weight computation, and tensor blending for overlap regions.\n\nWhat to implement in src/distributed/overlap.py:\n\n1. compute_overlapping_partitions(L, num_ranks, overlap):\n   - Returns list of (start, end) tuples for each rank\n   - Core regions are disjoint (same as PDMRG partition_sites)\n   - Each rank extends by `overlap` sites into neighbors' core regions\n   - First rank: no left extension\n   - Last rank: no right extension\n   - Example: L=20, ranks=4, overlap=2:\n     Rank 0: [0, 7), Rank 1: [3, 12), Rank 2: [8, 17), Rank 3: [13, 20)\n\n2. compute_overlap_weights(site, partitions):\n   - Returns dict mapping rank -> weight for this site\n   - Sites in non-overlapping regions: weight 1.0 for owning rank\n   - Sites in overlap regions: linear blend based on distance from partition center\n   - Weights sum to 1.0 for each site\n\n3. blend_overlap_tensors(comm, local_tensors, partitions, rank):\n   - For each site in an overlap region:\n     a. Gather the tensor versions from all ranks that own this site\n     b. Compute weighted average using overlap_weights\n     c. Update local tensor with blended result\n   - Communication: use allgather for overlap region tensors\n   - Returns updated local_tensors dict\n\n4. get_core_region(rank, partitions, overlap):\n   - Returns (core_start, core_end) for this rank's non-overlapping core\n   - Core region = partition minus overlap zones\n\n5. get_overlap_sites(rank, partitions):\n   - Returns (left_overlap_sites, right_overlap_sites) lists\n   - Sites that overlap with left and right neighbors respectively",
+      "depends_on": [],
+      "priority": "high",
+      "labels": ["algorithm", "a2dmrg", "partitioning"],
+      "acceptance_criteria": [
+        "compute_overlapping_partitions gives correct overlapping ranges",
+        "Overlap regions extend by exactly `overlap` sites into neighbors",
+        "compute_overlap_weights returns weights summing to 1.0 for each site",
+        "Non-overlap sites have weight 1.0 for their owning rank",
+        "blend_overlap_tensors correctly averages tensors in overlap regions",
+        "get_core_region returns disjoint non-overlapping core for each rank",
+        "Works for edge cases: overlap=0, overlap > partition_size, 1 rank"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/overlap.py",
+          "min_lines": 200,
+          "must_contain": ["compute_overlapping_partitions", "compute_overlap_weights", "blend_overlap_tensors", "get_core_region", "get_overlap_sites"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nimport numpy as np\nfrom src.distributed.overlap import (\n    compute_overlapping_partitions, compute_overlap_weights,\n    get_core_region, get_overlap_sites\n)\n\n# Test overlapping partitions\nparts = compute_overlapping_partitions(20, 4, 2)\nassert len(parts) == 4\nassert parts[0][0] == 0, f'Rank 0 should start at 0, got {parts[0][0]}'\nassert parts[3][1] == 20, f'Rank 3 should end at 20, got {parts[3][1]}'\n# Check overlap exists\nassert parts[0][1] > parts[1][0], 'Ranks 0 and 1 should overlap'\nassert parts[1][1] > parts[2][0], 'Ranks 1 and 2 should overlap'\nassert parts[2][1] > parts[3][0], 'Ranks 2 and 3 should overlap'\nprint(f'Partitions: {parts}')\n\n# Test overlap weights sum to 1\nfor site in range(20):\n    weights = compute_overlap_weights(site, parts)\n    total = sum(weights.values())\n    assert abs(total - 1.0) < 1e-10, f'Weights for site {site} sum to {total}'\n\n# Test non-overlap sites have weight 1.0\n# Site 0 should only be owned by rank 0\nw0 = compute_overlap_weights(0, parts)\nassert len(w0) == 1 and 0 in w0, f'Site 0 should be owned only by rank 0: {w0}'\n\n# Test core regions are disjoint\nfor rank in range(4):\n    core = get_core_region(rank, parts, 2)\n    print(f'Rank {rank}: partition={parts[rank]}, core={core}')\n    assert core[0] < core[1] or (parts[rank][1] - parts[rank][0]) <= 2*2, \\\n        f'Core region invalid for rank {rank}'\n\n# Test single rank\nparts_1 = compute_overlapping_partitions(10, 1, 2)\nassert parts_1 == [(0, 10)]\n\n# Test overlap=0 (should match disjoint partitions)\nparts_no_overlap = compute_overlapping_partitions(12, 3, 0)\nassert parts_no_overlap == [(0, 4), (4, 8), (8, 12)]\n\nprint('T008 PASSED: Overlapping partition manager works correctly')\n\""
+    },
+    {
+      "id": "T009",
+      "title": "Coarse Space Correction for A2DMRG",
+      "description": "Implement the coarse space correction from the A2DMRG paper (arXiv:2505.23429).\n\nThe current implementation has placeholder logic that adds random noise as 'correction'. This needs to be replaced with the actual two-level method.\n\nWhat to implement in src/distributed/coarse_space.py:\n\n1. CoarseSpaceSolver class:\n   - __init__(L, num_ranks, partitions, bond_dim_coarse=8):\n     - Creates a small coarse MPS/MPO representation\n     - Coarse space is built from boundary tensors of each subdomain\n\n2. build_coarse_problem(boundary_envs, local_energies):\n   - Takes boundary environments from all ranks (gathered)\n   - Constructs a reduced Hamiltonian that captures inter-subdomain coupling\n   - The coarse space consists of boundary bonds between subdomains\n   - Dimension: num_bonds_between_ranks * bond_dim\n\n3. solve_coarse_correction(coarse_hamiltonian) -> List[np.ndarray]:\n   - Solve the coarse eigenvalue problem (small, done on all ranks or just root)\n   - Returns correction tensors for each boundary\n\n4. apply_coarse_correction(local_mps, corrections, rank, partitions):\n   - Modify boundary tensors of local_mps to incorporate the coarse correction\n   - Correction is applied additively with a small step size\n   - Returns updated local_mps\n\nThe coarse correction is the key innovation of A2DMRG over PDMRG:\n- PDMRG struggles with global information propagation\n- The coarse space provides a 'highway' for global information\n- Think of it as: local DMRG fixes local details, coarse correction fixes global correlations\n\nSimplified version (acceptable for first implementation):\n- Coarse space = boundary bond tensors from each subdomain\n- Coarse Hamiltonian = effective H acting on boundary bonds\n- Correction = difference between coarse solution and current boundary values",
+      "depends_on": ["T004", "T008"],
+      "priority": "high",
+      "labels": ["algorithm", "a2dmrg", "coarse-space"],
+      "acceptance_criteria": [
+        "CoarseSpaceSolver constructs coarse problem from boundary environments",
+        "Coarse Hamiltonian is symmetric (Hermitian)",
+        "solve_coarse_correction returns meaningful correction tensors",
+        "apply_coarse_correction modifies boundary tensors correctly",
+        "Correction preserves MPS normalization (approximately)",
+        "All operations use pure numpy/scipy"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/coarse_space.py",
+          "min_lines": 200,
+          "must_contain": ["class CoarseSpaceSolver", "build_coarse_problem", "solve_coarse_correction", "apply_coarse_correction", "np.ndarray"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nimport numpy as np\nfrom src.distributed.coarse_space import (\n    CoarseSpaceSolver, apply_coarse_correction\n)\nfrom src.distributed.overlap import compute_overlapping_partitions\n\n# Create test scenario\nL = 12\nnum_ranks = 3\noverlap = 2\npartitions = compute_overlapping_partitions(L, num_ranks, overlap)\n\nsolver = CoarseSpaceSolver(L, num_ranks, partitions, bond_dim_coarse=4)\nassert solver is not None\n\n# Create mock boundary environments\nboundary_envs = []\nfor rank in range(num_ranks):\n    env = {\n        'left': np.random.randn(4, 5, 4) + 1j*np.random.randn(4, 5, 4),\n        'right': np.random.randn(4, 5, 4) + 1j*np.random.randn(4, 5, 4),\n    }\n    boundary_envs.append(env)\n\nlocal_energies = [-1.5, -1.5, -1.5]\n\n# Build and solve coarse problem\ncoarse_H = solver.build_coarse_problem(boundary_envs, local_energies)\nassert coarse_H is not None\n\ncorrections = solver.solve_coarse_correction(coarse_H)\nassert corrections is not None\nassert len(corrections) == num_ranks\n\n# Test correction application\nlocal_mps = [np.random.randn(4, 2, 4) for _ in range(4)]\nlocal_mps[0] = np.random.randn(1, 2, 4)  # First site\nupdated = apply_coarse_correction(local_mps, corrections[0], 0, partitions)\nassert len(updated) == len(local_mps)\nassert all(t.ndim == 3 for t in updated)\n\nprint('T009 PASSED: Coarse space correction works')\n\""
+    },
+    {
+      "id": "T010",
+      "title": "Distributed A2DMRG Algorithm - Core Loop",
+      "description": "Rewrite DistributedA2DMRG to use real DMRG optimization with overlapping subdomains and coarse correction.\n\nCurrent problem: The existing a2dmrg.py has placeholder logic that normalizes tensors with random perturbations and estimates energy as `-1.4 * (num_tensors - 1)`. This is NOT real DMRG.\n\nWhat to implement (rewrite src/distributed/a2dmrg.py):\n\n1. DistributedA2DMRG.__init__(L, overlap, bond_dim, comm, ...):\n   - Uses compute_overlapping_partitions for subdomain layout\n   - Creates DistributedMPS with overlapping regions stored on multiple ranks\n   - Creates DistributedMPO (each rank gets its full overlapping portion)\n   - No quimb in core\n\n2. solve(n_sweeps, tol) -> A2DMRGResult:\n   Main A2DMRG loop:\n   a. Initialize: canonicalize local MPS, build local environments\n   b. For each global sweep:\n      i.   Each rank runs local_dmrg_sweep on its overlapping subdomain\n      ii.  Gather boundary environments from all ranks\n      iii. Solve coarse correction on root (or all ranks)\n      iv.  Broadcast correction, apply to local MPS\n      v.   Blend overlap regions: weighted average of tensors in overlap zones\n      vi.  Compute global energy (sum local energies, accounting for overlaps)\n      vii. Check convergence\n\n3. _blend_overlap_regions():\n   - For each site in an overlap zone:\n     a. allgather tensor from all ranks that own this site\n     b. Compute weighted average using overlap weights\n     c. Update local tensor\n\n4. _compute_global_energy():\n   - Each rank computes local energy for its CORE region only (not overlap)\n   - Allreduce to sum\n   - This avoids double-counting energy in overlap regions\n\n5. A2DMRGResult dataclass (keep existing):\n   - energy, converged, num_sweeps, wall_time, speedup, efficiency, etc.",
+      "depends_on": ["T001", "T002", "T006", "T008", "T009"],
+      "priority": "critical",
+      "labels": ["algorithm", "a2dmrg", "distributed"],
+      "acceptance_criteria": [
+        "DistributedA2DMRG uses real DMRG optimization (no fake energy estimates)",
+        "No quimb in the core algorithm",
+        "Overlapping subdomains correctly set up",
+        "Local DMRG sweeps use proper two-site optimization",
+        "Coarse correction applied after each global sweep",
+        "Overlap blending produces smooth transitions between subdomains",
+        "Global energy avoids double-counting in overlap regions",
+        "Works correctly with single rank (serial fallback)",
+        "A2DMRGResult populated with correct metrics"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/a2dmrg.py",
+          "min_lines": 400,
+          "must_contain": ["class DistributedA2DMRG", "class A2DMRGResult", "def solve", "local_dmrg_sweep", "blend_overlap_tensors", "CoarseSpaceSolver", "compute_overlapping_partitions", "allreduce_energy"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nimport numpy as np\nfrom unittest.mock import Mock, MagicMock\n\n# Mock MPI\nmock_mpi = MagicMock()\nmock_mpi.SUM = 'SUM'\nsys.modules['mpi4py'] = MagicMock()\nsys.modules['mpi4py'].MPI = mock_mpi\n\nmock_comm = Mock()\nmock_comm.Get_rank.return_value = 0\nmock_comm.Get_size.return_value = 1\nmock_comm.allreduce = lambda val, op: val\nmock_comm.bcast = lambda val, root: val\nmock_comm.gather = lambda x, root: [x]\nmock_comm.allgather = lambda x: [x]\nmock_comm.Barrier = lambda: None\n\nfrom src.distributed.a2dmrg import DistributedA2DMRG, A2DMRGResult\n\n# Test single-rank A2DMRG\nL = 8\nnp.random.seed(42)\na2dmrg = DistributedA2DMRG(L=L, overlap=2, bond_dim=16, comm=mock_comm, verbosity=0)\nresult = a2dmrg.run()\n\nassert isinstance(result, A2DMRGResult)\nassert result.energy < -3.0, f'Energy {result.energy} too high (should be < -3.0 for L=8)'\nassert result.num_ranks == 1\nassert result.overlap == 2\nprint(f'A2DMRG (1 rank) energy: {result.energy:.10f}')\n\nprint('T010 PASSED: DistributedA2DMRG core loop works')\n\""
+    },
+    {
+      "id": "T011",
+      "title": "Update __init__.py and Module Exports",
+      "description": "Update src/distributed/__init__.py to export all new modules and classes.\n\nWhat to implement:\n- Export DistributedMPS, DistributedMPO, DistributedPDMRG, DistributedA2DMRG, A2DMRGResult\n- Export partition_sites, compute_overlapping_partitions\n- Export LocalDMRGOptimizer, build_heisenberg_mpo_numpy, create_random_mps_numpy\n- Export environment building functions\n- Export MPI communication helpers\n- Import from the correct module files\n- Remove imports of deleted modules (optimizer_fixed, optimizer_final)\n- Add __all__ list",
+      "depends_on": ["T001", "T002", "T003", "T004", "T005", "T006", "T007", "T008", "T009", "T010"],
+      "priority": "high",
+      "labels": ["integration", "packaging"],
+      "acceptance_criteria": [
+        "__init__.py exports all public classes and functions",
+        "No import errors when importing src.distributed",
+        "__all__ list is complete and accurate",
+        "No references to deleted files (optimizer_fixed, optimizer_final)"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/__init__.py",
+          "min_lines": 30,
+          "must_contain": ["DistributedMPS", "DistributedMPO", "DistributedPDMRG", "DistributedA2DMRG", "LocalDMRGOptimizer", "partition_sites", "__all__"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport sys\nsys.path.insert(0, '.')\nfrom unittest.mock import Mock, MagicMock\nmock_mpi = MagicMock()\nmock_mpi.SUM = 'SUM'\nsys.modules['mpi4py'] = MagicMock()\nsys.modules['mpi4py'].MPI = mock_mpi\n\nfrom src.distributed import (\n    DistributedMPS, DistributedMPO, DistributedPDMRG, DistributedA2DMRG,\n    LocalDMRGOptimizer, partition_sites\n)\n\n# Check all exports exist\nassert DistributedMPS is not None\nassert DistributedMPO is not None\nassert DistributedPDMRG is not None\nassert DistributedA2DMRG is not None\nassert LocalDMRGOptimizer is not None\nassert partition_sites is not None\n\n# Check __all__\nfrom src.distributed import __all__ as exports\nassert 'DistributedMPS' in exports\nassert 'DistributedMPO' in exports\nassert 'DistributedPDMRG' in exports\n\nprint('T011 PASSED: Module exports are complete')\n\""
+    },
+    {
+      "id": "T012",
+      "title": "Serial DMRG Correctness Test Suite",
+      "description": "Write comprehensive tests for the serial LocalDMRGOptimizer to establish correctness baselines before testing distributed versions.\n\nWhat to implement in tests/test_serial_dmrg.py:\n\n1. test_heisenberg_mpo_construction():\n   - Verify MPO tensors have correct shapes\n   - Verify first/last site boundary conditions\n   - Verify spin operator matrices are correct\n\n2. test_random_mps_construction():\n   - Verify MPS tensors have correct shapes\n   - Verify bond dimensions respect max_bond_dim\n   - Verify boundary chi=1 at edges\n\n3. test_canonicalization():\n   - Verify left_canonicalize_mps produces isometric tensors\n   - Verify right_canonicalize_mps produces isometric tensors\n   - Verify overlap <psi|psi> is preserved after canonicalization\n\n4. test_environment_building():\n   - Verify left/right environment shapes\n   - Verify <psi|H|psi> via full contraction matches compute_energy()\n\n5. test_energy_l4_heisenberg():\n   - L=4 Heisenberg: exact energy = -1.616025... (Bethe ansatz)\n   - Verify optimizer converges within 1e-6\n\n6. test_energy_l6_heisenberg():\n   - L=6 Heisenberg: exact energy = -2.493577...\n   - Verify within 1e-6\n\n7. test_energy_l8_heisenberg():\n   - L=8 Heisenberg: exact energy = -3.374932598688\n   - Verify within 1e-6\n\n8. test_energy_l10_heisenberg():\n   - L=10 Heisenberg: exact energy = -4.258035207282\n   - Verify within 1e-5\n\n9. test_energy_l12_heisenberg():\n   - L=12 Heisenberg: exact energy = -5.141930...\n   - Verify within 1e-4\n\n10. test_energy_monotonic_decrease():\n    - Verify energy decreases monotonically during sweeps\n\n11. test_svd_truncation():\n    - Verify bond dimension is truncated correctly\n    - Verify truncation error is bounded\n\n12. test_quimb_comparison():\n    - Run quimb DMRG as reference, compare energy matches within 1e-6\n    - This is the ONLY test that uses quimb (for verification)",
+      "depends_on": ["T003"],
+      "priority": "high",
+      "labels": ["testing", "correctness", "serial"],
+      "acceptance_criteria": [
+        "All 12 test functions pass",
+        "L=4,6,8 energies match exact values within 1e-6",
+        "L=10 energy matches within 1e-5",
+        "Quimb comparison test passes",
+        "Tests run without MPI (no mpi4py required)",
+        "Tests use pytest framework"
+      ],
+      "expected_outputs": [
+        {
+          "path": "tests/test_serial_dmrg.py",
+          "min_lines": 300,
+          "must_contain": ["test_heisenberg_mpo_construction", "test_energy_l8_heisenberg", "test_quimb_comparison", "test_canonicalization", "test_environment_building", "import pytest", "LocalDMRGOptimizer"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && PYTHONPATH=. python -m pytest tests/test_serial_dmrg.py -v --tb=short 2>&1 | tail -20"
+    },
+    {
+      "id": "T013",
+      "title": "DistributedMPS Unit Tests",
+      "description": "Rewrite tests/test_distributed_mps.py for the new numpy-based DistributedMPS.\n\nThe existing tests use quimb Tensor objects and won't work with the rewritten DistributedMPS that stores numpy arrays.\n\nWhat to implement in tests/test_distributed_mps.py:\n\n1. test_initialization_from_numpy():\n   - Create DistributedMPS.from_numpy_arrays with mock MPI\n   - Verify L, rank, size, local_start, local_end\n\n2. test_partition_sites_various():\n   - Even division, uneven division, more ranks than sites\n\n3. test_random_creation():\n   - Verify random() creates correct shapes without quimb\n   - Verify bond dimensions are correct\n\n4. test_local_site_access():\n   - Test has_local_site, get_local_tensor, set_local_tensor\n   - Test __getitem__, __setitem__\n   - Test error on non-local access\n\n5. test_canonicalization_numpy():\n   - Left-canonicalize and verify isometry\n   - Right-canonicalize and verify isometry\n   - Mixed-canonicalize around center\n\n6. test_exchange_boundaries_numpy():\n   - Mock MPI Sendrecv to simulate numpy array exchange\n   - Verify correct arrays sent/received\n\n7. test_normalize_numpy():\n   - Verify norm is approximately 1 after normalization\n\n8. test_compress_numpy():\n   - Verify bond dimension is reduced after compression\n\n9. test_gather_numpy():\n   - Mock MPI gather, verify full array list reconstructed\n\nAll tests use mocked MPI (no real MPI needed for unit tests).",
+      "depends_on": ["T001"],
+      "priority": "high",
+      "labels": ["testing", "mps", "unit-tests"],
+      "acceptance_criteria": [
+        "All tests pass with mocked MPI",
+        "Tests verify numpy arrays are stored (not quimb Tensors)",
+        "Tests verify tensor shapes follow (chi_left, d, chi_right) convention",
+        "Canonicalization tests verify isometry properties",
+        "Tests use pytest framework"
+      ],
+      "expected_outputs": [
+        {
+          "path": "tests/test_distributed_mps.py",
+          "min_lines": 250,
+          "must_contain": ["test_initialization_from_numpy", "test_partition_sites", "test_local_site_access", "test_canonicalization_numpy", "test_exchange_boundaries_numpy", "import pytest", "np.ndarray"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && PYTHONPATH=. python -m pytest tests/test_distributed_mps.py -v --tb=short 2>&1 | tail -20"
+    },
+    {
+      "id": "T014",
+      "title": "DistributedMPO Unit Tests",
+      "description": "Rewrite tests/test_distributed_mpo.py for the new numpy-based DistributedMPO.\n\nWhat to implement in tests/test_distributed_mpo.py:\n\n1. test_heisenberg_numpy_construction():\n   - Verify MPO shapes for all sites\n   - Verify first site (1,2,2,5), last site (5,2,2,1), bulk (5,2,2,5)\n   - Verify operator content (Sx, Sy, Sz at correct positions)\n\n2. test_from_arrays():\n   - Create MPO from numpy arrays\n   - Verify local_tensors stores numpy arrays\n\n3. test_partitioning():\n   - Verify correct partition for various rank/size combinations\n\n4. test_local_access():\n   - has_local_site, get_local_tensor, __getitem__\n\n5. test_boundary_methods():\n   - has_left/right_boundary, get_left/right_boundary_site\n   - get_left/right_neighbor_rank\n\n6. test_heisenberg_energy():\n   - Build Heisenberg MPO, compute <psi|H|psi> for a known state\n   - Compare with expected value\n\nAll tests use mocked MPI.",
+      "depends_on": ["T002"],
+      "priority": "high",
+      "labels": ["testing", "mpo", "unit-tests"],
+      "acceptance_criteria": [
+        "All tests pass with mocked MPI",
+        "Tests verify numpy arrays are stored",
+        "Heisenberg MPO construction verified with correct operator content",
+        "Tests use pytest framework"
+      ],
+      "expected_outputs": [
+        {
+          "path": "tests/test_distributed_mpo.py",
+          "min_lines": 180,
+          "must_contain": ["test_heisenberg_numpy_construction", "test_from_arrays", "test_partitioning", "test_local_access", "test_boundary_methods", "import pytest"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && PYTHONPATH=. python -m pytest tests/test_distributed_mpo.py -v --tb=short 2>&1 | tail -20"
+    },
+    {
+      "id": "T015",
+      "title": "PDMRG Integration Test with MPI",
+      "description": "Write an MPI-based integration test script that verifies PDMRG correctness by comparing with serial DMRG.\n\nWhat to implement in tests/test_pdmrg_mpi.py (run with mpirun):\n\n1. Test: PDMRG with 2 ranks on L=12 Heisenberg\n   - Run serial LocalDMRGOptimizer on L=12\n   - Run DistributedPDMRG with 2 ranks on same system\n   - Compare energies: PDMRG should be within 10% of serial\n   - (PDMRG may not match exactly due to partition boundary effects)\n\n2. Test: PDMRG energy improves with sweeps\n   - Verify energy decreases monotonically\n\n3. Test: PDMRG with different rank counts\n   - Run with 1, 2, 4 ranks (if available)\n   - All should converge to similar energy range\n\n4. Test: gather_mps reconstructs full MPS\n   - Run PDMRG, gather MPS to root\n   - Compute energy of gathered MPS using serial optimizer\n   - Energy should match PDMRG reported energy\n\nScript should be runnable with:\n  mpirun -np 2 python tests/test_pdmrg_mpi.py\n\nMust set up correct PATH and LD_LIBRARY_PATH for OpenMPI.",
+      "depends_on": ["T007", "T012"],
+      "priority": "high",
+      "labels": ["testing", "integration", "mpi", "pdmrg"],
+      "acceptance_criteria": [
+        "Script runs successfully with mpirun -np 2",
+        "PDMRG energy is within 10% of serial DMRG energy",
+        "Energy decreases over sweeps",
+        "Gathered MPS energy matches reported energy",
+        "Script prints clear PASS/FAIL indicators"
+      ],
+      "expected_outputs": [
+        {
+          "path": "tests/test_pdmrg_mpi.py",
+          "min_lines": 150,
+          "must_contain": ["mpi4py", "MPI", "DistributedPDMRG", "LocalDMRGOptimizer", "mpirun", "PASS", "FAIL"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && export PATH=/usr/lib64/openmpi/bin:$PATH && export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:${LD_LIBRARY_PATH:-} && PYTHONPATH=. mpirun --allow-run-as-root -np 2 python tests/test_pdmrg_mpi.py 2>&1 | tail -20"
+    },
+    {
+      "id": "T016",
+      "title": "A2DMRG Integration Test with MPI",
+      "description": "Write an MPI-based integration test script that verifies A2DMRG correctness.\n\nWhat to implement in tests/test_a2dmrg_mpi.py (run with mpirun):\n\n1. Test: A2DMRG with 2 ranks on L=12 Heisenberg\n   - Run serial DMRG as reference\n   - Run DistributedA2DMRG with 2 ranks, overlap=2\n   - Compare energies: A2DMRG should be within 10% of serial\n\n2. Test: A2DMRG with different overlap values\n   - overlap=2, overlap=4\n   - Larger overlap should give better accuracy\n\n3. Test: A2DMRG energy improves with sweeps\n   - Verify energy decreases (approximately) monotonically\n\n4. Test: A2DMRGResult contains valid metrics\n   - Check energy, converged, num_sweeps, wall_time\n   - Check speedup and efficiency are computed\n\nScript runnable with:\n  mpirun -np 2 python tests/test_a2dmrg_mpi.py",
+      "depends_on": ["T010", "T012"],
+      "priority": "high",
+      "labels": ["testing", "integration", "mpi", "a2dmrg"],
+      "acceptance_criteria": [
+        "Script runs successfully with mpirun -np 2",
+        "A2DMRG energy is within 10% of serial DMRG energy",
+        "A2DMRGResult fields are populated correctly",
+        "Script prints clear PASS/FAIL indicators"
+      ],
+      "expected_outputs": [
+        {
+          "path": "tests/test_a2dmrg_mpi.py",
+          "min_lines": 150,
+          "must_contain": ["mpi4py", "MPI", "DistributedA2DMRG", "A2DMRGResult", "LocalDMRGOptimizer", "PASS", "FAIL"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && export PATH=/usr/lib64/openmpi/bin:$PATH && export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:${LD_LIBRARY_PATH:-} && PYTHONPATH=. mpirun --allow-run-as-root -np 2 python tests/test_a2dmrg_mpi.py 2>&1 | tail -20"
+    },
+    {
+      "id": "T017",
+      "title": "Memory Scaling Verification Script",
+      "description": "Write a script that measures and verifies O(L/P) memory scaling per rank.\n\nWhat to implement in tests/verify_memory_scaling.py:\n\n1. Use tracemalloc to measure peak memory per rank\n2. Run PDMRG with L=48 chain:\n   - np=1: measure peak memory\n   - np=2: measure peak memory per rank\n   - np=4: measure peak memory per rank\n3. Verify scaling:\n   - Memory(np=2) / Memory(np=1) < 0.75 (should be ~0.5 for ideal O(L/P))\n   - Memory(np=4) / Memory(np=1) < 0.50 (should be ~0.25 for ideal O(L/P))\n4. Print formatted table with results\n5. Return exit code 0 if scaling holds, 1 otherwise\n\nThe script should be a standalone Python file that is run with mpirun.\nIt measures memory DURING PDMRG execution, not just at initialization.\n\nKey: the DistributedMPS and DistributedMPO should only store local tensors.\nIf memory doesn't scale, it means we're storing global data somewhere.\n\nAlso create a wrapper script tests/run_memory_scaling.sh that:\n1. Sets up OpenMPI environment variables\n2. Runs with np=1, np=2, np=4\n3. Collects and compares results\n4. Prints summary",
+      "depends_on": ["T007"],
+      "priority": "medium",
+      "labels": ["testing", "benchmarking", "memory"],
+      "acceptance_criteria": [
+        "tracemalloc measures peak memory during PDMRG execution",
+        "Memory per rank decreases as number of ranks increases",
+        "Memory(np=2)/Memory(np=1) < 0.75",
+        "Memory(np=4)/Memory(np=1) < 0.50",
+        "Formatted output table shows scaling results",
+        "Wrapper shell script runs all configurations"
+      ],
+      "expected_outputs": [
+        {
+          "path": "tests/verify_memory_scaling.py",
+          "min_lines": 100,
+          "must_contain": ["tracemalloc", "DistributedPDMRG", "peak_memory", "MPI"]
+        },
+        {
+          "path": "tests/run_memory_scaling.sh",
+          "min_lines": 30,
+          "must_contain": ["mpirun", "np 1", "np 2", "np 4", "openmpi"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && export PATH=/usr/lib64/openmpi/bin:$PATH && export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:${LD_LIBRARY_PATH:-} && bash tests/run_memory_scaling.sh 2>&1 | tail -20"
+    },
+    {
+      "id": "T018",
+      "title": "Correctness and Scaling Verification Script",
+      "description": "Write a comprehensive verification script that tests correctness and parallel scaling.\n\nWhat to implement in tests/verify_correctness_scaling.py:\n\n1. CORRECTNESS TEST:\n   a. Run serial LocalDMRGOptimizer on L=12 Heisenberg, bond_dim=32\n   b. Run PDMRG with 2 ranks on same system\n   c. Run A2DMRG with 2 ranks, overlap=2 on same system\n   d. Compare energies:\n      - Serial energy should match exact -5.14193... within 1e-4\n      - PDMRG energy should be within 5% of serial\n      - A2DMRG energy should be within 5% of serial\n\n2. SCALING TEST:\n   a. Run PDMRG with 1, 2, 4 ranks on L=24\n   b. Measure wall time for each\n   c. Compute speedup = T(1) / T(P)\n   d. Compute efficiency = speedup / P\n   e. Verify efficiency > 50% for 4 ranks\n\n3. COMPARISON TEST:\n   a. Use quimb DMRG as reference on L=12\n   b. Compare serial DMRG energy with quimb\n   c. Difference should be < 1e-6\n\nOutput: formatted report with all results and PASS/FAIL for each test.\n\nAlso create tests/run_verification.sh wrapper that:\n1. Sets up OpenMPI environment\n2. Runs all tests with appropriate rank counts\n3. Collects and prints summary",
+      "depends_on": ["T007", "T010", "T012"],
+      "priority": "medium",
+      "labels": ["testing", "verification", "benchmarking"],
+      "acceptance_criteria": [
+        "Serial DMRG matches exact energy within 1e-4 for L=12",
+        "PDMRG energy within 5% of serial for L=12",
+        "A2DMRG energy within 5% of serial for L=12",
+        "Quimb reference comparison passes within 1e-6",
+        "Parallel efficiency > 50% for 4 ranks",
+        "Formatted report with clear PASS/FAIL indicators"
+      ],
+      "expected_outputs": [
+        {
+          "path": "tests/verify_correctness_scaling.py",
+          "min_lines": 200,
+          "must_contain": ["LocalDMRGOptimizer", "DistributedPDMRG", "DistributedA2DMRG", "quimb", "PASS", "FAIL", "tracemalloc"]
+        },
+        {
+          "path": "tests/run_verification.sh",
+          "min_lines": 30,
+          "must_contain": ["mpirun", "openmpi", "PYTHONPATH"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && export PATH=/usr/lib64/openmpi/bin:$PATH && export LD_LIBRARY_PATH=/usr/lib64/openmpi/lib:${LD_LIBRARY_PATH:-} && bash tests/run_verification.sh 2>&1 | tail -30"
+    },
+    {
+      "id": "T019",
+      "title": "Documentation and API Reference",
+      "description": "Write comprehensive documentation for the distributed DMRG implementation.\n\nWhat to create in src/distributed/README.md:\n\n1. Overview:\n   - What PDMRG and A2DMRG are, why distributed\n   - O(L/P) memory scaling explanation\n   - References to Stoudenmire-White and A2DMRG papers\n\n2. Quick Start:\n   - Installation (mpi4py, numpy, scipy)\n   - Running serial DMRG\n   - Running PDMRG with mpirun\n   - Running A2DMRG with mpirun\n\n3. Class API Reference:\n   - DistributedMPS: all methods with signatures and descriptions\n   - DistributedMPO: all methods\n   - LocalDMRGOptimizer: all methods\n   - DistributedPDMRG: all methods\n   - DistributedA2DMRG: all methods\n   - A2DMRGResult: all fields\n   - Environment functions\n   - MPI communication functions\n   - Overlap management functions\n\n4. Architecture:\n   - Data flow diagram\n   - MPI communication pattern\n   - How boundary environments are exchanged\n   - How coarse correction works in A2DMRG\n\n5. Tensor Conventions:\n   - MPS: (chi_left, d, chi_right)\n   - MPO: (m_left, d_in, d_out, m_right)\n   - Environment: (chi_bra, m_mpo, chi_ket)\n\n6. Testing:\n   - How to run unit tests\n   - How to run MPI integration tests\n   - How to verify correctness\n   - How to measure memory scaling\n\n7. Quimb Usage Policy:\n   - What quimb is used for (verification/testing ONLY)\n   - What quimb is NOT used for (core algorithm)",
+      "depends_on": ["T011"],
+      "priority": "low",
+      "labels": ["documentation"],
+      "acceptance_criteria": [
+        "README.md covers all 7 sections",
+        "API reference lists all public classes and methods",
+        "Quick start examples are runnable",
+        "Tensor conventions are clearly documented",
+        "Quimb usage policy is explicit"
+      ],
+      "expected_outputs": [
+        {
+          "path": "src/distributed/README.md",
+          "min_lines": 300,
+          "must_contain": ["DistributedMPS", "DistributedMPO", "DistributedPDMRG", "DistributedA2DMRG", "LocalDMRGOptimizer", "mpirun", "Heisenberg", "O(L/P)", "quimb"]
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport os\nreadme_path = 'src/distributed/README.md'\nassert os.path.exists(readme_path), f'{readme_path} not found'\n\nwith open(readme_path) as f:\n    content = f.read()\n\nlines = content.split('\\n')\nassert len(lines) >= 300, f'README has {len(lines)} lines, need >= 300'\n\nrequired = ['DistributedMPS', 'DistributedMPO', 'DistributedPDMRG', 'DistributedA2DMRG',\n            'LocalDMRGOptimizer', 'mpirun', 'O(L/P)']\nfor term in required:\n    assert term in content, f'README missing: {term}'\n\nprint('T019 PASSED: Documentation is complete')\n\""
+    },
+    {
+      "id": "T020",
+      "title": "Clean Up Root-Level Test Files",
+      "description": "Remove or reorganize the 39+ root-level test files that are duplicates, outdated, or incompatible with the new implementation.\n\nWhat to do:\n1. Move any salvageable test logic into tests/ directory\n2. Delete all root-level test files that reference old interfaces\n3. Delete optimizer_fixed.py and optimizer_final.py (if not done in T003)\n4. Delete src/algorithms/ files that duplicate distributed/ functionality\n5. Ensure tests/ has a clean structure:\n   - tests/test_serial_dmrg.py (from T012)\n   - tests/test_distributed_mps.py (from T013)\n   - tests/test_distributed_mpo.py (from T014)\n   - tests/test_pdmrg_mpi.py (from T015)\n   - tests/test_a2dmrg_mpi.py (from T016)\n   - tests/verify_memory_scaling.py (from T017)\n   - tests/verify_correctness_scaling.py (from T018)\n   - tests/__init__.py\n\nDo NOT delete:\n- src/algorithms/ (keep for reference/alternate implementations)\n- src/benchmarks/ (benchmark code)\n- examples/ (user examples)\n- docs/ (documentation)\n\nDO delete from root:\n- test_*.py, run_*.py, verify_*.py, simple_*.py at project root",
+      "depends_on": ["T012", "T013", "T014", "T015", "T016"],
+      "priority": "low",
+      "labels": ["cleanup", "organization"],
+      "acceptance_criteria": [
+        "No test_*.py files at project root",
+        "No run_*.py files at project root (except run_benchmark.py in benchmarks)",
+        "No verify_*.py files at project root",
+        "optimizer_fixed.py and optimizer_final.py deleted",
+        "tests/ directory has clean, organized test files",
+        "All remaining tests pass"
+      ],
+      "expected_outputs": [
+        {
+          "path": "tests/__init__.py",
+          "min_lines": 1,
+          "must_contain": []
+        }
+      ],
+      "verify_script": "cd /home/captain/clawd/work/dmrg_paper && python -c \"\nimport os, glob\n\n# Check no root-level test files\nroot_tests = glob.glob('test_*.py') + glob.glob('run_*.py') + glob.glob('verify_*.py') + glob.glob('simple_*.py')\nassert len(root_tests) == 0, f'Root-level test files still exist: {root_tests}'\n\n# Check optimizer variants deleted\nassert not os.path.exists('src/distributed/optimizer_fixed.py')\nassert not os.path.exists('src/distributed/optimizer_final.py')\n\n# Check tests/ directory has required files\nrequired_tests = [\n    'tests/test_serial_dmrg.py',\n    'tests/test_distributed_mps.py',\n    'tests/test_distributed_mpo.py',\n]\nfor f in required_tests:\n    assert os.path.exists(f), f'Missing test file: {f}'\n\nprint('T020 PASSED: Project structure is clean')\n\""
+    }
+  ],
+  "dependency_graph_summary": "The task graph has four layers:\n\nLayer 1 (Foundation - no dependencies): T001 (MPS), T002 (MPO depends on T001 for partition_sites), T003 (Optimizer), T008 (Overlap partitions).\n\nLayer 2 (Core algorithms): T004 (Environments, depends on T003), T005 (MPI comm, depends on T001+T004), T006 (Local sweep, depends on T003+T004), T009 (Coarse space, depends on T004+T008).\n\nLayer 3 (Distributed algorithms): T007 (PDMRG, depends on T001+T002+T005+T006), T010 (A2DMRG, depends on T001+T002+T006+T008+T009).\n\nLayer 4 (Testing and validation): T012-T016 (tests, depend on corresponding implementations), T011 (init.py, depends on all implementations).\n\nLayer 5 (Polish): T017-T018 (verification scripts), T019 (docs), T020 (cleanup).\n\nCritical path: T001 -> T002 -> T005 -> T007 (PDMRG) and T001 -> T006 -> T010 (A2DMRG). T003 and T004 feed into T006.",
+  "total_estimated_loc": 5500
+}
