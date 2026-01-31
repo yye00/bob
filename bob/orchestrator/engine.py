@@ -406,6 +406,7 @@ class Orchestrator:
                     )
 
                     debug_succeeded = False
+                    previous_errors = [verify_msg]  # Track error history for escalation
 
                     for debug_attempt in range(max_debug):
                         print(f"\n🔧 Debug attempt {debug_attempt + 1}/{max_debug}...")
@@ -457,6 +458,7 @@ class Orchestrator:
                                     verification_error=verify_msg2,
                                 )
                                 verify_msg = verify_msg2  # Update for next iteration
+                                previous_errors.append(verify_msg2)
                                 self.telemetry.record_debug(
                                     task.id, debug_attempt + 1, success=False,
                                     error_message=verify_msg2,
@@ -481,6 +483,7 @@ class Orchestrator:
                             self.telemetry.end_task_attempt(
                                 task.id, success=False, error_message=error_detail,
                             )
+                            previous_errors.append(error_detail)
 
                     if debug_succeeded:
                         deps_met, deps_status = self._check_dependencies(task)
