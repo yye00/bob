@@ -182,11 +182,12 @@ class TestDecompositionEngine:
         engine.tree[unit.id] = unit
         await engine.process(unit)
 
-        # Should have decomposed
-        assert low_decomposer.decompose_count == 1
-        assert len(unit.children) == 2
+        # Convergence loop: engine decomposes twice before detecting
+        # stall (needs 3 scores: [0.3, 0.3, 0.3] to see Δ=0.0 twice)
+        assert low_decomposer.decompose_count == 2
+        assert len(unit.children) == 4  # 2 per decomposition
 
-        # Children should be executed
+        # All children should be executed
         for child_id in unit.children:
             child = engine.tree[child_id]
             assert child.status == WorkUnitStatus.DONE
@@ -288,9 +289,9 @@ class TestDecompositionEngine:
         root = WorkUnit(kind=WorkUnitKind.TASK, content={"title": "Root"})
         await engine.run([root])
 
-        # Check parent-child relationships
+        # Convergence loop decomposes twice → 4 children total
         children = engine.get_children(root.id)
-        assert len(children) == 2
+        assert len(children) == 4
         for child in children:
             assert child.parent_id == root.id
             assert child.depth == 1
@@ -382,8 +383,10 @@ class TestDecompositionEngine:
         # Parent should have result with collected child data
         assert parent.result is not None
         assert parent.result["status"] == "collected"
-        assert len(parent.result["child_results"]) == 1
+        # Convergence loop: 2 decompositions → 2 children → 2 results
+        assert len(parent.result["child_results"]) == 2
         assert parent.result["child_results"][0] == {"status": "executed"}
+        assert parent.result["child_results"][1] == {"status": "executed"}
 
 
 # ---------------------------------------------------------------------------
