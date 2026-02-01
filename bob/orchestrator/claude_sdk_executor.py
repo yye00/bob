@@ -211,10 +211,10 @@ async def execute_task_with_sdk(
         project_dir: Working directory
         prompt: Task prompt
         model: Model name
-        timeout_seconds: Max execution time
+        timeout_seconds: Max execution time (0 = unlimited)
         non_interactive: Ignored (SDK is always non-interactive)
-        enable_thinking: Ignored (thinking is model-dependent)
-        thinking_budget: Ignored (SDK handles this)
+        enable_thinking: Whether to enable extended thinking
+        thinking_budget: Token budget for extended thinking
         stall_timeout: Ignored (SDK handles streaming)
         verbose: Print tool use to stdout
 
@@ -246,10 +246,18 @@ async def execute_task_with_sdk(
             "on_tool_result": _on_tool_result,
         }
 
+    # Build environment variables for thinking configuration
+    env_vars = {}
+    if enable_thinking and thinking_budget > 0:
+        # Claude Code SDK respects these env vars for extended thinking
+        env_vars["CLAUDE_CODE_ENABLE_THINKING"] = "1"
+        env_vars["CLAUDE_CODE_THINKING_BUDGET"] = str(thinking_budget)
+
     return await execute_with_sdk(
         project_dir=project_dir,
         prompt=prompt,
         model=model,
         timeout_seconds=timeout_seconds,
+        env_vars=env_vars if env_vars else None,
         **callbacks,
     )

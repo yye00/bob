@@ -31,7 +31,7 @@ from bob.models.base import (
 from bob.orchestrator.escalation import (
     EscalationController,
     MAX_ATTEMPTS_PER_MODEL,
-    MODEL_NAMES,
+    DEFAULT_MODEL_NAMES as MODEL_NAMES,
 )
 
 

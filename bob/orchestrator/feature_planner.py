@@ -304,6 +304,41 @@ def _validate_verify_script_syntax(script: str) -> tuple[bool, str]:
         return False, str(e)
 
 
+def _validate_embedded_python(command: str) -> tuple[bool, str]:
+    """Validate Python code embedded in bash commands.
+
+    Extracts Python from patterns like:
+        python -c "import X; assert Y"
+        python3 -c 'some code'
+
+    Returns:
+        (is_valid, error_message)
+    """
+    import ast
+
+    # Match python -c "..." or python3 -c '...'
+    match = re.search(
+        r'python[3]?\s+-c\s+["\'](.+?)["\'](?:\s|$|;)',
+        command,
+        re.DOTALL,
+    )
+    if not match:
+        return True, ""  # No embedded Python → nothing to validate
+
+    code = match.group(1)
+    # Unescape common patterns
+    code = code.replace("\\n", "\n")
+    code = code.replace('\\"', '"')
+    code = code.replace("\\'", "'")
+    code = code.replace("\\\\", "\\")
+
+    try:
+        ast.parse(code)
+        return True, ""
+    except SyntaxError as e:
+        return False, f"line {e.lineno}: {e.msg}"
+
+
 def _is_trivial_check(script: str) -> bool:
     """Detect trivial verify_scripts that prove nothing."""
     if not script or not script.strip():
@@ -763,14 +798,27 @@ class FeaturePlanner:
                     test_name = test.get("name", "unnamed")
                     test_cmd = test.get("command", "")
                     if test_cmd:
+                        # Bash syntax check
                         valid, err = _validate_verify_script_syntax(test_cmd)
                         if not valid:
                             msg = (
                                 f"{task_id}: {test_category}/{test_name} "
-                                f"has syntax error: {err}"
+                                f"has bash syntax error: {err}"
                             )
                             warnings.append(msg)
                             print(f"  ✗ {msg}")
+                        # Python syntax check for embedded python -c commands
+                        py_valid, py_err = _validate_embedded_python(test_cmd)
+                        if not py_valid:
+                            msg = (
+                                f"{task_id}: {test_category}/{test_name} "
+                                f"has Python syntax error: {py_err}"
+                            )
+                            warnings.append(msg)
+                            print(f"  ✗ {msg}")
+                            task["verification_confidence"] = min(
+                                task.get("verification_confidence", 0.0), 0.3
+                            )
                     else:
                         msg = f"{task_id}: {test_category}/{test_name} has empty command"
                         warnings.append(msg)

@@ -793,8 +793,11 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
                 project_dir=self.project_dir,
                 prompt=prompt,
                 model=self.current_model,
-                timeout_seconds=3600,  # 1 hour timeout
-                verbose=True,  # Show tool use for monitoring
+                timeout_seconds=0,  # 0 = unlimited (Bob runs indefinitely)
+                verbose=True,
+                enable_thinking=self.config.enable_thinking,
+                thinking_budget=self.config.thinking_budget,
+                stall_timeout=self.config.stall_timeout,
             )
         else:
             # Fallback to CLI executor
@@ -802,7 +805,7 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
                 project_dir=self.project_dir,
                 prompt=prompt,
                 model=self.current_model,
-                timeout_seconds=3600,
+                timeout_seconds=0,  # 0 = unlimited
                 non_interactive=self.config.non_interactive,
                 enable_thinking=self.config.enable_thinking,
                 thinking_budget=self.config.thinking_budget,
@@ -1145,15 +1148,32 @@ If you need full error traces from previous attempts, read: `{rel_journal}`
             # Decomposition failed
             return []
 
-        # Read the decomposition plan
+        # Try to read the decomposition plan from file first, then
+        # fall back to parsing Claude's stdout output.
+        plan = None
         plan_path = self.project_dir / "decomposition_plan.json"
-        if not plan_path.exists():
-            return []
+        if plan_path.exists():
+            try:
+                with open(plan_path, 'r') as f:
+                    plan = json.load(f)
+            except Exception:
+                pass
 
-        try:
-            with open(plan_path, 'r') as f:
-                plan = json.load(f)
-        except Exception:
+        # Fallback: parse from Claude's output
+        if plan is None and result.output:
+            try:
+                import re
+                text = result.output.strip()
+                text = re.sub(r'^```(?:json)?\s*\n', '', text, flags=re.MULTILINE)
+                text = re.sub(r'\n```\s*$', '', text, flags=re.MULTILINE)
+                brace_start = text.find('{')
+                brace_end = text.rfind('}')
+                if brace_start != -1 and brace_end > brace_start:
+                    plan = json.loads(text[brace_start:brace_end + 1])
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        if plan is None:
             return []
 
         # Extract sub-tasks and reasoning

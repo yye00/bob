@@ -1,14 +1,27 @@
 """
-Task Decomposition for BOB Framework
-=====================================
+Task Decomposition for BOB Framework (Runtime / DB-backed)
+===========================================================
 
 Breaks large, complex tasks into smaller, manageable sub-tasks
-with clear dependencies.
+with clear dependencies. Creates sub-tasks in the database.
 
-Used when tasks fail repeatedly due to complexity.
+Used when tasks fail repeatedly due to complexity during EXECUTION.
 
-Adapted from autonomous-coding's feature_decomposer.py to work with
-BOB's Task model and database architecture.
+NOTE: There are two decomposer implementations:
+
+  1. THIS FILE (orchestrator/task_decomposer.py)
+     - Database-backed, creates Task records in SQLite
+     - Used by engine.py during runtime task execution
+     - Operates on Task model objects
+
+  2. decomposers/task_decomposer.py (+ unified_decomposer.py)
+     - WorkUnit-based, operates in-memory during planning
+     - Used by DecompositionEngine during `bob plan`
+     - Operates on WorkUnit objects with confidence scores
+     - Generates verification contracts
+
+They share the same decomposition prompt patterns but serve
+different lifecycle stages (planning vs execution).
 """
 
 import json

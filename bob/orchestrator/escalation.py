@@ -129,15 +129,35 @@ class EscalationController:
             else:
                 # Increment attempts and record error
                 new_attempts = task.attempts + 1
+
+                # Truncate error_msg to prevent unbounded growth
+                # Full traces are in the debug journal on disk
+                truncated_msg = error_msg
+                if error_msg and len(error_msg) > 2000:
+                    truncated_msg = error_msg[:2000] + "\n... [truncated, see debug journal]"
+
                 error_history.append({
                     "timestamp": datetime.now().isoformat(),
                     "model": task.current_model,
-                    "error_msg": error_msg,
+                    "error_msg": truncated_msg,
                     "error_type": error_type,
                     "deps_met": deps_met,
                 })
 
+                # Cap error_history to last 20 entries to prevent
+                # unbounded growth in the SQLite JSON blob.
+                # Older entries are archived when the task succeeds.
+                MAX_ERROR_HISTORY = 20
                 research_findings = task.research_findings.copy()
+                if len(error_history) > MAX_ERROR_HISTORY:
+                    overflow = error_history[:-MAX_ERROR_HISTORY]
+                    error_history = error_history[-MAX_ERROR_HISTORY:]
+                    archived = research_findings.get("archived_error_history", [])
+                    archived.extend(overflow)
+                    if len(archived) > 50:
+                        archived = archived[-50:]
+                    research_findings["archived_error_history"] = archived
+
                 research_findings["error_history"] = error_history
 
                 self.db.update_task(

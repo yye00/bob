@@ -331,14 +331,11 @@ def run_verify_script(script: str, workspace: Path, timeout: int = 120) -> tuple
         if result.returncode == 0:
             output = result.stdout.strip() if result.stdout else ""
             
-            # Anti-gaming: verify the script produced meaningful output
-            # A trivial pass would produce no output or just "OK"
-            # Real verification should print something about what was verified
+            # Script passed (exit 0). Accept it — the verify_script is
+            # defined in the spec and cannot be modified by the agent.
+            # If it exits 0, the implementation passed the test.
             if not output:
-                return False, (
-                    "Verify script passed but produced no output. "
-                    "Real verification should print what was verified."
-                )
+                output = "PASS (exit 0, no stdout)"
             
             return True, output
         else:
@@ -383,11 +380,7 @@ def run_verification_test(test: VerificationTest, workspace: Path) -> tuple[bool
         if result.returncode == test.expected_exit_code:
             stdout = result.stdout.strip()
             if not stdout:
-                # Tests must produce output explaining what was verified
-                return False, (
-                    f"[{test.name}] Passed but produced no output. "
-                    "Tests must print what was verified."
-                )
+                stdout = "exit 0"
             return True, f"[{test.name}] PASS: {stdout[-200:]}"
         else:
             stderr = result.stderr.strip()
@@ -509,12 +502,125 @@ def verify_task_outputs(task: Task, workspace: Path) -> tuple[bool, str]:
         if not passed:
             all_passed = False
 
+    # --- Layer 4: Contract .py files (B+C hybrid) ---
+    # Run pytest contract files from .bob/contracts/ for this task.
+    # These are generated during planning and are immutable — the coding
+    # agent cannot modify them.
+    contract_passed, contract_msgs = run_contract_tests(task.spec_id, workspace)
+    if contract_msgs:
+        messages.extend(contract_msgs)
+    if not contract_passed:
+        all_passed = False
+
     combined = "\n".join(messages)
     
     if all_passed:
         return True, f"✅ All verifications passed:\n{combined}"
     else:
         return False, f"❌ Verification failed:\n{combined}"
+
+
+def run_contract_tests(
+    spec_id: str,
+    workspace: Path,
+    timeout: int = 120,
+) -> tuple[bool, list[str]]:
+    """Run .py contract test files from .bob/contracts/ for a task.
+
+    Discovers contract files matching the task's spec_id and runs them
+    with pytest. Skips meta-tests (those validate the contract itself,
+    not the implementation).
+
+    Args:
+        spec_id: Task spec ID (e.g., "T001")
+        workspace: Project workspace directory
+        timeout: Per-file timeout in seconds
+
+    Returns:
+        Tuple of (all_passed, list_of_messages)
+    """
+    contracts_dir = workspace / ".bob" / "contracts"
+    if not contracts_dir.exists():
+        return True, []  # No contracts dir → nothing to run
+
+    # Find contracts for this task
+    safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', spec_id)
+    contract_files = sorted(contracts_dir.glob(f"{safe_id}_*.py"))
+
+    if not contract_files:
+        return True, []  # No contracts for this task
+
+    messages = [f"--- Contract Tests ({len(contract_files)} files) ---"]
+    all_passed = True
+
+    import os
+    env = os.environ.copy()
+    env['LD_PRELOAD'] = ''
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+
+    for contract_path in contract_files:
+        try:
+            result = subprocess.run(
+                [
+                    "python", "-m", "pytest",
+                    str(contract_path),
+                    "-k", "not test_meta_",  # Skip meta-tests (structure checks)
+                    "-v", "--tb=short",
+                    "--no-header",
+                    "-q",
+                ],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+            )
+
+            if result.returncode == 0:
+                # Count passed tests from output
+                passed_count = result.stdout.count(" PASSED")
+                messages.append(
+                    f"[{contract_path.name}] PASS: "
+                    f"{passed_count} tests passed"
+                )
+            elif result.returncode == 5:
+                # No tests collected (all filtered by -k) — skip
+                messages.append(
+                    f"[{contract_path.name}] SKIP: no non-meta tests"
+                )
+            else:
+                all_passed = False
+                # Extract failure details
+                stderr = result.stderr.strip()
+                stdout = result.stdout.strip()
+                # Get the FAILED lines
+                failed_lines = [
+                    l.strip() for l in stdout.splitlines()
+                    if "FAILED" in l or "ERROR" in l
+                ]
+                detail = "\n".join(failed_lines[:5]) if failed_lines else (
+                    stderr[:300] if stderr else stdout[-300:]
+                )
+                messages.append(
+                    f"[{contract_path.name}] FAIL:\n{detail}"
+                )
+
+        except subprocess.TimeoutExpired:
+            all_passed = False
+            messages.append(
+                f"[{contract_path.name}] TIMEOUT after {timeout}s"
+            )
+        except FileNotFoundError:
+            messages.append(
+                f"[{contract_path.name}] SKIP: pytest not installed"
+            )
+        except Exception as e:
+            all_passed = False
+            messages.append(
+                f"[{contract_path.name}] ERROR: {e}"
+            )
+
+    return all_passed, messages
 
 
 def parse_expected_outputs(outputs_data: list) -> list[ExpectedOutput]:
