@@ -39,6 +39,7 @@ from bob.orchestrator.contract_writer import (
     CONTRACT_GENERATION_PROMPT,
     CATEGORY_GUIDANCE,
 )
+from bob.orchestrator.verification_level import VerificationLevel
 from bob.observability.logger import EventType, create_logger
 
 # Prefer SDK executor
@@ -302,9 +303,24 @@ class UnifiedDecomposer(Decomposer):
         # Convert any remaining old-style tests to contracts
         await self._convert_old_tests_to_contracts(unit)
 
+        # Collect integration contract paths (from parent decomposition)
+        integration_paths = content.get("_integration_contract_paths", [])
+
         # Update contract paths
         content["contract_paths"] = contract_paths
+        content["integration_contract_paths"] = integration_paths
         content["contracts_dir"] = str(self.contract_writer.contracts_dir)
+
+        # Classify contracts by level
+        level_counts = {"unit": 0, "integration": 0, "system": 0}
+        for cp in contract_paths:
+            cp_path = Path(cp) if not isinstance(cp, Path) else cp
+            if cp_path.exists():
+                level = self.contract_writer.get_contract_level(cp_path)
+                if level:
+                    level_counts[level.value] += 1
+
+        content["contract_level_counts"] = level_counts
 
         return {"status": "ready", "task": content}
 
@@ -335,12 +351,23 @@ class UnifiedDecomposer(Decomposer):
 
         Calls Claude to generate pytest-style test code for each category.
         Writes to .bob/contracts/ as .py files.
-        Validates with ContractWriter.validate_contract().
+        Validates with static analysis + meta-test execution (B+C hybrid).
         Retries up to 3x if validation fails.
+
+        Verification level is inferred from the unit's position in the tree:
+        - Root tasks (no parent) → SYSTEM
+        - Intermediate tasks → INTEGRATION
+        - Leaf tasks → UNIT
         """
         content = unit.content
         task_id = content.get("id", unit.id)
         task_title = content.get("title", "")
+
+        # Infer verification level from tree position
+        is_root = unit.parent_id is None
+        verification_level = VerificationLevel.infer_from_depth(
+            unit.depth, is_root=is_root
+        )
 
         # Build research context from references
         research_context = self._build_research_context(content)
@@ -404,23 +431,27 @@ class UnifiedDecomposer(Decomposer):
                 # Clean up the output
                 test_code = self._clean_test_code(test_code)
 
-                # Write contract file
+                # Write contract file with verification level
                 contract_path = self.contract_writer.write_contract(
                     task_id=task_id,
                     category=category,
                     test_code=test_code,
                     source=f"Generated for {task_title}",
+                    verification_level=verification_level,
                 )
 
-                # Validate
-                is_valid, errors = self.contract_writer.validate_contract(
+                # Full validation: static analysis + meta-test execution
+                # Meta-tests verify the contract structure is non-trivial
+                # (from C's self-checking contracts design)
+                is_valid, errors = self.contract_writer.validate_with_meta_tests(
                     contract_path
                 )
 
                 if is_valid:
                     print(
-                        f"    ✓ Contract {task_id}/{category}: "
-                        f"validated (attempt {attempt})"
+                        f"    ✓ Contract {task_id}/{category} "
+                        f"[{verification_level.value}]: "
+                        f"validated + meta-tests passed (attempt {attempt})"
                     )
                     break
                 else:
@@ -482,6 +513,29 @@ class UnifiedDecomposer(Decomposer):
         # Store integration criteria on the parent
         content["integration_criteria"] = integration_criteria
 
+        # ─── Hierarchical contract distribution (C element) ─────
+        # Promote parent's existing contracts from UNIT → INTEGRATION.
+        # When children complete, the parent's integration contracts
+        # verify they all work together correctly.
+        existing_contracts = self.contract_writer.list_contracts(task_id)
+        promoted_count = 0
+        for contract_path in existing_contracts:
+            current_level = self.contract_writer.get_contract_level(contract_path)
+            if current_level == VerificationLevel.UNIT:
+                self.contract_writer.promote_to_integration(contract_path)
+                promoted_count += 1
+
+        if promoted_count > 0:
+            print(
+                f"    ↑ Promoted {promoted_count} contracts to INTEGRATION "
+                f"for {task_id}"
+            )
+
+        # Store promoted contract paths for post-child verification
+        content["_integration_contract_paths"] = [
+            str(p) for p in existing_contracts
+        ]
+
         # Create children
         children = []
         for st in sub_tasks:
@@ -491,19 +545,18 @@ class UnifiedDecomposer(Decomposer):
             )
             children.append(child)
 
-        # Generate unit-level contracts for each child
-        for child in children:
-            # Don't block on contract generation for children —
-            # the engine will evaluate them and generate contracts
-            # during their own processing cycle
-            pass
+        # Children will get UNIT-level contracts during their own
+        # processing cycle (the engine evaluates and generates contracts
+        # for each child independently)
 
         self.logger.info(
-            f"Decomposed {task_id} into {len(children)} sub-tasks",
+            f"Decomposed {task_id} into {len(children)} sub-tasks "
+            f"(promoted {promoted_count} contracts to integration)",
             event_type=EventType.DECOMPOSITION_STARTED,
             task_id=task_id,
             sub_tasks=[st.get("id", "?") for st in sub_tasks],
             integration_criteria=integration_criteria,
+            promoted_contracts=promoted_count,
         )
 
         return children

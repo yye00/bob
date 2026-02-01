@@ -35,6 +35,10 @@ from bob.orchestrator.work_unit import (
     ConfidenceScore,
 )
 from bob.orchestrator.decomposer import Decomposer
+from bob.orchestrator.dag_validator import (
+    validate_work_unit_dag,
+    validate_task_dependencies,
+)
 from bob.observability.logger import EventType, create_logger
 from bob.observability.telemetry import RunTelemetry
 
@@ -317,6 +321,26 @@ class DecompositionEngine:
         for unit in initial_units:
             self.tree[unit.id] = unit
 
+        # ─── Pre-run DAG validation (from C's tree validation) ──────
+        # Validate the initial task dependencies before starting
+        initial_tasks = [
+            u.content for u in initial_units
+            if u.kind == WorkUnitKind.TASK and isinstance(u.content, dict)
+        ]
+        if initial_tasks:
+            dep_result = validate_task_dependencies(initial_tasks)
+            if not dep_result.valid:
+                print(f"\n  ⚠️  DAG validation found errors in initial tasks:")
+                for err in dep_result.errors:
+                    print(f"    ✗ {err}")
+                self.logger.info(
+                    f"Initial DAG validation: {dep_result}",
+                    event_type=EventType.DECOMPOSITION_STARTED,
+                    errors=dep_result.errors,
+                )
+            else:
+                print(f"\n  ✓ Initial DAG valid: {dep_result.stats}")
+
         self.logger.info(
             f"Decomposition engine started: {len(initial_units)} initial units, "
             f"threshold={self.threshold}, budget={self.context_budget_pct:.0%}",
@@ -363,12 +387,30 @@ class DecompositionEngine:
             max_depth=max_depth,
         )
 
+        # ─── Post-run DAG validation ───────────────────────────────
+        dag_result = validate_work_unit_dag(self.tree)
+        if not dag_result.valid:
+            self.logger.info(
+                f"Post-run DAG validation failed: {dag_result}",
+                event_type=EventType.DECOMPOSITION_COMPLETED,
+                errors=dag_result.errors,
+            )
+
         print(f"\n{'=' * 60}")
         print(f"  ENGINE COMPLETE")
         print(f"{'=' * 60}")
         print(f"  Total units: {total} ({done} done, {failed} failed)")
         print(f"  Elapsed: {elapsed:.1f}s")
         print(f"  Decomposition depth: max {max_depth}")
+        if dag_result.valid:
+            print(f"  DAG validation: ✓ {dag_result.stats}")
+        else:
+            print(f"  DAG validation: ✗ {len(dag_result.errors)} errors")
+            for err in dag_result.errors[:3]:
+                print(f"    ✗ {err}")
+        if dag_result.warnings:
+            for warn in dag_result.warnings[:3]:
+                print(f"    ⚠ {warn}")
         print()
 
         # Persist history and end telemetry

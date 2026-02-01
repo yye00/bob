@@ -448,6 +448,21 @@ async def _run_decomposition_engine(
         console.print(f"    {tid}: {title}{dep_str}")
     console.print()
 
+    # ─── Validate extracted task dependencies ──────────────────
+    from bob.orchestrator.dag_validator import validate_task_dependencies
+    dep_result = validate_task_dependencies(extracted_tasks)
+    if not dep_result.valid:
+        console.print("[yellow]  ⚠ Task dependency issues found:[/yellow]")
+        for err in dep_result.errors:
+            console.print(f"    [red]✗ {err}[/red]")
+        console.print()
+    elif dep_result.stats.get("dependencies", 0) > 0:
+        console.print(
+            f"  ✓ Dependencies valid: "
+            f"{dep_result.stats['dependencies']} edges, "
+            f"no cycles\n"
+        )
+
     # ─── Phase 1: Recursive Decomposition ──────────────────────────
     # The engine evaluates each extracted task's confidence and
     # decomposes any that are below threshold.
@@ -606,7 +621,41 @@ def _tree_to_plan_data(tree: dict, spec_data: dict) -> dict:
         "description": spec_data.get("description", ""),
         "tasks": tasks,
         "contract_paths": sorted(set(all_contract_paths)),
+        "contract_hierarchy": {
+            "total": len(all_contract_paths),
+            "by_level": _count_contract_levels(all_contract_paths),
+        },
     }
+
+
+def _count_contract_levels(contract_paths: list[str]) -> dict[str, int]:
+    """Count contracts by verification level."""
+    from bob.orchestrator.contract_writer import ContractWriter
+    from bob.orchestrator.verification_level import VerificationLevel
+
+    counts = {"unit": 0, "integration": 0, "system": 0, "unknown": 0}
+    for cp in contract_paths:
+        cp_path = Path(cp)
+        if not cp_path.exists():
+            continue
+        # Quick parse: read first 15 lines for level
+        try:
+            lines = cp_path.read_text().splitlines()[:15]
+            found = False
+            for line in lines:
+                if "Verification level:" in line:
+                    level_str = line.split(":", 1)[1].strip()
+                    if level_str in counts:
+                        counts[level_str] += 1
+                    else:
+                        counts["unknown"] += 1
+                    found = True
+                    break
+            if not found:
+                counts["unknown"] += 1
+        except Exception:
+            counts["unknown"] += 1
+    return counts
 
 
 def _validate_plan(plan_data: dict, threshold: float) -> list[str]:

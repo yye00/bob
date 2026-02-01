@@ -27,6 +27,7 @@ import textwrap
 from pathlib import Path
 from typing import Any, Optional
 
+from bob.orchestrator.verification_level import VerificationLevel
 from bob.observability.logger import EventType, create_logger
 
 
@@ -35,6 +36,8 @@ CONTRACT_FILE_TEMPLATE = '''\
 """
 Auto-generated verification contract for {task_id} ({category}).
 =================================================================
+
+Verification level: {verification_level}
 
 DO NOT EDIT — these tests are generated during planning and are
 immutable. The coding agent must write code that passes them.
@@ -304,6 +307,7 @@ class ContractWriter:
         test_code: str,
         source: str = "auto-generated",
         min_assertions: int = 3,
+        verification_level: VerificationLevel = VerificationLevel.UNIT,
     ) -> Path:
         """Write a contract .py file for a task.
 
@@ -313,6 +317,7 @@ class ContractWriter:
             test_code: Raw Python test function code (no file-level boilerplate)
             source: Description of where the test values came from
             min_assertions: Minimum assertion count for meta-test
+            verification_level: UNIT, INTEGRATION, or SYSTEM
 
         Returns:
             Path to the written .py file
@@ -337,6 +342,7 @@ class ContractWriter:
             min_assertions=min_assertions,
             forbidden_imports_set=forbidden_str,
             test_code=test_code,
+            verification_level=verification_level.value,
         )
 
         contract_path.write_text(content)
@@ -504,6 +510,105 @@ class ContractWriter:
             return False, f"Meta-tests timed out after {timeout}s"
         except FileNotFoundError:
             return False, "pytest not found — install with: pip install pytest"
+
+    def validate_with_meta_tests(
+        self,
+        contract_path: Path,
+        timeout: int = 30,
+    ) -> tuple[bool, list[str]]:
+        """Full validation: static analysis + dynamic meta-test execution.
+
+        This is the B+C hybrid validation pipeline:
+        1. Static validation (AST, compile, assertions, imports)
+        2. Dynamic meta-test execution (pytest -k test_meta)
+
+        Running meta-tests during planning ensures contracts are
+        self-consistent before any implementation code exists.
+        Meta-tests validate the TEST STRUCTURE, not the implementation.
+
+        Args:
+            contract_path: Path to the .py contract file
+            timeout: Timeout for meta-test execution
+
+        Returns:
+            Tuple of (is_valid, list_of_all_errors)
+        """
+        # Step 1: Static validation
+        is_valid, errors = self.validate_contract(contract_path)
+
+        if not is_valid:
+            # If static validation fails, don't bother with meta-tests
+            return False, errors
+
+        # Step 2: Dynamic meta-test execution
+        meta_passed, meta_output = self.run_meta_tests(contract_path, timeout)
+
+        if not meta_passed:
+            # Extract failure details from pytest output
+            failure_lines = []
+            for line in meta_output.splitlines():
+                line = line.strip()
+                if line.startswith("FAILED") or line.startswith("ERROR"):
+                    failure_lines.append(line)
+                elif "AssertionError" in line or "AssertionError" in line:
+                    failure_lines.append(line)
+
+            error_detail = "; ".join(failure_lines[:3]) if failure_lines else "meta-tests failed"
+            errors.append(f"Meta-test execution failed: {error_detail}")
+            return False, errors
+
+        return True, []
+
+    def get_contract_level(self, contract_path: Path) -> VerificationLevel | None:
+        """Extract the verification level from a contract file's docstring.
+
+        Returns:
+            VerificationLevel or None if not found
+        """
+        try:
+            source = contract_path.read_text()
+            for line in source.splitlines()[:15]:
+                if "Verification level:" in line:
+                    level_str = line.split(":", 1)[1].strip()
+                    try:
+                        return VerificationLevel(level_str)
+                    except ValueError:
+                        return None
+        except Exception:
+            pass
+        return None
+
+    def promote_to_integration(self, contract_path: Path) -> Path:
+        """Promote a contract from UNIT to INTEGRATION level.
+
+        Rewrites the verification level in the file's docstring.
+        Used when a parent task is decomposed into children —
+        the parent's existing contracts become integration tests.
+
+        Args:
+            contract_path: Path to the contract file
+
+        Returns:
+            Same path (file modified in place)
+        """
+        source = contract_path.read_text()
+        source = source.replace(
+            f"Verification level: {VerificationLevel.UNIT.value}",
+            f"Verification level: {VerificationLevel.INTEGRATION.value}",
+        )
+        # Also update system → integration if decomposed further
+        source = source.replace(
+            f"Verification level: {VerificationLevel.SYSTEM.value}",
+            f"Verification level: {VerificationLevel.INTEGRATION.value}",
+        )
+        contract_path.write_text(source)
+
+        self.logger.info(
+            f"Promoted contract to integration: {contract_path.name}",
+            event_type=EventType.DECOMPOSITION_STARTED,
+            path=str(contract_path),
+        )
+        return contract_path
 
     def list_contracts(self, task_id: str | None = None) -> list[Path]:
         """List contract files, optionally filtered by task_id.
