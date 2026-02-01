@@ -195,63 +195,106 @@ class DecompositionEngine:
         return result
 
     async def process(self, unit: WorkUnit) -> None:
-        """Process a single work unit recursively.
+        """Process a single work unit with convergence detection.
 
-        This is the core algorithm:
+        Enhanced algorithm:
         1. Evaluate confidence
         2. If above threshold → execute
-        3. If below threshold → decompose → process children
-        4. If at max depth → execute anyway (with warning)
+        3. Track confidence history; if Δ < 0.05 for 2 consecutive
+           evaluations → converged, execute at current confidence
+        4. If below threshold and not converged → decompose → process children
+        5. After children complete, re-evaluate parent (enables convergence loop)
+        6. Safety: max depth and max total units still enforced as hard limits
         """
-        if len(self.tree) >= self.max_total_units:
-            print(f"  ⚠️  Max work units ({self.max_total_units}) reached — "
-                  f"executing {unit.id} as-is")
-            await self._execute(unit)
-            return
+        prev_scores: list[float] = []
 
-        # Step 1: Evaluate
-        score = await self._evaluate(unit)
+        while True:
+            # Safety: total unit limit
+            if len(self.tree) >= self.max_total_units:
+                print(f"  ⚠️  Max work units ({self.max_total_units}) reached — "
+                      f"executing {unit.id} as-is")
+                await self._execute(unit)
+                return
 
-        # Step 2: Check threshold
-        if score.overall >= self.threshold:
-            # Confident — execute
-            _print_unit_status(unit, "✓", "executing (confident)")
-            await self._execute(unit)
-            return
+            # Step 1: Evaluate
+            score = await self._evaluate(unit)
 
-        # Step 3: Check depth limit
-        if unit.depth >= unit.max_depth:
+            # Step 2: Check threshold — confident enough to execute
+            if score.overall >= self.threshold:
+                _print_unit_status(unit, "✓", "executing (confident)")
+                await self._execute(unit)
+                return
+
+            # Step 3: Convergence check — has confidence stopped improving?
+            prev_scores.append(score.overall)
+            if len(prev_scores) >= 3:
+                # Check last 2 deltas
+                deltas = [
+                    prev_scores[i] - prev_scores[i - 1]
+                    for i in range(len(prev_scores) - 2, len(prev_scores))
+                ]
+                if all(abs(d) < 0.05 for d in deltas):
+                    _print_unit_status(
+                        unit, "≈",
+                        f"converged (conf={score.overall:.2f}, "
+                        f"Δ={deltas[-1]:+.3f})",
+                    )
+                    await self._execute(unit)
+                    return
+
+            # Step 4: Check depth limit (hard safety)
+            if unit.depth >= unit.max_depth:
+                _print_unit_status(
+                    unit, "⚠",
+                    f"executing at max depth (conf={score.overall:.2f}, "
+                    f"weakest={score.weakest_dimension})",
+                )
+                await self._execute(unit)
+                return
+
+            # Step 5: Decompose
             _print_unit_status(
-                unit, "⚠",
-                f"executing at max depth (conf={score.overall:.2f}, "
+                unit, "↓",
+                f"decomposing (conf={score.overall:.2f}, "
                 f"weakest={score.weakest_dimension})",
             )
-            await self._execute(unit)
-            return
+            children = await self._decompose(unit)
 
-        # Step 4: Decompose
-        _print_unit_status(
-            unit, "↓",
-            f"decomposing (conf={score.overall:.2f}, "
-            f"weakest={score.weakest_dimension})",
-        )
-        children = await self._decompose(unit)
+            if not children:
+                # Decomposer returned nothing. This can mean:
+                # a) Decomposer handled it internally (e.g., generated contracts)
+                #    → re-evaluate to check if confidence improved
+                # b) Decomposition genuinely impossible → execute as-is
+                new_score = await self._evaluate(unit)
+                if new_score.overall > score.overall + 0.01:
+                    # Internal work improved confidence — continue loop
+                    _print_unit_status(
+                        unit, "↻",
+                        f"internal improvement ({score.overall:.2f} → "
+                        f"{new_score.overall:.2f})",
+                    )
+                    prev_scores.append(new_score.overall)
+                    continue
+                else:
+                    _print_unit_status(
+                        unit, "⚠",
+                        "no decomposition possible — executing as-is",
+                    )
+                    await self._execute(unit)
+                    return
 
-        if not children:
-            # Decomposer returned nothing — execute as-is
-            _print_unit_status(unit, "⚠", "no decomposition possible — executing as-is")
-            await self._execute(unit)
-            return
+            # Step 6: Process children recursively
+            for child in children:
+                await self.process(child)
 
-        # Step 5: Process children recursively
-        for child in children:
-            await self.process(child)
-
-        # Step 6: After children complete, execute the parent to collect
-        # child results (e.g., verification tests from child verification units
-        # get merged into the parent task's content).
-        if unit.status == WorkUnitStatus.DECOMPOSING:
-            await self._execute(unit)
+            # Step 7: After children complete, loop back to re-evaluate parent.
+            # This enables convergence detection: if children improved the
+            # parent's confidence enough, we execute. If not, the convergence
+            # check will eventually trigger.
+            # Reset status so re-evaluation can proceed.
+            if unit.status == WorkUnitStatus.DECOMPOSING:
+                unit.status = WorkUnitStatus.PENDING
+            # Continue the while loop → re-evaluate
 
     async def run(self, initial_units: list[WorkUnit]) -> dict[str, WorkUnit]:
         """Run the engine on a set of initial work units.

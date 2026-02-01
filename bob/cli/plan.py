@@ -397,6 +397,7 @@ async def _run_decomposition_engine(
         VerificationDecomposer,
         ResearchDecomposer,
     )
+    from bob.orchestrator.unified_decomposer import UnifiedDecomposer
     from bob.orchestrator.feature_extractor import (
         extract_features,
         extract_spec_metadata,
@@ -472,13 +473,32 @@ async def _run_decomposition_engine(
         output_dir=Path(workspace_dir),
     )
 
-    # Register decomposers
+    # Extract forbidden imports from constraints (e.g., "must not use quimb")
+    forbidden_imports: set[str] = set()
+    for constraint in constraints:
+        constraint_lower = constraint.lower()
+        # Look for patterns like "must not use X", "no X dependency"
+        for pattern in [
+            r'must\s+not\s+(?:use|import|depend\s+on)\s+(\w+)',
+            r'no\s+(\w+)\s+dependency',
+            r'without\s+(\w+)',
+            r'not\s+(?:use|import)\s+(\w+)',
+        ]:
+            import re as _re
+            match = _re.search(pattern, constraint_lower)
+            if match:
+                forbidden_imports.add(match.group(1))
+
+    # Register decomposers — UnifiedDecomposer for TASK (generates contracts
+    # immediately during decomposition), legacy decomposers for other kinds
     engine.register(
         WorkUnitKind.TASK,
-        TaskDecomposer(
+        UnifiedDecomposer(
             workspace_dir=workspace_dir,
             project_dir=project_dir,
             model=model,
+            references=references,
+            forbidden_imports=forbidden_imports if forbidden_imports else None,
         ),
     )
     engine.register(
@@ -518,6 +538,8 @@ def _tree_to_plan_data(tree: dict, spec_data: dict) -> dict:
     from bob.orchestrator.work_unit import WorkUnitKind, WorkUnitStatus
 
     tasks = []
+    all_contract_paths: list[str] = []
+
     for unit in tree.values():
         if unit.kind != WorkUnitKind.TASK:
             continue
@@ -533,6 +555,12 @@ def _tree_to_plan_data(tree: dict, spec_data: dict) -> dict:
                 for cat in ("numerical_tests", "algorithmic_tests", "convergence_tests"):
                     if cat in result_task and result_task[cat]:
                         task_content[cat] = result_task[cat]
+
+            # Collect contract file paths from UnifiedDecomposer results
+            contract_paths = unit.result.get("contract_paths", [])
+            if contract_paths:
+                task_content["contract_paths"] = contract_paths
+                all_contract_paths.extend(contract_paths)
 
         # Also check children directly as a fallback — in case execute()
         # was not called or didn't merge properly
@@ -557,6 +585,14 @@ def _tree_to_plan_data(tree: dict, spec_data: dict) -> dict:
             ver_score += min(0.15, len(task_content["algorithmic_tests"]) * 0.1)
         if task_content.get("convergence_tests"):
             ver_score += min(0.15, len(task_content["convergence_tests"]) * 0.1)
+
+        # Bonus for .py contract files
+        contract_count = len(task_content.get("contract_paths", []))
+        if contract_count >= 3:
+            ver_score = max(ver_score, 0.95)
+        elif contract_count >= 1:
+            ver_score += min(0.2, contract_count * 0.1)
+
         ver_score = min(1.0, ver_score)
 
         # Add confidence metadata
@@ -569,15 +605,28 @@ def _tree_to_plan_data(tree: dict, spec_data: dict) -> dict:
         "name": spec_data.get("name", "Generated Plan"),
         "description": spec_data.get("description", ""),
         "tasks": tasks,
+        "contract_paths": sorted(set(all_contract_paths)),
     }
 
 
 def _validate_plan(plan_data: dict, threshold: float) -> list[str]:
-    """Quick validation of the generated plan. Returns warnings."""
+    """Validate the generated plan: scripts, contracts, and structure."""
     import subprocess
+    from bob.orchestrator.contract_writer import ContractWriter
 
     warnings = []
     tasks = plan_data.get("tasks", [])
+
+    # Validate contract files
+    contract_paths = plan_data.get("contract_paths", [])
+    for cp in contract_paths:
+        cp_path = Path(cp)
+        if cp_path.exists():
+            writer = ContractWriter(str(cp_path.parent.parent.parent))
+            is_valid, errors = writer.validate_contract(cp_path)
+            if not is_valid:
+                for err in errors[:2]:
+                    warnings.append(f"Contract {cp_path.name}: {err}")
 
     for task in tasks:
         task_id = task.get("id", "???")
