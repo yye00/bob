@@ -51,13 +51,14 @@ def _load_project_references(project) -> list[dict]:
         return []
 
 
-def _build_task_prompt(task: Task, project) -> str:
+def _build_task_prompt(task: Task, project, memory=None) -> str:
     """
     Build a comprehensive prompt for Claude to execute the task.
     
     Args:
         task: Task to execute
         project: Project the task belongs to
+        memory: Optional ProjectMemory instance for cross-run knowledge
         
     Returns:
         Formatted prompt string
@@ -133,6 +134,25 @@ def _build_task_prompt(task: Task, project) -> str:
                 prompt_parts.append(f"- {query}")
         prompt_parts.append("")
     
+    # Include verification tests so Claude knows what it needs to pass
+    verify_script = getattr(task, "verify_script", None)
+    if verify_script and isinstance(verify_script, str) and verify_script.strip():
+        prompt_parts.append("## Verification Tests")
+        prompt_parts.append("Your implementation MUST pass this verification script:")
+        prompt_parts.append(f"```bash\n{verify_script.strip()}\n```")
+        prompt_parts.append("Read the test code and understand what's expected BEFORE implementing.")
+        prompt_parts.append("")
+
+    verification_tests = getattr(task, "verification_tests", None)
+    if verification_tests and isinstance(verification_tests, (list, tuple)):
+        prompt_parts.append("## Individual Tests")
+        for vt in verification_tests:
+            test_name = getattr(vt, "name", str(vt))
+            test_cmd = getattr(vt, "command", "")
+            if isinstance(test_name, str) and isinstance(test_cmd, str):
+                prompt_parts.append(f"- **{test_name}**: `{test_cmd}`")
+        prompt_parts.append("")
+
     if task.research_findings:
         findings = task.research_findings
         if isinstance(findings, dict):
@@ -174,6 +194,16 @@ def _build_task_prompt(task: Task, project) -> str:
             prompt_parts.append(str(findings))
             prompt_parts.append("")
     
+    # Inject cross-run memory context if available
+    if memory:
+        try:
+            memory_section = memory.retrieve(task)
+            if memory_section and isinstance(memory_section, str):
+                prompt_parts.append(memory_section)
+                prompt_parts.append("")
+        except Exception:
+            pass  # Memory retrieval should never crash prompt building
+
     prompt_parts.extend([
         "## Instructions",
         "Complete this task by implementing the required functionality.",
@@ -273,8 +303,8 @@ def _build_task_prompt(task: Task, project) -> str:
 @click.option(
     "--max-debug-attempts",
     type=int,
-    default=3,
-    help="Maximum debug attempts per verification failure (default: 3)",
+    default=5,
+    help="Maximum debug attempts per verification failure (default: 5)",
 )
 @click.option(
     "--stall-timeout",
@@ -520,7 +550,7 @@ def _run_parallel(
             project_dir=project_dir,
             config=thread_config,
         )
-        prompt = _build_task_prompt(task, project)
+        prompt = _build_task_prompt(task, project, memory=thread_orchestrator.memory)
         thread_orchestrator.telemetry.start_run()
         try:
             status, error = asyncio.run(thread_orchestrator.execute_task(task, prompt))
@@ -720,8 +750,8 @@ def _run_single_task(
         db.update_task(task.id, research_required=True)
         task = db.get_task(task.id)  # Reload
 
-    # Build the task prompt
-    prompt = _build_task_prompt(task, project)
+    # Build the task prompt (with cross-run memory context)
+    prompt = _build_task_prompt(task, project, memory=orchestrator.memory)
     
     if not json_output:
         console.print(f"[cyan]Executing with Claude...[/cyan]")

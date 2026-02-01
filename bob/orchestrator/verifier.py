@@ -53,6 +53,64 @@ TRIVIAL_TEST_PATTERNS = [
 ]
 
 
+# MPI / HPC runtime noise patterns that should be filtered from stderr
+# These are harmless warnings from network fabric drivers, MPI runtimes, etc.
+MPI_NOISE_PATTERNS = [
+    r'psm3_sysfs_init',
+    r'PSM3_IDENTIFY',
+    r'PSM3_ALLOW_ROUTERS',
+    r'PSM3_RDMA',
+    r'PSM3_KASSIST_MODE',
+    r'psm3_context_open',
+    r'verbs_ep\b.*warning',
+    r'libpsm3',
+    r'hfi_wait_for_device',
+    r'^\[?\d+\]?\s*local\s+process',        # Process launch lines
+    r'--------------------------------------------------------------------------',  # OpenMPI separator bars
+    r'Open MPI.*mca.*warning',
+    r'mca_base_component_repository_open',
+    r'A high-performance Open MPI point-to-point',
+    r'ORTE_MCA_',
+    r'btl_openib_warn_default_gid_prefix',
+    r'It appears as if your OpenMPI installation',
+    r'Read -1.*errno',                       # Occasional read noise
+    r'No network type detected',
+]
+
+
+def filter_mpi_noise(stderr_text: str) -> str:
+    """Filter MPI/HPC runtime noise from stderr output.
+
+    Many HPC environments emit harmless warnings from network fabric
+    drivers (PSM3, OpenIB, etc.) that pollute verification output and
+    make real errors hard to find. This function strips those lines.
+
+    Args:
+        stderr_text: Raw stderr output
+
+    Returns:
+        Filtered stderr with noise removed
+    """
+    if not stderr_text:
+        return stderr_text
+
+    filtered_lines = []
+    for line in stderr_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Check if line matches any noise pattern
+        is_noise = False
+        for pattern in MPI_NOISE_PATTERNS:
+            if re.search(pattern, stripped, re.IGNORECASE):
+                is_noise = True
+                break
+        if not is_noise:
+            filtered_lines.append(line)
+
+    return "\n".join(filtered_lines)
+
+
 def count_lines(file_path: Path) -> int:
     """Count non-empty lines in a file."""
     try:
@@ -339,7 +397,9 @@ def run_verify_script(script: str, workspace: Path, timeout: int = 120) -> tuple
             
             return True, output
         else:
-            error = result.stderr.strip() if result.stderr else f"Exit code {result.returncode}"
+            # Filter MPI/HPC noise from stderr to surface real errors
+            raw_stderr = result.stderr.strip() if result.stderr else ""
+            error = filter_mpi_noise(raw_stderr) or f"Exit code {result.returncode}"
             stdout = result.stdout.strip() if result.stdout else ""
             # Include both stdout and stderr for debugging context
             full_output = f"Verify script failed: {error}"
@@ -383,7 +443,9 @@ def run_verification_test(test: VerificationTest, workspace: Path) -> tuple[bool
                 stdout = "exit 0"
             return True, f"[{test.name}] PASS: {stdout[-200:]}"
         else:
-            stderr = result.stderr.strip()
+            # Filter MPI/HPC noise from stderr to surface real errors
+            raw_stderr = result.stderr.strip() if result.stderr else ""
+            stderr = filter_mpi_noise(raw_stderr)
             stdout = result.stdout.strip()
             detail = stderr if stderr else stdout if stdout else f"exit code {result.returncode}"
             return False, f"[{test.name}] FAIL: {detail[-300:]}"

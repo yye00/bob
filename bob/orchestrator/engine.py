@@ -44,6 +44,7 @@ from bob.observability.cost_tracker import CostTracker
 from bob.observability.logger import EventType, LogContext, create_logger
 from bob.observability.telemetry import RunTelemetry
 from bob.orchestrator.debug_journal import DebugJournal
+from bob.orchestrator.memory import ProjectMemory
 from bob.config import ConfigManager
 
 
@@ -64,7 +65,7 @@ class OrchestratorConfig:
         use_opus_default: bool = False,
         enable_thinking: bool = False,
         thinking_budget: int = 10000,
-        max_debug_attempts: int = 3,
+        max_debug_attempts: int = 5,
         stall_timeout: int = 600,
     ):
         """
@@ -146,6 +147,9 @@ class Orchestrator:
 
         # Initialize debug journal (MemGPT-style on-disk debug history)
         self.debug_journal = DebugJournal(project_dir)
+
+        # Initialize project memory (cross-run knowledge via Mem0)
+        self.memory = ProjectMemory(project_dir, project_id)
 
         # Current execution state
         self.current_task: Optional[Task] = None
@@ -379,6 +383,18 @@ class Orchestrator:
                         event_type=EventType.VERIFICATION_FAILED,
                     )
 
+                # Extract memories from this attempt (pass or fail)
+                try:
+                    import asyncio as _aio
+                    _aio.ensure_future(self.memory.extract(
+                        task=task,
+                        verification_passed=verified,
+                        verification_msg=verify_msg or "",
+                        attempt_number=task.attempts + 1,
+                    ))
+                except Exception:
+                    pass  # Memory extraction should never crash execution
+
                 if not verified:
                     # === MULTI-DEBUG LOOP (MemGPT-style) ===
                     # Instead of stuffing all error history into the prompt (which
@@ -494,6 +510,11 @@ class Orchestrator:
                         )
                         self.db.update_task(task.id, status=TaskStatus.COMPLETED)
                         self._cleanup_task_debug(task)  # Remove journal after success
+                        # Mark memories as helpful (task succeeded after injection)
+                        try:
+                            self.memory.mark_memories_helped(task, success=True)
+                        except Exception:
+                            pass
                         self.telemetry.set_task_final_status(task.id, "completed")
                         return TaskStatus.COMPLETED, None
                     else:
@@ -520,6 +541,11 @@ class Orchestrator:
                 # Update task status to completed
                 self.db.update_task(task.id, status=TaskStatus.COMPLETED)
                 self._cleanup_task_debug(task)  # Remove any leftover journal
+                # Mark memories as helpful (task succeeded)
+                try:
+                    self.memory.mark_memories_helped(task, success=True)
+                except Exception:
+                    pass
                 self.telemetry.end_task_attempt(task.id, success=True)
                 self.telemetry.set_task_final_status(task.id, "completed")
                 return TaskStatus.COMPLETED, None
