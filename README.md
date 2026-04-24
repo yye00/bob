@@ -1,165 +1,251 @@
-# Bob3 - Build Orchestration Bot v3
+# Bob3 — Build Orchestration Bot v3
 
-A recursive build orchestration system that uses Claude Code sub-agents to research, plan, and execute software projects.
+A recursive build orchestration system that uses Claude Code sub-agents to research, plan, and execute software projects from a YAML specification.
 
-Bob3 extends Bob2 with:
+Bob3 reads a spec describing the project you want built, decomposes it into features with dependencies, then drives a continuous loop that spawns Claude sub-agents to implement, test, verify, and commit each feature. It tracks cost, detects regressions, handles interrupts, and persists lessons learned across sessions.
 
-- **MCP Plugin Integration** — Perplexity (web research), Puppeteer (browser automation), and TITANS Memory (persistent surprise-based learning)
-- **Automatic feature generation** from natural language specs and PDFs
-- **Sub-agent orientation protocol** for context recovery across sessions
-- **Research-enabled sub-agents** for when implementation gets stuck
+## What makes it different
+
+- **MCP plugin integration** — Sub-agents can use Perplexity (web research), Puppeteer (browser automation), and TITANS Memory (surprise-based persistent learning).
+- **Semantic verification** — Completed features are checked against acceptance criteria with stub/mock detection, not just "did tests pass."
+- **Research fallback** — Stuck features automatically trigger a research agent that queries the web before another implementation attempt.
+- **Feature decomposition** — Oversized features are split into sub-features on demand.
+- **Resume on interrupt** — SIGINT/SIGTERM triggers checkpoint creation; work continues on the next `bob3 run`.
+- **Self-verifiable** — The included `examples/00_bootstrap_spec.yaml` is the spec that describes bob3 itself.
+
+## Requirements
+
+- Python >= 3.11
+- An active Claude Code Max Pro subscription (or `ANTHROPIC_API_KEY`)
+- [TITANS Memory MCP server](https://github.com/your-org/titans-memory) installed at `/home/captain/work/AI/titans-memory` (adjust path in `src/bob3/orchestrator/mcp_config.py` if installed elsewhere)
 
 ## Installation
 
-### Requirements
-
-- Python >= 3.11
-- An active Claude Code Max Pro subscription (or `CLAUDE_API_KEY` / `ANTHROPIC_API_KEY`)
-- [TITANS Memory MCP server](https://github.com/your-org/titans-memory) installed at `/home/captain/clawd/work/titans-memory`
-
-### Install from source
-
 ```bash
-git clone <repo-url> bob3
+git clone https://github.com/yye00/bob.git bob3
 cd bob3
 pip install -e .
 ```
 
-Or install directly:
+Verify the install:
 
 ```bash
-pip install bob3
+bob3 --version
+bob3 --help
 ```
 
-### Environment Variables
+### Environment variables
 
-| Variable | Required | Description |
+| Variable | Required | Purpose |
 |---|---|---|
-| `OPENAI_API_KEY` | Yes | For TITANS Memory MCP (embeddings via mem0ai) |
-| `PERPLEXITY_API_KEY` | No | Enables Perplexity MCP for web research |
-| `CLAUDE_API_KEY` | No | Handled automatically by Claude Code Max Pro subscription |
+| `OPENAI_API_KEY` | Yes | Embeddings for TITANS Memory MCP |
+| `PERPLEXITY_API_KEY` | No | Enables the Perplexity research MCP |
+| `ANTHROPIC_API_KEY` | No | Only needed if not using Claude Code Max Pro |
 
-Set them in your shell profile:
+Add to your shell profile:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 export PERPLEXITY_API_KEY="pplx-..."  # optional
 ```
 
-## Usage
+## Quickstart
 
-### Initialize a project
+The repo ships with three example specs in `examples/`. Let's walk through running one.
 
-Create a new Bob3 project workspace with a SQLite database and project record:
+### 1. Pick a spec
 
-```bash
-bob3 init ./my-project
-bob3 init ./my-project --name "My Project"
+```
+examples/
+├── 00_bootstrap_spec.yaml              # Bob3 itself (the harness rebuilds itself)
+├── 01_geomech_simulator_spec.yaml      # FEniCSx poromechanics simulator (28 features)
+└── 02_geotech_slope_stability_spec.yaml # 2D slope stability GUI app (30 features)
 ```
 
-### Plan from a YAML spec
+Each spec is a complete project description with features, acceptance criteria, and V&V requirements. Pick one and read through it to understand the target.
 
-Parse a YAML specification file and display the execution plan. Use `--create` to persist features to the database:
-
-```bash
-bob3 plan spec.yaml
-bob3 plan spec.yaml --create
-```
-
-### Generate features with AI
-
-Use a Claude sub-agent to analyze a spec (and optional PDF references) and generate a feature list:
+### 2. Initialize a new project
 
 ```bash
-bob3 generate-features spec.yaml
-bob3 generate-features spec.yaml --refs paper.pdf --output features.yaml
-bob3 generate-features spec.yaml --auto-continue
+bob3 init ./my-geomech --name "geomech-sim"
+cd ./my-geomech
 ```
 
-### Run the build
+This creates a workspace directory and a SQLite database (`bob3.db`) for tracking state.
 
-Execute the orchestration loop. Sub-agents implement features, run tests, and track progress:
+### 3. Load the spec
 
 ```bash
-bob3 run --all
-bob3 run --all --max-cost 50.00
-bob3 run --feature <feature-id>
-bob3 run --all --fresh  # skip resume, restart from scratch
+bob3 plan /path/to/bob3/examples/01_geomech_simulator_spec.yaml --create
 ```
 
-The orchestration loop automatically:
-- Picks the highest-priority ready feature
-- Spawns a Claude sub-agent to implement it
-- Runs tests and collects evidence
-- Commits successful work via git
-- Retries or triggers RCA on failure
-- Resumes interrupted work on restart (unless `--fresh`)
+This parses the spec and persists its features to the database. Drop `--create` to just preview.
 
-### Check status
-
-View project progress, feature counts, cost tracking, and per-feature details:
+### 4. Check what's planned
 
 ```bash
 bob3 status
-bob3 status --verbose
-bob3 status --feature <feature-id>
+bob3 list-features
 ```
 
-### Global options
+You should see all features in `pending` status with their dependency graph.
+
+### 5. Run the orchestration loop
 
 ```bash
-bob3 --version        # show version
-bob3 --verbose <cmd>  # enable DEBUG logging
+bob3 run --all --max-cost 50.00
 ```
 
-## Architecture
+Bob3 will:
+1. Pick the highest-priority ready feature (dependencies satisfied)
+2. Spawn a Claude sub-agent with orientation context + MCP tools
+3. Wait for the agent to implement, write tests, and run them
+4. Verify acceptance criteria were actually met (not just stubs)
+5. Commit the result to git and mark the feature complete
+6. Move to the next ready feature
 
-Bob3 is built around a **continuous orchestration loop** that coordinates Claude Code sub-agents via the `claude-code-sdk` Python package.
+Use `Ctrl+C` to checkpoint and stop. Re-run `bob3 run --all` to resume.
 
-### Core components
+### 6. Inspect results
+
+```bash
+bob3 status --verbose
+bob3 show-feature <feature-id>
+bob3 show-evidence <feature-id>
+bob3 show-lessons
+bob3 show-calibration
+bob3 show-regressions
+```
+
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `bob3 init <path>` | Create a new project workspace |
+| `bob3 plan <spec.yaml>` | Parse a spec file (add `--create` to persist) |
+| `bob3 generate-features <spec>` | Use an AI agent to generate features from a freeform spec |
+| `bob3 run --all` | Start the orchestration loop |
+| `bob3 run --feature <id>` | Execute a single feature |
+| `bob3 status` | Show project progress and costs |
+| `bob3 list-features` | List all features with their status |
+| `bob3 show-feature <id>` | Detailed view of one feature |
+| `bob3 show-evidence <id>` | Evidence artifacts for a feature |
+| `bob3 show-lessons` | Lessons stored in TITANS Memory |
+| `bob3 show-calibration` | Confidence calibration drift |
+| `bob3 show-regressions` | Active regression events |
+
+Global options: `--version`, `-v/--verbose` (DEBUG logging), `--help`.
+
+## Writing your own spec
+
+A bob3 spec is a YAML file with a `features` section. Each feature needs a title, description, priority, dependencies, and acceptance criteria:
+
+```yaml
+name: my-project
+version: "0.1.0"
+description: |
+  What you want built.
+
+workspace: /tmp/my-project
+
+features:
+  F001:
+    title: "Short feature title"
+    description: |
+      Longer description of what the agent should implement.
+      Include algorithm details, formulas, file names, constraints.
+    priority: critical     # critical | high | medium | low
+    depends_on: []         # list of feature IDs
+    acceptance_criteria:
+      - "Concrete, testable statement 1"
+      - "Concrete, testable statement 2"
+```
+
+**Tips for good specs:**
+- Make acceptance criteria numerical when possible (e.g., "L2 error < 1e-3 for fine mesh") — the verification layer can check these.
+- Include V&V features that compare against analytical solutions or published benchmarks.
+- Keep dependency chains shallow; deep chains mean fewer features can run in parallel.
+- See `examples/` for full-scale examples.
+
+## Development
+
+### Running the test suite
+
+```bash
+pip install -e ".[dev]"  # if dev extras are defined
+pytest                   # full suite (~5 minutes, 2825 tests)
+pytest tests/test_f007_cli.py -v    # a single file
+pytest -k "bishop" -v               # match test names
+```
+
+### Architecture
 
 ```
 src/bob3/
-├── __init__.py              # Package metadata, version
-├── cli.py                   # Click CLI (init, plan, run, status, generate-features)
-├── db.py                    # SQLite database operations (CRUD, schema, queries)
-├── models.py                # Pydantic data models (Feature, Task, Evidence, etc.)
-├── schema.sql               # Database schema (projects, features, tasks, evidence, ...)
-├── git_ops.py               # Git commit/revert per feature
-├── logging_config.py        # Structured logging setup
-├── mcp_lifecycle.py         # TITANS Memory MCP server start/stop
-├── orientation.py           # Sub-agent orientation protocol
-├── pdf_utils.py             # PDF text extraction (PyMuPDF)
-├── titans_memory_client.py  # TITANS Memory MCP client helpers
-├── ast_checks.py            # AST-based stub/mock detection
+├── cli.py                          # Click CLI entry point
+├── db.py                           # SQLite operations
+├── models.py                       # Pydantic data models
+├── schema.sql                      # Database schema
+├── git_ops.py                      # Per-feature git commits
+├── logging_config.py               # Structured logging
+├── mcp_lifecycle.py                # MCP server start/stop
+├── orientation.py                  # Sub-agent orientation protocol
+├── pdf_utils.py                    # PDF extraction
+├── titans_memory_client.py         # TITANS Memory client
+├── superpowers.py                  # Verification checklist + TDD detection
+├── enhanced_verification.py        # Acceptance criteria validation
+├── ast_checks.py                   # Stub/mock detection
+├── signal_handler.py               # Graceful shutdown
 └── orchestrator/
-    ├── __init__.py
-    ├── claude_executor.py   # Claude Code SDK wrapper, sub-agent spawning
-    ├── run_loop.py          # Orchestration loop (pick → execute → verify → commit)
-    └── mcp_config.py        # MCP plugin configuration for sub-agents
+    ├── claude_executor.py          # Claude Code SDK wrapper
+    ├── run_loop.py                 # Main orchestration loop
+    └── mcp_config.py               # MCP configuration for sub-agents
 ```
 
 ### Data flow
 
-1. **`bob3 init`** — Creates workspace directory and SQLite database
-2. **`bob3 plan --create`** — Parses YAML spec, creates feature records with priorities and dependencies
-3. **`bob3 run --all`** — Starts the orchestration loop:
-   - Queries the `ready_features` view (dependencies met, not blocked)
-   - Spawns a Claude sub-agent via `claude-code-sdk` with orientation context
-   - Sub-agent implements the feature, writes code, runs tests
-   - Results are parsed: evidence artifacts stored, confidence scores updated
-   - On success: git commit, mark completed, cascade-update dependents
-   - On failure: RCA agent diagnoses root cause, retry or escalate
-4. **`bob3 status`** — Reads database to show progress, costs, and feature states
+```
+spec.yaml                     examples/
+    │                             │
+    ▼                             ▼
+bob3 plan --create   ─▶   features table (SQLite)
+                              │
+                              ▼
+                        bob3 run --all
+                              │
+                 ┌────────────┴────────────┐
+                 ▼                         ▼
+        pick ready feature          checkpoint on interrupt
+                 │
+                 ▼
+   spawn Claude sub-agent (claude-code-sdk)
+                 │
+        ┌────────┴────────┐
+        ▼                 ▼
+   MCP tools:         feature work:
+   - Perplexity       - write code
+   - Puppeteer        - write tests
+   - TITANS Memory    - run tests
+                 │
+                 ▼
+   verify acceptance criteria
+                 │
+        ┌────────┴────────┐
+        ▼                 ▼
+     passed             failed
+        │                 │
+        ▼                 ▼
+   git commit       RCA agent → retry or escalate
+```
 
 ### Key design decisions
 
-- **Claude Code SDK only** — All Claude interactions go through `claude-code-sdk`. No CLI subprocess calls, no `anthropic` SDK.
-- **SQLite for state** — All project state (features, tasks, evidence, agent runs, costs) lives in a local `bob3.db` file.
-- **TITANS Memory for knowledge** — Lessons, facts, and project context are stored in TITANS Memory MCP, not the local database.
-- **Feature-level git commits** — Each completed feature gets its own git commit for easy rollback.
-- **Graceful shutdown** — SIGINT/SIGTERM triggers checkpoint creation so work resumes on next run.
+- **Claude Code SDK only** — All Claude interactions go through `claude-code-sdk`. No subprocess CLI calls, no direct `anthropic` SDK usage.
+- **SQLite for state** — Project state (features, tasks, evidence, agent runs, costs) lives in `bob3.db`.
+- **TITANS Memory for knowledge** — Lessons, facts, and cross-session context live in the TITANS MCP, not the local DB.
+- **Feature-level git commits** — Each completed feature gets its own commit for easy rollback.
+- **Graceful shutdown** — SIGINT/SIGTERM checkpoints state so `bob3 run` resumes cleanly.
 
 ## License
 
-See LICENSE file for details.
+MIT — see [LICENSE](LICENSE).
