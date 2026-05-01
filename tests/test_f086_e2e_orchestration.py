@@ -181,7 +181,7 @@ class TestE2ERunOrchestration:
                 project_id=project.id,
                 name="E2E Test Feature",
                 description="A simple feature for end-to-end testing",
-                acceptance_criteria=json.dumps(["Feature is implemented"]),
+                acceptance_criteria=json.dumps(["File exists: feature.txt"]),
                 status="ready",
                 priority=10,
                 risk_category="low",
@@ -218,6 +218,11 @@ class TestE2ERunOrchestration:
                 assert kwargs.get("purpose") == "implement_feature"
                 assert kwargs.get("target_type") == "feature"
                 assert kwargs.get("target_id") == feature.id
+
+                # Simulate the sub-agent creating the expected artifact so
+                # that the acceptance-criteria check ("File exists: feature.txt")
+                # can verify real evidence of implementation.
+                (workspace / "feature.txt").write_text("implemented")
 
                 mock_result = ExecutionResult(
                     text="Feature implemented successfully. All tests pass.",

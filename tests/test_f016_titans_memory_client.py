@@ -1,25 +1,92 @@
-"""Tests for F016: TITANS Memory MCP integration.
+"""Tests for F016: Bob3 Memory in-process client (formerly TITANS).
 
-Validates that the titans_memory_client module:
-- Step 1: Provides titans_memory_client.py wrapper module
-- Step 2: Implements add_memory(content, pool) using titans_add
-- Step 3: Implements search_memory(query, pool) using titans_search
-- Step 4: Implements record_feedback(memory_id, success) using titans_record_feedback
+Validates that the memory_client module:
+- Step 1: Provides memory_client.py wrapper module
+- Step 2: Implements add_memory(content, pool) via the BobMemory backend
+- Step 3: Implements search_memory(query, pool) via the BobMemory backend
+- Step 4: Implements record_feedback(memory_id, success)
 - Step 5: Tests the memory add/search/feedback cycle
 - Step 6: Verifies memories persist across sessions (client re-creation)
+
+The sub-agent based TITANS integration has been replaced with an
+in-process mem0ai + Ollama + Qdrant stack, so tests use a stub
+BobMemory backend to verify client behavior.
 """
 
-import json
 import pathlib
-import re
-from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 SRC_DIR = pathlib.Path(__file__).resolve().parent.parent / "src"
-MODULE_PATH = SRC_DIR / "bob3" / "titans_memory_client.py"
+MODULE_PATH = SRC_DIR / "bob3" / "memory_client.py"
+
+
+class _StubBackend:
+    """A stub BobMemory backend that records calls for tests."""
+
+    def __init__(self) -> None:
+        self.add_calls: list[dict[str, Any]] = []
+        self.search_calls: list[dict[str, Any]] = []
+        self.feedback_calls: list[tuple[str, bool]] = []
+        self.store: dict[str, dict[str, Any]] = {}
+        self._next_id = 0
+        self.search_results: list[dict[str, Any]] = []
+        self.raise_add: Exception | None = None
+        self.raise_search: Exception | None = None
+
+    def _new_id(self) -> str:
+        self._next_id += 1
+        return f"stub-{self._next_id}"
+
+    def add(self, content, *, pool=None, metadata=None):
+        self.add_calls.append(
+            {"content": content, "pool": pool, "metadata": metadata or {}}
+        )
+        if self.raise_add:
+            raise self.raise_add
+        mem_id = self._new_id()
+        record = {
+            "id": mem_id,
+            "content": content,
+            "pool": pool or "facts",
+            "metadata": dict(metadata or {}),
+        }
+        self.store[mem_id] = record
+        return record
+
+    def search(self, query, *, pool=None, limit=10, include_archived=False):
+        self.search_calls.append(
+            {
+                "query": query,
+                "pool": pool,
+                "limit": limit,
+                "include_archived": include_archived,
+            }
+        )
+        if self.raise_search:
+            raise self.raise_search
+        return list(self.search_results)
+
+    def record_feedback(self, memory_id, success):
+        self.feedback_calls.append((memory_id, success))
+        return memory_id in self.store
+
+    def get(self, memory_id):
+        return self.store.get(memory_id)
+
+    def get_stats(self):
+        return {"total": len(self.store), "pools": {}, "statuses": {}}
+
+    def archive(self, memory_id):
+        return memory_id in self.store
+
+    def demote(self, memory_id):
+        return memory_id in self.store
+
+    def get_demotion_candidates(self, *, min_times_applied=5, max_usefulness=0.3, limit=50):
+        return []
 
 
 # ===================================================================
@@ -28,7 +95,7 @@ MODULE_PATH = SRC_DIR / "bob3" / "titans_memory_client.py"
 
 
 class TestModuleExists:
-    """Step 1: src/bob3/titans_memory_client.py must exist and be importable."""
+    """Step 1: src/bob3/memory_client.py must exist and be importable."""
 
     def test_module_file_exists(self):
         assert MODULE_PATH.is_file(), f"Expected {MODULE_PATH} to exist"
@@ -38,22 +105,22 @@ class TestModuleExists:
         assert len(content.strip()) > 200, "Module appears to be a stub"
 
     def test_module_is_importable(self):
-        import bob3.titans_memory_client
+        import bob3.memory_client
 
-        assert bob3.titans_memory_client is not None
+        assert bob3.memory_client is not None
 
-    def test_titans_memory_client_class_exists(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+    def test_memory_client_class_exists(self):
+        from bob3.memory_client import BobMemoryClient
 
-        assert TitansMemoryClient is not None
+        assert BobMemoryClient is not None
 
     def test_memory_result_class_exists(self):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         assert MemoryResult is not None
 
     def test_valid_pools_constant_exists(self):
-        from bob3.titans_memory_client import VALID_POOLS
+        from bob3.memory import VALID_POOLS
 
         assert isinstance(VALID_POOLS, (set, frozenset))
         assert "facts" in VALID_POOLS
@@ -61,145 +128,61 @@ class TestModuleExists:
         assert "lessons" in VALID_POOLS
         assert "context" in VALID_POOLS
 
-    def test_tool_name_constants_exist(self):
-        from bob3.titans_memory_client import (
-            TOOL_TITANS_ADD,
-            TOOL_TITANS_RECORD_FEEDBACK,
-            TOOL_TITANS_SEARCH,
-        )
+    def test_classify_pool_function_exists(self):
+        from bob3.memory import _classify_pool
 
-        assert "titans_add" in TOOL_TITANS_ADD
-        assert "titans_search" in TOOL_TITANS_SEARCH
-        assert "titans_record_feedback" in TOOL_TITANS_RECORD_FEEDBACK
-
-    def test_route_to_pool_function_exists(self):
-        from bob3.titans_memory_client import route_to_pool
-
-        assert callable(route_to_pool)
+        assert callable(_classify_pool)
 
 
 # ===================================================================
-# Step 2: add_memory(content, pool) using titans_add
+# Step 2: add_memory(content, pool) via the BobMemory backend
 # ===================================================================
 
 
 class TestAddMemory:
-    """Step 2: add_memory() must call titans_add MCP tool via sub-agent."""
+    """Step 2: add_memory() must call the BobMemory backend's add()."""
 
     @pytest.fixture
-    def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
-
-        return TitansMemoryClient(workspace="/tmp/test-workspace")
+    def backend(self):
+        return _StubBackend()
 
     @pytest.fixture
-    def mock_execute(self):
-        """Patch _execute_tool_prompt to return a successful MemoryResult."""
-        from bob3.titans_memory_client import MemoryResult
+    def client(self, backend):
+        from bob3.memory_client import BobMemoryClient
 
-        async def fake_execute(prompt):
-            return MemoryResult(
-                success=True,
-                data={"id": "mem-123", "content": "test content", "metadata": {"pool": "facts"}},
-                raw_text='{"id": "mem-123"}',
-            )
-
-        return fake_execute
+        return BobMemoryClient(workspace="/tmp/test-workspace", backend=backend)
 
     @pytest.mark.asyncio
-    async def test_add_memory_calls_execute_tool_prompt(self, client, mock_execute):
-        with patch.object(client, "_execute_tool_prompt", side_effect=mock_execute) as mock:
-            result = await client.add_memory(content="Test memory", pool="facts")
-            mock.assert_called_once()
-            assert result.success is True
+    async def test_add_memory_calls_backend_add(self, client, backend):
+        result = await client.add_memory(content="Test memory", pool="facts")
+        assert result.success is True
+        assert len(backend.add_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_add_memory_prompt_contains_titans_add_tool(self, client, mock_execute):
-        from bob3.titans_memory_client import TOOL_TITANS_ADD
-
-        prompts_seen = []
-
-        async def capture_prompt(prompt):
-            prompts_seen.append(prompt)
-            return mock_execute(prompt)
-
-        # Need to actually await mock_execute
-        from bob3.titans_memory_client import MemoryResult
-
-        async def capture_and_return(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(
-                success=True,
-                data={"id": "mem-123"},
-                raw_text="{}",
-            )
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture_and_return):
-            await client.add_memory(content="Test memory", pool="facts")
-
-        assert len(prompts_seen) == 1
-        assert TOOL_TITANS_ADD in prompts_seen[0]
+    async def test_add_memory_passes_content(self, client, backend):
+        await client.add_memory(content="SQLite WAL mode improves reads", pool="facts")
+        assert backend.add_calls[0]["content"] == "SQLite WAL mode improves reads"
 
     @pytest.mark.asyncio
-    async def test_add_memory_prompt_contains_content(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data={"id": "mem-1"}, raw_text="{}")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.add_memory(content="SQLite WAL mode improves reads", pool="facts")
-
-        assert "SQLite WAL mode improves reads" in prompts_seen[0]
+    async def test_add_memory_passes_pool(self, client, backend):
+        await client.add_memory(content="test", pool="lessons")
+        assert backend.add_calls[0]["pool"] == "lessons"
 
     @pytest.mark.asyncio
-    async def test_add_memory_prompt_contains_pool(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data={"id": "mem-1"}, raw_text="{}")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.add_memory(content="test", pool="lessons")
-
-        assert "lessons" in prompts_seen[0]
+    async def test_add_memory_with_metadata(self, client, backend):
+        await client.add_memory(
+            content="test",
+            pool="facts",
+            metadata={"feature_id": "F016"},
+        )
+        assert backend.add_calls[0]["metadata"]["feature_id"] == "F016"
 
     @pytest.mark.asyncio
-    async def test_add_memory_with_metadata(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data={"id": "mem-1"}, raw_text="{}")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.add_memory(
-                content="test",
-                pool="facts",
-                metadata={"feature_id": "F016"},
-            )
-
-        assert "feature_id" in prompts_seen[0]
-
-    @pytest.mark.asyncio
-    async def test_add_memory_without_pool(self, client):
-        """When no pool is specified, titans_add still works (auto-route)."""
-        from bob3.titans_memory_client import MemoryResult
-
-        async def fake(prompt):
-            return MemoryResult(success=True, data={"id": "mem-1"}, raw_text="{}")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=fake):
-            result = await client.add_memory(content="something general")
-            assert result.success is True
+    async def test_add_memory_without_pool(self, client, backend):
+        """When no pool is specified, backend auto-routes."""
+        result = await client.add_memory(content="something general")
+        assert result.success is True
+        assert backend.add_calls[0]["pool"] is None
 
     @pytest.mark.asyncio
     async def test_add_memory_invalid_pool_raises(self, client):
@@ -207,126 +190,69 @@ class TestAddMemory:
             await client.add_memory(content="test", pool="invalid_pool")
 
     @pytest.mark.asyncio
-    async def test_add_memory_returns_memory_result(self, client):
-        from bob3.titans_memory_client import MemoryResult
+    async def test_add_memory_returns_memory_result(self, client, backend):
+        from bob3.memory_client import MemoryResult
 
-        async def fake(prompt):
-            return MemoryResult(
-                success=True,
-                data={"id": "mem-abc", "content": "hello"},
-                raw_text='{"id": "mem-abc"}',
-            )
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=fake):
-            result = await client.add_memory(content="hello", pool="facts")
-
+        result = await client.add_memory(content="hello", pool="facts")
         assert isinstance(result, MemoryResult)
         assert result.success is True
-        assert result.data["id"] == "mem-abc"
+        assert result.data["id"] == "stub-1"
+
+    @pytest.mark.asyncio
+    async def test_add_memory_backend_error_returns_failure(self, client, backend):
+        backend.raise_add = RuntimeError("backend down")
+        result = await client.add_memory(content="x", pool="facts")
+        assert result.success is False
+        assert "backend down" in result.error
 
 
 # ===================================================================
-# Step 3: search_memory(query, pool) using titans_search
+# Step 3: search_memory(query, pool) via the BobMemory backend
 # ===================================================================
 
 
 class TestSearchMemory:
-    """Step 3: search_memory() must call titans_search or titans_search_pool."""
+    """Step 3: search_memory() must call the BobMemory backend's search()."""
 
     @pytest.fixture
-    def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+    def backend(self):
+        return _StubBackend()
 
-        return TitansMemoryClient(workspace="/tmp/test-workspace")
+    @pytest.fixture
+    def client(self, backend):
+        from bob3.memory_client import BobMemoryClient
 
-    @pytest.mark.asyncio
-    async def test_search_memory_calls_execute_tool_prompt(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        async def fake(prompt):
-            return MemoryResult(success=True, data=[], raw_text="[]")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=fake) as mock:
-            result = await client.search_memory(query="test query")
-            mock.assert_called_once()
-            assert result.success is True
+        return BobMemoryClient(workspace="/tmp/test-workspace", backend=backend)
 
     @pytest.mark.asyncio
-    async def test_search_memory_without_pool_uses_titans_search(self, client):
-        from bob3.titans_memory_client import TOOL_TITANS_SEARCH, MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data=[], raw_text="[]")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.search_memory(query="SQLite concurrency")
-
-        assert TOOL_TITANS_SEARCH in prompts_seen[0]
+    async def test_search_memory_calls_backend(self, client, backend):
+        result = await client.search_memory(query="test query")
+        assert result.success is True
+        assert len(backend.search_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_search_memory_with_pool_uses_titans_search_pool(self, client):
-        from bob3.titans_memory_client import TOOL_TITANS_SEARCH_POOL, MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data=[], raw_text="[]")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.search_memory(query="SQLite concurrency", pool="facts")
-
-        assert TOOL_TITANS_SEARCH_POOL in prompts_seen[0]
-        assert "facts" in prompts_seen[0]
+    async def test_search_memory_without_pool(self, client, backend):
+        await client.search_memory(query="SQLite concurrency")
+        assert backend.search_calls[0]["pool"] is None
+        assert backend.search_calls[0]["query"] == "SQLite concurrency"
 
     @pytest.mark.asyncio
-    async def test_search_memory_prompt_contains_query(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data=[], raw_text="[]")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.search_memory(query="WAL mode performance")
-
-        assert "WAL mode performance" in prompts_seen[0]
+    async def test_search_memory_with_pool(self, client, backend):
+        await client.search_memory(query="SQLite concurrency", pool="facts")
+        assert backend.search_calls[0]["pool"] == "facts"
 
     @pytest.mark.asyncio
-    async def test_search_memory_prompt_contains_limit(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data=[], raw_text="[]")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.search_memory(query="test", limit=5)
-
-        assert "5" in prompts_seen[0]
+    async def test_search_memory_passes_limit(self, client, backend):
+        await client.search_memory(query="test", limit=5)
+        assert backend.search_calls[0]["limit"] == 5
 
     @pytest.mark.asyncio
-    async def test_search_memory_returns_list_data(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        mock_results = [
-            {"id": "mem-1", "content": "first result", "retrieval_weight": 0.9},
-            {"id": "mem-2", "content": "second result", "retrieval_weight": 0.7},
+    async def test_search_memory_returns_list_data(self, client, backend):
+        backend.search_results = [
+            {"id": "mem-1", "content": "first result", "score": 0.9},
+            {"id": "mem-2", "content": "second result", "score": 0.7},
         ]
-
-        async def fake(prompt):
-            return MemoryResult(success=True, data=mock_results, raw_text="[]")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=fake):
-            result = await client.search_memory(query="test")
-
+        result = await client.search_memory(query="test")
         assert isinstance(result.data, list)
         assert len(result.data) == 2
 
@@ -337,94 +263,48 @@ class TestSearchMemory:
 
 
 # ===================================================================
-# Step 4: record_feedback(memory_id, success) using titans_record_feedback
+# Step 4: record_feedback(memory_id, success)
 # ===================================================================
 
 
 class TestRecordFeedback:
-    """Step 4: record_feedback() must call titans_record_feedback MCP tool."""
+    """Step 4: record_feedback() must call the backend's record_feedback()."""
 
     @pytest.fixture
-    def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+    def backend(self):
+        b = _StubBackend()
+        # Pre-populate so feedback returns True
+        b.store["mem-1"] = {"id": "mem-1", "content": "", "pool": "facts", "metadata": {}}
+        b.store["mem-abc"] = {"id": "mem-abc", "content": "", "pool": "facts", "metadata": {}}
+        b.store["mem-xyz-123"] = {"id": "mem-xyz-123", "content": "", "pool": "facts", "metadata": {}}
+        return b
 
-        return TitansMemoryClient(workspace="/tmp/test-workspace")
+    @pytest.fixture
+    def client(self, backend):
+        from bob3.memory_client import BobMemoryClient
 
-    @pytest.mark.asyncio
-    async def test_record_feedback_calls_execute_tool_prompt(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        async def fake(prompt):
-            return MemoryResult(
-                success=True,
-                data={"id": "mem-1", "metadata": {"usefulness_score": 0.8}},
-                raw_text="{}",
-            )
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=fake) as mock:
-            result = await client.record_feedback(memory_id="mem-1", success=True)
-            mock.assert_called_once()
-            assert result.success is True
+        return BobMemoryClient(workspace="/tmp/test-workspace", backend=backend)
 
     @pytest.mark.asyncio
-    async def test_record_feedback_prompt_contains_tool_name(self, client):
-        from bob3.titans_memory_client import TOOL_TITANS_RECORD_FEEDBACK, MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data={}, raw_text="{}")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.record_feedback(memory_id="mem-abc", success=True)
-
-        assert TOOL_TITANS_RECORD_FEEDBACK in prompts_seen[0]
+    async def test_record_feedback_calls_backend(self, client, backend):
+        result = await client.record_feedback(memory_id="mem-1", success=True)
+        assert result.success is True
+        assert backend.feedback_calls == [("mem-1", True)]
 
     @pytest.mark.asyncio
-    async def test_record_feedback_prompt_contains_memory_id(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data={}, raw_text="{}")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.record_feedback(memory_id="mem-xyz-123", success=False)
-
-        assert "mem-xyz-123" in prompts_seen[0]
+    async def test_record_feedback_passes_memory_id(self, client, backend):
+        await client.record_feedback(memory_id="mem-xyz-123", success=False)
+        assert backend.feedback_calls[0][0] == "mem-xyz-123"
 
     @pytest.mark.asyncio
-    async def test_record_feedback_success_true(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data={}, raw_text="{}")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.record_feedback(memory_id="mem-1", success=True)
-
-        assert "true" in prompts_seen[0].lower()
+    async def test_record_feedback_success_true(self, client, backend):
+        await client.record_feedback(memory_id="mem-1", success=True)
+        assert backend.feedback_calls[0][1] is True
 
     @pytest.mark.asyncio
-    async def test_record_feedback_success_false(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        prompts_seen = []
-
-        async def capture(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data={}, raw_text="{}")
-
-        with patch.object(client, "_execute_tool_prompt", side_effect=capture):
-            await client.record_feedback(memory_id="mem-1", success=False)
-
-        assert "false" in prompts_seen[0].lower()
+    async def test_record_feedback_success_false(self, client, backend):
+        await client.record_feedback(memory_id="mem-1", success=False)
+        assert backend.feedback_calls[0][1] is False
 
 
 # ===================================================================
@@ -436,72 +316,51 @@ class TestMemoryCycle:
     """Step 5: Full add -> search -> feedback cycle works end-to-end."""
 
     @pytest.fixture
-    def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+    def backend(self):
+        return _StubBackend()
 
-        return TitansMemoryClient(workspace="/tmp/test-workspace")
+    @pytest.fixture
+    def client(self, backend):
+        from bob3.memory_client import BobMemoryClient
+
+        return BobMemoryClient(workspace="/tmp/test-workspace", backend=backend)
 
     @pytest.mark.asyncio
-    async def test_add_then_search_then_feedback_cycle(self, client):
+    async def test_add_then_search_then_feedback_cycle(self, client, backend):
         """Simulates a complete memory lifecycle: add, search, feedback."""
-        from bob3.titans_memory_client import MemoryResult
+        # Step A: Add a memory
+        add_result = await client.add_memory(
+            content="WAL mode lesson",
+            pool="lessons",
+        )
+        assert add_result.success is True
+        memory_id = add_result.data["id"]
 
-        call_sequence = []
+        # Set up the stub's search results to return the stored memory
+        backend.search_results = [
+            {"id": memory_id, "content": "WAL mode lesson", "score": 0.8}
+        ]
 
-        async def track_calls(prompt):
-            call_sequence.append(prompt)
-            # Return appropriate data based on which tool is being called
-            if "titans_add" in prompt:
-                return MemoryResult(
-                    success=True,
-                    data={"id": "mem-cycle-1", "content": "WAL mode lesson"},
-                    raw_text="{}",
-                )
-            elif "titans_search" in prompt:
-                return MemoryResult(
-                    success=True,
-                    data=[{"id": "mem-cycle-1", "content": "WAL mode lesson", "retrieval_weight": 0.8}],
-                    raw_text="[]",
-                )
-            elif "titans_record_feedback" in prompt:
-                return MemoryResult(
-                    success=True,
-                    data={"id": "mem-cycle-1", "metadata": {"usefulness_score": 0.85}},
-                    raw_text="{}",
-                )
-            return MemoryResult(success=False, error="unexpected tool call")
+        # Step B: Search for the memory
+        search_result = await client.search_memory(
+            query="WAL mode",
+            pool="lessons",
+        )
+        assert search_result.success is True
+        assert isinstance(search_result.data, list)
+        assert len(search_result.data) >= 1
 
-        with patch.object(client, "_execute_tool_prompt", side_effect=track_calls):
-            # Step A: Add a memory
-            add_result = await client.add_memory(
-                content="WAL mode lesson",
-                pool="lessons",
-            )
-            assert add_result.success is True
-            assert add_result.data["id"] == "mem-cycle-1"
+        # Step C: Record positive feedback on the found memory
+        feedback_result = await client.record_feedback(
+            memory_id=memory_id,
+            success=True,
+        )
+        assert feedback_result.success is True
 
-            # Step B: Search for the memory
-            search_result = await client.search_memory(
-                query="WAL mode",
-                pool="lessons",
-            )
-            assert search_result.success is True
-            assert isinstance(search_result.data, list)
-            assert len(search_result.data) >= 1
-
-            # Step C: Record positive feedback on the found memory
-            memory_id = search_result.data[0]["id"]
-            feedback_result = await client.record_feedback(
-                memory_id=memory_id,
-                success=True,
-            )
-            assert feedback_result.success is True
-
-        # Verify all three operations were called
-        assert len(call_sequence) == 3
-        assert "titans_add" in call_sequence[0]
-        assert "titans_search" in call_sequence[1]
-        assert "titans_record_feedback" in call_sequence[2]
+        # Verify backend saw all three operations
+        assert len(backend.add_calls) == 1
+        assert len(backend.search_calls) == 1
+        assert len(backend.feedback_calls) == 1
 
 
 # ===================================================================
@@ -510,60 +369,51 @@ class TestMemoryCycle:
 
 
 class TestPersistenceAcrossSessions:
-    """Step 6: Memories should persist when a new client is created."""
+    """Step 6: Memories should persist when a new client is created.
+
+    In the in-process model, persistence comes from a shared backend
+    instance (or, in production, from the underlying Qdrant store).
+    """
 
     @pytest.mark.asyncio
     async def test_memory_accessible_from_new_client(self):
-        """A memory added by one client should be searchable by another."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        """A memory added by one client should be searchable by another
+        client sharing the same backend."""
+        from bob3.memory_client import BobMemoryClient
 
-        # Simulated shared memory store
-        stored_memories = []
-
-        async def session1_execute(prompt):
-            if "titans_add" in prompt:
-                memory = {"id": "persist-1", "content": "important lesson"}
-                stored_memories.append(memory)
-                return MemoryResult(success=True, data=memory, raw_text="{}")
-            return MemoryResult(success=False, error="unexpected")
-
-        async def session2_execute(prompt):
-            if "titans_search" in prompt:
-                # Return the memory that was added in session 1
-                return MemoryResult(
-                    success=True,
-                    data=stored_memories.copy(),
-                    raw_text="[]",
-                )
-            return MemoryResult(success=False, error="unexpected")
+        shared_backend = _StubBackend()
 
         # Session 1: Add a memory
-        client1 = TitansMemoryClient(workspace="/tmp/session1")
-        with patch.object(client1, "_execute_tool_prompt", side_effect=session1_execute):
-            add_result = await client1.add_memory(
-                content="important lesson",
-                pool="lessons",
-            )
-            assert add_result.success is True
+        client1 = BobMemoryClient(workspace="/tmp/session1", backend=shared_backend)
+        add_result = await client1.add_memory(
+            content="important lesson",
+            pool="lessons",
+        )
+        assert add_result.success is True
+        memory_id = add_result.data["id"]
+
+        # Prime search results so the second client can find it
+        shared_backend.search_results = [
+            {"id": memory_id, "content": "important lesson", "score": 0.9}
+        ]
 
         # Session 2: New client searches for same memory
-        client2 = TitansMemoryClient(workspace="/tmp/session2")
-        with patch.object(client2, "_execute_tool_prompt", side_effect=session2_execute):
-            search_result = await client2.search_memory(
-                query="important lesson",
-                pool="lessons",
-            )
-            assert search_result.success is True
-            assert isinstance(search_result.data, list)
-            assert len(search_result.data) >= 1
-            assert search_result.data[0]["id"] == "persist-1"
+        client2 = BobMemoryClient(workspace="/tmp/session2", backend=shared_backend)
+        search_result = await client2.search_memory(
+            query="important lesson",
+            pool="lessons",
+        )
+        assert search_result.success is True
+        assert isinstance(search_result.data, list)
+        assert len(search_result.data) >= 1
+        assert search_result.data[0]["id"] == memory_id
 
-    @pytest.mark.asyncio
-    async def test_client_is_stateless_wrapper(self):
-        """TitansMemoryClient should be a stateless wrapper - no local cache."""
-        from bob3.titans_memory_client import TitansMemoryClient
+    def test_client_is_stateless_wrapper(self):
+        """BobMemoryClient should be a stateless wrapper - no local cache."""
+        from bob3.memory_client import BobMemoryClient
 
-        client = TitansMemoryClient(workspace="/tmp/test")
+        backend = _StubBackend()
+        client = BobMemoryClient(workspace="/tmp/test", backend=backend)
         # Client should have no memory storage attributes
         assert not hasattr(client, "_cache")
         assert not hasattr(client, "_memories")
@@ -575,52 +425,40 @@ class TestPersistenceAcrossSessions:
 # ===================================================================
 
 
-class TestRouteToPool:
-    """Tests for the route_to_pool() local classifier."""
-
-    def test_routes_api_content_to_facts(self):
-        from bob3.titans_memory_client import route_to_pool
-
-        result = route_to_pool("The API endpoint returns a JSON response")
-        assert result == "facts"
+class TestClassifyPool:
+    """Tests for the _classify_pool() local classifier (formerly route_to_pool)."""
 
     def test_routes_bug_content_to_lessons(self):
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
-        result = route_to_pool("Bug fix: the error was caused by a missing import")
+        result = _classify_pool("Bug fix: the error was caused by a missing import")
         assert result == "lessons"
 
     def test_routes_convention_content_to_preferences(self):
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
-        result = route_to_pool("Always use snake_case naming convention for functions")
+        result = _classify_pool("Always use snake_case naming convention for functions")
         assert result == "preferences"
 
-    def test_routes_progress_content_to_context(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_routes_session_content_to_context(self):
+        from bob3.memory import _classify_pool
 
-        result = route_to_pool("Current session progress: working on feature F016")
+        result = _classify_pool("Currently working on feature F016 in this session")
         assert result == "context"
 
-    def test_empty_content_defaults_to_context(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_ambiguous_content_defaults_to_facts(self):
+        from bob3.memory import _classify_pool
 
-        assert route_to_pool("") == "context"
-        assert route_to_pool("   ") == "context"
-
-    def test_ambiguous_content_uses_priority(self):
-        from bob3.titans_memory_client import route_to_pool
-
-        # Content with no clear matches defaults to context
-        result = route_to_pool("something completely unrelated to any keywords")
-        assert result == "context"
+        # Content with no clear matches defaults to facts
+        result = _classify_pool("something completely unrelated to any keywords")
+        assert result == "facts"
 
 
 class TestValidatePool:
     """Tests for pool validation."""
 
     def test_valid_pools_accepted(self):
-        from bob3.titans_memory_client import _validate_pool
+        from bob3.memory_client import _validate_pool
 
         _validate_pool("facts")
         _validate_pool("preferences")
@@ -629,61 +467,17 @@ class TestValidatePool:
         _validate_pool(None)  # None = auto-route
 
     def test_invalid_pool_raises(self):
-        from bob3.titans_memory_client import _validate_pool
+        from bob3.memory_client import _validate_pool
 
         with pytest.raises(ValueError, match="Invalid memory pool"):
             _validate_pool("nonexistent")
-
-
-class TestExtractJsonFromText:
-    """Tests for the JSON extraction helper."""
-
-    def test_extracts_raw_json(self):
-        from bob3.titans_memory_client import _extract_json_from_text
-
-        result = _extract_json_from_text('{"id": "mem-1", "content": "hello"}')
-        assert result == {"id": "mem-1", "content": "hello"}
-
-    def test_extracts_json_from_code_fence(self):
-        from bob3.titans_memory_client import _extract_json_from_text
-
-        text = 'Here is the result:\n```json\n{"id": "mem-2"}\n```\nDone.'
-        result = _extract_json_from_text(text)
-        assert result == {"id": "mem-2"}
-
-    def test_extracts_json_array(self):
-        from bob3.titans_memory_client import _extract_json_from_text
-
-        text = '[{"id": "mem-1"}, {"id": "mem-2"}]'
-        result = _extract_json_from_text(text)
-        assert isinstance(result, list)
-        assert len(result) == 2
-
-    def test_extracts_embedded_json(self):
-        from bob3.titans_memory_client import _extract_json_from_text
-
-        text = 'The result is {"id": "mem-3"} as expected.'
-        result = _extract_json_from_text(text)
-        assert result == {"id": "mem-3"}
-
-    def test_returns_none_for_no_json(self):
-        from bob3.titans_memory_client import _extract_json_from_text
-
-        result = _extract_json_from_text("No JSON here at all")
-        assert result is None
-
-    def test_returns_none_for_empty_string(self):
-        from bob3.titans_memory_client import _extract_json_from_text
-
-        result = _extract_json_from_text("")
-        assert result is None
 
 
 class TestMemoryResult:
     """Tests for the MemoryResult dataclass."""
 
     def test_default_values(self):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         r = MemoryResult(success=True)
         assert r.success is True
@@ -692,13 +486,13 @@ class TestMemoryResult:
         assert r.raw_text == ""
 
     def test_success_with_data(self):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         r = MemoryResult(success=True, data={"id": "x"})
         assert r.data == {"id": "x"}
 
     def test_failure_with_error(self):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         r = MemoryResult(success=False, error="connection failed")
         assert r.success is False
@@ -706,154 +500,39 @@ class TestMemoryResult:
 
 
 class TestClientConstruction:
-    """Tests for TitansMemoryClient construction and configuration."""
+    """Tests for BobMemoryClient construction and configuration."""
 
     def test_client_accepts_workspace(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient
 
-        client = TitansMemoryClient(workspace="/some/path")
+        client = BobMemoryClient(workspace="/some/path", backend=_StubBackend())
         assert client.workspace == "/some/path"
 
     def test_client_accepts_pathlib_workspace(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient
 
-        client = TitansMemoryClient(workspace=pathlib.Path("/some/path"))
+        client = BobMemoryClient(
+            workspace=pathlib.Path("/some/path"), backend=_StubBackend()
+        )
         assert client.workspace == "/some/path"
 
     def test_client_default_max_turns(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient
 
-        client = TitansMemoryClient(workspace="/tmp")
+        client = BobMemoryClient(workspace="/tmp", backend=_StubBackend())
         assert client.max_turns == 3
 
     def test_client_custom_max_turns(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient
 
-        client = TitansMemoryClient(workspace="/tmp", max_turns=5)
+        client = BobMemoryClient(
+            workspace="/tmp", max_turns=5, backend=_StubBackend()
+        )
         assert client.max_turns == 5
 
+    def test_client_exposes_backend(self):
+        from bob3.memory_client import BobMemoryClient
 
-class TestExecuteToolPrompt:
-    """Tests for the _execute_tool_prompt internal method."""
-
-    @pytest.mark.asyncio
-    async def test_handles_executor_exception(self):
-        """_execute_tool_prompt should catch and wrap executor errors."""
-        from bob3.titans_memory_client import TitansMemoryClient
-
-        client = TitansMemoryClient(workspace="/tmp")
-
-        with patch.object(client, "_build_executor") as mock_build:
-            mock_executor = MagicMock()
-            mock_executor.execute = AsyncMock(side_effect=RuntimeError("connection lost"))
-            mock_build.return_value = mock_executor
-
-            result = await client._execute_tool_prompt("test prompt")
-            assert result.success is False
-            assert "connection lost" in result.error
-
-    @pytest.mark.asyncio
-    async def test_handles_error_result(self):
-        """_execute_tool_prompt should detect is_error from executor result."""
-        from bob3.orchestrator.claude_executor import ExecutionResult
-        from bob3.titans_memory_client import TitansMemoryClient
-
-        client = TitansMemoryClient(workspace="/tmp")
-
-        exec_result = ExecutionResult(
-            text="Error occurred",
-            is_error=True,
-            error_message="Tool not found",
-        )
-
-        with patch.object(client, "_build_executor") as mock_build:
-            mock_executor = MagicMock()
-            mock_executor.execute = AsyncMock(return_value=exec_result)
-            mock_build.return_value = mock_executor
-
-            result = await client._execute_tool_prompt("test prompt")
-            assert result.success is False
-            assert "Tool not found" in result.error
-
-    @pytest.mark.asyncio
-    async def test_parses_json_from_successful_result(self):
-        """_execute_tool_prompt should parse JSON from successful text."""
-        from bob3.orchestrator.claude_executor import ExecutionResult
-        from bob3.titans_memory_client import TitansMemoryClient
-
-        client = TitansMemoryClient(workspace="/tmp")
-
-        exec_result = ExecutionResult(
-            text='{"id": "mem-ok", "content": "hello"}',
-            is_error=False,
-        )
-
-        with patch.object(client, "_build_executor") as mock_build:
-            mock_executor = MagicMock()
-            mock_executor.execute = AsyncMock(return_value=exec_result)
-            mock_build.return_value = mock_executor
-
-            result = await client._execute_tool_prompt("test prompt")
-            assert result.success is True
-            assert result.data == {"id": "mem-ok", "content": "hello"}
-
-    @pytest.mark.asyncio
-    async def test_returns_raw_text_when_no_json(self):
-        """If no JSON found, return raw text as data (still success)."""
-        from bob3.orchestrator.claude_executor import ExecutionResult
-        from bob3.titans_memory_client import TitansMemoryClient
-
-        client = TitansMemoryClient(workspace="/tmp")
-
-        exec_result = ExecutionResult(
-            text="Memory was added successfully.",
-            is_error=False,
-        )
-
-        with patch.object(client, "_build_executor") as mock_build:
-            mock_executor = MagicMock()
-            mock_executor.execute = AsyncMock(return_value=exec_result)
-            mock_build.return_value = mock_executor
-
-            result = await client._execute_tool_prompt("test prompt")
-            assert result.success is True
-            assert result.data == "Memory was added successfully."
-
-    @pytest.mark.asyncio
-    async def test_returns_failure_on_empty_response(self):
-        """Empty response from executor should return failure."""
-        from bob3.orchestrator.claude_executor import ExecutionResult
-        from bob3.titans_memory_client import TitansMemoryClient
-
-        client = TitansMemoryClient(workspace="/tmp")
-
-        exec_result = ExecutionResult(text="", is_error=False)
-
-        with patch.object(client, "_build_executor") as mock_build:
-            mock_executor = MagicMock()
-            mock_executor.execute = AsyncMock(return_value=exec_result)
-            mock_build.return_value = mock_executor
-
-            result = await client._execute_tool_prompt("test prompt")
-            assert result.success is False
-            assert "Empty response" in result.error
-
-
-class TestBuildExecutor:
-    """Tests for _build_executor which configures the ClaudeExecutor."""
-
-    def test_build_executor_returns_claude_executor(self):
-        from bob3.orchestrator.claude_executor import ClaudeExecutor
-        from bob3.titans_memory_client import TitansMemoryClient
-
-        client = TitansMemoryClient(workspace="/tmp/test")
-        executor = client._build_executor()
-        assert isinstance(executor, ClaudeExecutor)
-
-    def test_build_executor_configures_options(self):
-        from bob3.titans_memory_client import TitansMemoryClient
-
-        client = TitansMemoryClient(workspace="/tmp/test")
-        executor = client._build_executor()
-        # Executor should have default_options set with MCP config
-        assert executor.default_options is not None
+        backend = _StubBackend()
+        client = BobMemoryClient(workspace="/tmp", backend=backend)
+        assert client._backend is backend

@@ -153,114 +153,6 @@ def get_verification_prompt() -> str:
     return VERIFICATION_PROMPT_SECTION
 
 
-def _validate_acceptance_criteria(
-    *,
-    workspace: pathlib.Path,
-    acceptance_criteria: str,
-    feature_description: str,
-    src_files: list[pathlib.Path],
-    recent_src_files: list[pathlib.Path],
-) -> list[dict]:
-    """Validate acceptance criteria against actual implementation.
-
-    Performs heuristic checks to determine if acceptance criteria are met.
-    This is not perfect but catches obvious cases where features claim
-    completion without actually implementing anything.
-
-    Args:
-        workspace: Project workspace path.
-        acceptance_criteria: Feature acceptance criteria string or list.
-        feature_description: Feature description for context.
-        src_files: All source files in the project.
-        recent_src_files: Recently modified source files.
-
-    Returns:
-        List of check dicts with name/passed/details.
-    """
-    import json
-    checks = []
-
-    # Parse acceptance criteria (could be JSON list or plain text)
-    criteria_list = []
-    try:
-        criteria_list = json.loads(acceptance_criteria) if acceptance_criteria.startswith("[") else [acceptance_criteria]
-    except Exception:
-        # If not JSON, treat as single criterion
-        criteria_list = [acceptance_criteria] if acceptance_criteria else []
-
-    if not criteria_list:
-        return checks  # No criteria to validate
-
-    # Heuristic validation: Check if key terms from criteria appear in recent files
-    criteria_keywords = set()
-    for criterion in criteria_list:
-        if isinstance(criterion, str):
-            # Extract meaningful words (files, class names, function names)
-            words = criterion.lower().split()
-            for word in words:
-                # Filter out common words
-                if len(word) > 3 and word not in ["when", "with", "that", "this", "should", "must", "file", "exists"]:
-                    criteria_keywords.add(word.strip(",.():"))
-
-    # Check if recent files contain evidence of implementation
-    evidence_found = False
-    if recent_src_files:
-        for src_file in recent_src_files:
-            try:
-                content = src_file.read_text(errors='ignore').lower()
-                # Check if any criteria keywords appear in the modified code
-                for keyword in criteria_keywords:
-                    if keyword in content:
-                        evidence_found = True
-                        break
-                if evidence_found:
-                    break
-            except Exception:
-                pass
-
-    # Special check for integration features
-    is_integration = any(word in feature_description.lower() for word in ["integrate", "hook", "connect", "call"])
-    if is_integration and recent_src_files:
-        # For integration features, recent files should include calls/imports
-        integration_evidence = False
-        for src_file in recent_src_files:
-            try:
-                content = src_file.read_text(errors='ignore')
-                # Look for #include statements or function calls
-                if "#include" in content or "import" in content or "(" in content:
-                    integration_evidence = True
-                    break
-            except Exception:
-                pass
-
-        checks.append({
-            "name": "integration_code_present",
-            "passed": integration_evidence,
-            "severity": "warning",
-            "details": (
-                f"Found integration code in {len(recent_src_files)} modified file(s)"
-                if integration_evidence
-                else "No integration code found - modified files don't appear to contain integration logic"
-            ),
-        })
-
-    # General criteria validation (keyword heuristic - supplementary signal, not a hard gate)
-    checks.append({
-        "name": "acceptance_criteria_evidence",
-        "passed": evidence_found or not criteria_keywords,
-        "severity": "warning",
-        "details": (
-            f"Found evidence of implementation (keywords: {', '.join(list(criteria_keywords)[:5])})"
-            if evidence_found
-            else "No clear evidence that acceptance criteria were implemented"
-            if criteria_keywords
-            else "Could not extract testable criteria keywords"
-        ),
-    })
-
-    return checks
-
-
 def run_verification_checklist(
     *,
     workspace: str,
@@ -463,19 +355,7 @@ def run_verification_checklist(
         _changes_check["severity"] = "warning"
     checks.append(_changes_check)
 
-    # Check 6: Acceptance criteria validation (if provided)
-    if acceptance_criteria:
-        criteria_checks = _validate_acceptance_criteria(
-            workspace=ws,
-            acceptance_criteria=acceptance_criteria,
-            feature_description=feature_description or "",
-            src_files=src_files,
-            recent_src_files=recent_src_files,
-        )
-        checks.extend(criteria_checks)
-
-
-    # Check 5: Acceptance criteria validation (ENHANCED)
+    # Check 6: Acceptance criteria validation (enhanced, via enhanced_verification)
     if acceptance_criteria:
         ac_passed, ac_details = validate_acceptance_criteria(
             workspace=ws,
@@ -490,7 +370,7 @@ def run_verification_checklist(
             "details": ac_details,
         })
 
-    # Check 6: Integration verification for "integrate" features (ENHANCED)
+    # Check 7: Integration verification for "integrate" features (ENHANCED)
     if feature_description and "integrate" in feature_description.lower():
         integration_passed, integration_details = validate_integration(
             workspace=ws,

@@ -150,6 +150,20 @@ def _make_spawn_result(text="Feature done", is_error=False, error_message=None, 
     )
 
 
+# These E2E tests focus on interrupt/resume and spec-change behavior, not on
+# post-execution verification of a real workspace. The workspaces used are
+# lightweight stubs (/tmp paths) that do not contain implementation files
+# matching the mock spec's acceptance criteria, so we stub out the verification
+# checklist to always pass. Verification itself is exercised by the dedicated
+# superpowers / F113 tests.
+def _passing_verification(**_kwargs):
+    return {
+        "passed": True,
+        "checks": [],
+        "summary": "Verification stubbed to pass in F118 e2e tests",
+    }
+
+
 class TestE2EStep1StartWith5Features:
     """Step 1: Start bob3 with 5-feature spec."""
 
@@ -216,6 +230,9 @@ class TestE2EStep2And3Complete2ThenInterrupt:
                 return_value="def456",
             ), patch(
                 "bob3.orchestrator.run_loop.stop_mcp_server",
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_passing_verification,
             ):
                 termination = await loop.run()
 
@@ -300,6 +317,9 @@ class TestE2EStep4ResumeFromFeature3:
             ), patch(
                 "bob3.orchestrator.run_loop.git_commit_feature",
                 return_value="ghi789",
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_passing_verification,
             ):
                 termination = await loop.run()
 
@@ -388,6 +408,9 @@ class TestE2EStep5CompleteFeature3ThenInterruptAgain:
                 return_value="jkl012",
             ), patch(
                 "bob3.orchestrator.run_loop.stop_mcp_server",
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_passing_verification,
             ):
                 termination = await loop.run()
 
@@ -606,6 +629,9 @@ class TestE2EStep9FullWorkflow:
                 return_value="def456",
             ), patch(
                 "bob3.orchestrator.run_loop.stop_mcp_server",
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_passing_verification,
             ):
                 term1 = await loop1.run()
 
@@ -665,6 +691,9 @@ class TestE2EStep9FullWorkflow:
                 return_value="ghi789",
             ), patch(
                 "bob3.orchestrator.run_loop.stop_mcp_server",
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_passing_verification,
             ):
                 term2 = await loop2.run()
 
@@ -769,6 +798,9 @@ class TestE2EStep9FullWorkflow:
             ), patch(
                 "bob3.orchestrator.run_loop.git_commit_feature",
                 return_value="mno345",
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_passing_verification,
             ):
                 term3 = await loop3.run()
 
@@ -870,7 +902,10 @@ class TestE2EMultipleInterruptResumeCycles:
             ), patch(
                 "bob3.orchestrator.run_loop.git_commit_feature",
                 return_value="c1",
-            ), patch("bob3.orchestrator.run_loop.stop_mcp_server"):
+            ), patch("bob3.orchestrator.run_loop.stop_mcp_server"), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_passing_verification,
+            ):
                 t1 = await loop1.run()
 
             assert t1 == LoopTermination.SHUTDOWN_REQUESTED
@@ -907,7 +942,10 @@ class TestE2EMultipleInterruptResumeCycles:
             ), patch(
                 "bob3.orchestrator.run_loop.git_commit_feature",
                 return_value="c2",
-            ), patch("bob3.orchestrator.run_loop.stop_mcp_server"):
+            ), patch("bob3.orchestrator.run_loop.stop_mcp_server"), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_passing_verification,
+            ):
                 t2 = await loop2.run()
 
             assert t2 == LoopTermination.SHUTDOWN_REQUESTED
@@ -934,6 +972,9 @@ class TestE2EMultipleInterruptResumeCycles:
             ), patch(
                 "bob3.orchestrator.run_loop.git_commit_feature",
                 return_value="c3",
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_passing_verification,
             ):
                 t3 = await loop3.run()
 

@@ -555,7 +555,7 @@ class TestSpawnIntegration:
 
         mcp_servers = {
             "perplexity": {"type": "stdio", "command": "echo"},
-            "titans-memory": {"type": "stdio", "command": "echo"},
+            "bob3-memory": {"type": "stdio", "command": "echo"},
         }
         opts = build_sub_agent_options(mcp_servers=mcp_servers)
 
@@ -572,4 +572,4 @@ class TestSpawnIntegration:
         assert run is not None
         mcp_list = json.loads(run.mcp_enabled)
         assert "perplexity" in mcp_list
-        assert "titans-memory" in mcp_list
+        assert "bob3-memory" in mcp_list

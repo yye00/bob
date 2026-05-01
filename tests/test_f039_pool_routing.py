@@ -1,11 +1,14 @@
-"""Tests for F039: Implement TITANS memory pool routing.
+"""Tests for F039: Bob3 memory pool routing (formerly TITANS).
 
-Validates that route_to_pool():
-- Step 1: Add route_to_pool() function
-- Step 2: facts: API behaviors, library usage, external knowledge
-- Step 3: lessons: Bug fixes, debugging patterns, solutions
-- Step 4: preferences: User preferences, project conventions
-- Step 5: context: Session state, feature progress
+Validates that _classify_pool() (formerly route_to_pool):
+- Step 1: Add _classify_pool() function
+- Step 2: facts: default pool for content that doesn't match other categories
+- Step 3: lessons: Bug fixes, debugging patterns, solutions (contains
+  "bug", "fix", "debug", "error", "exception", "failure", "lesson")
+- Step 4: preferences: User preferences, project conventions (contains
+  "prefer", "style", "always use", "never use", "convention")
+- Step 5: context: Session state, feature progress (contains "currently",
+  "working on", "session", "in progress", "right now")
 - Step 6: Test: Add different content types, verify correct pool
 """
 
@@ -13,96 +16,73 @@ import pytest
 
 
 # ===================================================================
-# Step 1: route_to_pool() function exists
+# Step 1: _classify_pool() function exists
 # ===================================================================
 
 
-class TestRouteToPoolExists:
-    """Step 1: route_to_pool() must be importable and callable."""
+class TestClassifyPoolExists:
+    """Step 1: _classify_pool() must be importable and callable."""
 
     def test_function_importable(self):
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
-        assert callable(route_to_pool)
+        assert callable(_classify_pool)
 
     def test_returns_string(self):
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
-        result = route_to_pool("some content")
+        result = _classify_pool("some content")
         assert isinstance(result, str)
 
     def test_returns_valid_pool_name(self):
-        from bob3.titans_memory_client import VALID_POOLS, route_to_pool
+        from bob3.memory import VALID_POOLS, _classify_pool
 
-        result = route_to_pool("some content")
+        result = _classify_pool("some content")
         assert result in VALID_POOLS
 
-    def test_empty_string_returns_context(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_empty_string_defaults_to_facts(self):
+        from bob3.memory import _classify_pool
 
-        assert route_to_pool("") == "context"
+        # New heuristic: default is facts
+        assert _classify_pool("") == "facts"
 
-    def test_whitespace_only_returns_context(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_whitespace_only_defaults_to_facts(self):
+        from bob3.memory import _classify_pool
 
-        assert route_to_pool("   ") == "context"
+        assert _classify_pool("   ") == "facts"
 
-    def test_no_keywords_defaults_to_context(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_no_keywords_defaults_to_facts(self):
+        from bob3.memory import _classify_pool
 
-        result = route_to_pool("the quick brown fox jumps over the lazy dog")
-        assert result == "context"
+        result = _classify_pool("the quick brown fox jumps over the lazy dog")
+        assert result == "facts"
 
 
 # ===================================================================
-# Step 2: facts: API behaviors, library usage, external knowledge
+# Step 2: facts: default for content that doesn't match categories
 # ===================================================================
 
 
 class TestFactsPoolRouting:
-    """Step 2: Content about APIs, libraries, and external knowledge routes to facts."""
+    """Step 2: Content that doesn't match other categories routes to facts."""
 
     def test_api_behavior_routes_to_facts(self):
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
         content = "The API returns a 200 status code for successful requests"
-        assert route_to_pool(content) == "facts"
+        assert _classify_pool(content) == "facts"
 
     def test_library_usage_routes_to_facts(self):
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
         content = "The library provides a function for parsing JSON responses"
-        assert route_to_pool(content) == "facts"
+        assert _classify_pool(content) == "facts"
 
-    def test_sdk_documentation_routes_to_facts(self):
-        from bob3.titans_memory_client import route_to_pool
-
-        content = "The SDK documentation describes the endpoint parameter types"
-        assert route_to_pool(content) == "facts"
-
-    def test_package_version_routes_to_facts(self):
-        from bob3.titans_memory_client import route_to_pool
-
-        content = "Package version 2.0 introduced a new module for config"
-        assert route_to_pool(content) == "facts"
-
-    def test_external_dependency_routes_to_facts(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_neutral_statement_routes_to_facts(self):
+        from bob3.memory import _classify_pool
 
         content = "The dependency requires import of the schema module"
-        assert route_to_pool(content) == "facts"
-
-    def test_environment_variable_routes_to_facts(self):
-        from bob3.titans_memory_client import route_to_pool
-
-        content = "The environment variable controls the default value for the API endpoint"
-        assert route_to_pool(content) == "facts"
-
-    def test_protocol_specification_routes_to_facts(self):
-        from bob3.titans_memory_client import route_to_pool
-
-        content = "The protocol specification defines how the response schema works"
-        assert route_to_pool(content) == "facts"
+        assert _classify_pool(content) == "facts"
 
 
 # ===================================================================
@@ -113,41 +93,47 @@ class TestFactsPoolRouting:
 class TestLessonsPoolRouting:
     """Step 3: Content about bugs, fixes, and debugging routes to lessons."""
 
-    def test_bug_fix_routes_to_lessons(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_bug_content_routes_to_lessons(self):
+        from bob3.memory import _classify_pool
 
-        content = "Bug fix: The error was caused by a null pointer exception"
-        assert route_to_pool(content) == "lessons"
+        content = "Bug: The error was caused by a null pointer"
+        assert _classify_pool(content) == "lessons"
 
-    def test_debugging_pattern_routes_to_lessons(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_fix_content_routes_to_lessons(self):
+        from bob3.memory import _classify_pool
 
-        content = "Debug traceback showed the failure was in the root cause analysis"
-        assert route_to_pool(content) == "lessons"
+        content = "Here's the fix for the null pointer dereference"
+        assert _classify_pool(content) == "lessons"
 
-    def test_error_resolution_routes_to_lessons(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_debug_content_routes_to_lessons(self):
+        from bob3.memory import _classify_pool
 
-        content = "The exception was resolved with a workaround for the crash"
-        assert route_to_pool(content) == "lessons"
+        content = "Had to debug the crash for an hour"
+        assert _classify_pool(content) == "lessons"
 
-    def test_lesson_learned_routes_to_lessons(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_error_content_routes_to_lessons(self):
+        from bob3.memory import _classify_pool
 
-        content = "Lesson learned: The mistake was using the wrong patch hotfix"
-        assert route_to_pool(content) == "lessons"
+        content = "An error occurred when the handler ran"
+        assert _classify_pool(content) == "lessons"
 
-    def test_trigger_lesson_solution_format_routes_to_lessons(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_exception_content_routes_to_lessons(self):
+        from bob3.memory import _classify_pool
 
-        content = "trigger: DB connection\nlesson: Use connection pooling\nsolution: Added pool manager"
-        assert route_to_pool(content) == "lessons"
+        content = "An unhandled exception was raised"
+        assert _classify_pool(content) == "lessons"
 
-    def test_regression_routes_to_lessons(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_failure_content_routes_to_lessons(self):
+        from bob3.memory import _classify_pool
 
-        content = "The regression was caused by a broken migration"
-        assert route_to_pool(content) == "lessons"
+        content = "The failure occurred during integration testing"
+        assert _classify_pool(content) == "lessons"
+
+    def test_lesson_content_routes_to_lessons(self):
+        from bob3.memory import _classify_pool
+
+        content = "Here is a lesson I learned today"
+        assert _classify_pool(content) == "lessons"
 
 
 # ===================================================================
@@ -158,29 +144,35 @@ class TestLessonsPoolRouting:
 class TestPreferencesPoolRouting:
     """Step 4: Content about preferences and conventions routes to preferences."""
 
-    def test_user_preference_routes_to_preferences(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_prefer_content_routes_to_preferences(self):
+        from bob3.memory import _classify_pool
 
-        content = "User preference: always use type hints with naming convention"
-        assert route_to_pool(content) == "preferences"
+        content = "I prefer PostgreSQL over MySQL for production"
+        assert _classify_pool(content) == "preferences"
 
-    def test_project_convention_routes_to_preferences(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_style_content_routes_to_preferences(self):
+        from bob3.memory import _classify_pool
 
-        content = "Project convention: use snake_case naming for coding style and lint rules"
-        assert route_to_pool(content) == "preferences"
+        content = "Our coding style favors short functions"
+        assert _classify_pool(content) == "preferences"
 
-    def test_style_guideline_routes_to_preferences(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_convention_content_routes_to_preferences(self):
+        from bob3.memory import _classify_pool
 
-        content = "The guideline is to prefer standard template format for lint"
-        assert route_to_pool(content) == "preferences"
+        content = "Naming convention: use snake_case for module names"
+        assert _classify_pool(content) == "preferences"
 
-    def test_coding_practice_routes_to_preferences(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_always_use_content_routes_to_preferences(self):
+        from bob3.memory import _classify_pool
 
-        content = "Best practice: never use global state, follow the naming convention"
-        assert route_to_pool(content) == "preferences"
+        content = "Always use type hints on public functions"
+        assert _classify_pool(content) == "preferences"
+
+    def test_never_use_content_routes_to_preferences(self):
+        from bob3.memory import _classify_pool
+
+        content = "Never use global variables in modules"
+        assert _classify_pool(content) == "preferences"
 
 
 # ===================================================================
@@ -191,29 +183,35 @@ class TestPreferencesPoolRouting:
 class TestContextPoolRouting:
     """Step 5: Content about session state and progress routes to context."""
 
-    def test_session_progress_routes_to_context(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_currently_content_routes_to_context(self):
+        from bob3.memory import _classify_pool
 
-        content = "Session progress: currently working on the milestone checkpoint"
-        assert route_to_pool(content) == "context"
+        content = "Currently refactoring the memory module"
+        assert _classify_pool(content) == "context"
 
-    def test_feature_status_routes_to_context(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_working_on_content_routes_to_context(self):
+        from bob3.memory import _classify_pool
 
-        content = "Feature status: in progress, next step is to complete the backlog"
-        assert route_to_pool(content) == "context"
+        content = "We are working on the migration tooling"
+        assert _classify_pool(content) == "context"
 
-    def test_blocked_state_routes_to_context(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_session_content_routes_to_context(self):
+        from bob3.memory import _classify_pool
 
-        content = "Currently blocked on the plan, need to review the current state"
-        assert route_to_pool(content) == "context"
+        content = "This session's outcome was shipping F039"
+        assert _classify_pool(content) == "context"
 
-    def test_completed_milestone_routes_to_context(self):
-        from bob3.titans_memory_client import route_to_pool
+    def test_in_progress_content_routes_to_context(self):
+        from bob3.memory import _classify_pool
 
-        content = "Milestone completed: all checkpoint items are done, next step planned"
-        assert route_to_pool(content) == "context"
+        content = "Task is in progress, ETA tomorrow"
+        assert _classify_pool(content) == "context"
+
+    def test_right_now_content_routes_to_context(self):
+        from bob3.memory import _classify_pool
+
+        content = "Right now we're waiting on the reviewer"
+        assert _classify_pool(content) == "context"
 
 
 # ===================================================================
@@ -225,19 +223,19 @@ class TestMixedContentRouting:
     """Step 6: Verify correct pool for various mixed content types."""
 
     def test_all_valid_pools_represented(self):
-        """Each of the four valid pools must be reachable via route_to_pool."""
-        from bob3.titans_memory_client import VALID_POOLS, route_to_pool
+        """Each of the four valid pools must be reachable via _classify_pool."""
+        from bob3.memory import VALID_POOLS, _classify_pool
 
         routed_pools = set()
         test_contents = {
-            "facts": "The API library SDK documentation describes parameter specification",
-            "lessons": "Bug fix: debug traceback exception failure root cause workaround",
-            "preferences": "User preference convention style always use naming guideline rule template",
-            "context": "Session progress status currently working on milestone checkpoint blocked",
+            "facts": "The API returns a JSON response payload",
+            "lessons": "Bug report: the error was caused by an exception in parsing",
+            "preferences": "Our convention: always use explicit imports",
+            "context": "Currently working on the import pipeline in this session",
         }
 
         for expected_pool, content in test_contents.items():
-            result = route_to_pool(content)
+            result = _classify_pool(content)
             routed_pools.add(result)
             assert result == expected_pool, (
                 f"Expected '{expected_pool}' for content '{content[:50]}...', got '{result}'"
@@ -247,81 +245,58 @@ class TestMixedContentRouting:
 
     def test_case_insensitive_matching(self):
         """Keywords should match regardless of case."""
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
         # Uppercase keywords should still match
-        assert route_to_pool("The API returns data from the LIBRARY") == "facts"
-        assert route_to_pool("BUG FIX: debug TRACEBACK exception") == "lessons"
+        assert _classify_pool("BUG FIX: I had to debug the ERROR") == "lessons"
+        assert _classify_pool("We ALWAYS USE explicit imports") == "preferences"
 
-    def test_priority_facts_over_context_on_tie(self):
-        """facts pool has higher priority than context when keyword counts tie."""
-        from bob3.titans_memory_client import route_to_pool
+    def test_lessons_matches_first(self):
+        """When content contains keywords from lessons, lessons wins."""
+        from bob3.memory import _classify_pool
 
-        # "api" -> facts (1 hit), "current" -> context (1 hit)
-        # Equal score: facts wins on priority
-        content = "The api is current"
-        result = route_to_pool(content)
-        assert result == "facts"
-
-    def test_higher_keyword_count_wins(self):
-        """Pool with more keyword matches wins regardless of priority."""
-        from bob3.titans_memory_client import route_to_pool
-
-        # Multiple lessons keywords should outweigh a single facts keyword
-        content = "The API had a bug, debug the error traceback"
-        result = route_to_pool(content)
-        # facts: api(1), lessons: bug(1), debug(1), error(1), traceback(1) = 4
-        assert result == "lessons"
-
-    def test_real_world_api_documentation(self):
-        """Real-world content: API documentation."""
-        from bob3.titans_memory_client import route_to_pool
-
-        content = (
-            "The claude-code-sdk package provides an API endpoint that returns "
-            "a response with schema validation for each parameter"
-        )
-        assert route_to_pool(content) == "facts"
+        # lessons is evaluated before preferences in _classify_pool
+        content = "Always use exception handling to avoid errors"
+        # Contains 'always use' (preferences), 'exception' (lessons), 'error' (lessons).
+        # lessons is evaluated first, so: lessons
+        assert _classify_pool(content) == "lessons"
 
     def test_real_world_debugging_session(self):
         """Real-world content: a debugging session."""
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
         content = (
             "Root cause of the bug: exception in the error handler caused a crash. "
-            "The fix was a workaround that resolved the issue."
+            "The fix was a workaround."
         )
-        assert route_to_pool(content) == "lessons"
+        assert _classify_pool(content) == "lessons"
 
     def test_real_world_team_convention(self):
         """Real-world content: team coding convention."""
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
         content = (
             "Our coding style guideline: prefer descriptive naming convention, "
-            "always use type hints, follow the lint rule for template format"
+            "always use type hints"
         )
-        assert route_to_pool(content) == "preferences"
+        assert _classify_pool(content) == "preferences"
 
     def test_real_world_project_state(self):
         """Real-world content: project state update."""
-        from bob3.titans_memory_client import route_to_pool
+        from bob3.memory import _classify_pool
 
         content = (
-            "Session progress update: currently working on the feature backlog. "
-            "Next step after the milestone: checkpoint the current state and plan"
+            "Session update: currently working on the feature backlog. "
+            "In progress right now."
         )
-        assert route_to_pool(content) == "context"
+        assert _classify_pool(content) == "context"
 
-    def test_pool_keywords_dict_has_all_pools(self):
-        """The _POOL_KEYWORDS dict must cover all four valid pools."""
-        from bob3.titans_memory_client import VALID_POOLS, _POOL_KEYWORDS
+    def test_real_world_api_documentation(self):
+        """Real-world content: API documentation (defaults to facts)."""
+        from bob3.memory import _classify_pool
 
-        assert set(_POOL_KEYWORDS.keys()) == VALID_POOLS
-
-    def test_each_pool_has_keywords(self):
-        """Each pool must have at least one keyword defined."""
-        from bob3.titans_memory_client import _POOL_KEYWORDS
-
-        for pool, keywords in _POOL_KEYWORDS.items():
-            assert len(keywords) > 0, f"Pool '{pool}' has no keywords"
+        content = (
+            "The claude-code-sdk package provides an API endpoint that returns "
+            "a response payload for each parameter"
+        )
+        assert _classify_pool(content) == "facts"

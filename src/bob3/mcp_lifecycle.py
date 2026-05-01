@@ -1,10 +1,10 @@
 """MCP Server Lifecycle Management for Bob3.
 
-Manages the TITANS Memory MCP server lifecycle - starting it as a subprocess,
-monitoring health, and ensuring graceful shutdown. Only TITANS Memory is managed
+Manages the bob3-memory MCP server lifecycle - starting it as a subprocess,
+monitoring health, and ensuring graceful shutdown. Only bob3-memory is managed
 by Bob3; Perplexity and Puppeteer are available via the Claude Code environment.
 
-CRITICAL: TITANS Memory is required for Bob3 operation. If the MCP server
+CRITICAL: bob3-memory is required for Bob3 operation. If the MCP server
 fails to start, Bob3 must stop immediately with a clear error message.
 """
 
@@ -16,7 +16,7 @@ import os
 import subprocess
 import time
 
-from bob3.orchestrator.mcp_config import TITANS_MEMORY_MCP, MCPServerConfig
+from bob3.orchestrator.mcp_config import BOB3_MEMORY_MCP, MCPServerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -27,20 +27,21 @@ _SHUTDOWN_TIMEOUT_SECONDS = 5
 class MCPStartupError(Exception):
     """Raised when the MCP server fails to start.
 
-    This is a fatal error - Bob3 cannot operate without TITANS Memory.
+    This is a fatal error - Bob3 cannot operate without bob3-memory.
     """
 
 
 class MCPLifecycleManager:
     """Manages the lifecycle of a single MCP server subprocess.
 
-    Handles starting, health checking, and stopping the TITANS Memory
+    Handles starting, health checking, and stopping the bob3-memory
     MCP server. Registers an atexit handler to ensure cleanup on exit.
     """
 
     def __init__(self, config: MCPServerConfig | None = None) -> None:
-        self.config = config or TITANS_MEMORY_MCP
+        self.config = config or BOB3_MEMORY_MCP
         self._process: subprocess.Popen | None = None
+        self._atexit_registered: bool = False
 
     @property
     def pid(self) -> int | None:
@@ -59,12 +60,23 @@ class MCPLifecycleManager:
             MCPStartupError: If the server fails to start for any reason
                 (missing env vars, command not found, immediate exit, etc).
         """
+        # Idempotent: if the managed subprocess is already running, don't
+        # spawn a second one (which would orphan the first). The singleton
+        # start_mcp_server() relies on this to be safe across repeated calls
+        # (e.g. `bob3 init` then `bob3 run` within one process).
+        if self._process is not None and self._process.poll() is None:
+            logger.debug(
+                "bob3-memory MCP server already running (pid=%d); skipping start",
+                self._process.pid,
+            )
+            return
+
         # Validate required environment variables
         for var in self.config.env_vars:
             if not os.environ.get(var):
                 raise MCPStartupError(
                     f"Required environment variable {var} is not set. "
-                    f"TITANS Memory MCP server cannot start without it."
+                    f"{self.config.name} MCP server cannot start without it."
                 )
 
         # Launch the subprocess
@@ -103,11 +115,14 @@ class MCPLifecycleManager:
                 f"stderr: {stderr_output}"
             )
 
-        # Register atexit handler to ensure cleanup
-        atexit.register(self.stop)
+        # Register atexit handler to ensure cleanup (once per manager instance
+        # to avoid accumulating duplicate handlers on repeated start() calls).
+        if not self._atexit_registered:
+            atexit.register(self.stop)
+            self._atexit_registered = True
 
         logger.info(
-            "TITANS Memory MCP server started (pid=%d)", self._process.pid
+            "bob3-memory MCP server started (pid=%d)", self._process.pid
         )
 
     def health_check(self) -> bool:
@@ -131,7 +146,7 @@ class MCPLifecycleManager:
             return
 
         pid = self._process.pid
-        logger.info("Stopping TITANS Memory MCP server (pid=%d)...", pid)
+        logger.info("Stopping bob3-memory MCP server (pid=%d)...", pid)
 
         self._process.terminate()
         try:
@@ -144,7 +159,7 @@ class MCPLifecycleManager:
             self._process.wait(timeout=_SHUTDOWN_TIMEOUT_SECONDS)
 
         self._process = None
-        logger.info("TITANS Memory MCP server stopped (pid=%d)", pid)
+        logger.info("bob3-memory MCP server stopped (pid=%d)", pid)
 
     def __enter__(self) -> MCPLifecycleManager:
         """Start the MCP server when entering context."""
@@ -172,7 +187,7 @@ def get_mcp_manager() -> MCPLifecycleManager:
 
 
 def start_mcp_server() -> MCPLifecycleManager:
-    """Start the TITANS Memory MCP server using the singleton manager.
+    """Start the bob3-memory MCP server using the singleton manager.
 
     Returns:
         The MCPLifecycleManager instance managing the server.
@@ -186,7 +201,7 @@ def start_mcp_server() -> MCPLifecycleManager:
 
 
 def stop_mcp_server() -> None:
-    """Stop the TITANS Memory MCP server if running."""
+    """Stop the bob3-memory MCP server if running."""
     global _manager
     if _manager is not None:
         _manager.stop()

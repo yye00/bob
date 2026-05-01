@@ -1,11 +1,13 @@
 """MCP (Model Context Protocol) server configuration for Bob3 sub-agents.
 
 Defines configuration for each MCP server that Bob3 sub-agents can use.
-Only TITANS-MEMORY is started and managed by Bob3 directly. Perplexity
+Only bob3-memory is started and managed by Bob3 directly. Perplexity
 and Puppeteer are already available in the Claude Code environment.
 
 MCP Servers:
-    TITANS-MEMORY: Persistent memory with surprise-based learning (managed by Bob3)
+    bob3-memory: Persistent semantic memory with pool-based categorization
+        and feedback tracking. Backed by mem0ai + FastEmbed + Qdrant (fully
+        local, no external API keys). Managed by Bob3.
     PERPLEXITY: Web-grounded search and research (available via Claude Code)
     PUPPETEER: Browser automation (available via Claude Code)
 """
@@ -40,16 +42,14 @@ class MCPServerConfig:
 # Server configurations
 # ---------------------------------------------------------------------------
 
-TITANS_MEMORY_MCP = MCPServerConfig(
-    name="titans-memory",
+BOB3_MEMORY_MCP = MCPServerConfig(
+    name="bob3-memory",
     command=[
-        "uv",
-        "--directory",
-        "/home/captain/work/AI/titans-memory",
-        "run",
-        "titans-memory",
+        "python",
+        "-m",
+        "bob3.memory_mcp",
     ],
-    env_vars=["OPENAI_API_KEY"],
+    env_vars=[],
     required=True,
     managed_by_bob3=True,
 )
@@ -72,25 +72,23 @@ PUPPETEER_MCP = MCPServerConfig(
 
 # All known MCP server configs
 _ALL_CONFIGS: list[MCPServerConfig] = [
-    TITANS_MEMORY_MCP,
+    BOB3_MEMORY_MCP,
     PERPLEXITY_MCP,
     PUPPETEER_MCP,
 ]
 
-# TITANS Memory tool names that sub-agents can use
-_TITANS_TOOLS: list[str] = [
-    "titans_add",
-    "titans_search",
-    "titans_get",
-    "titans_update",
-    "titans_delete",
-    "titans_record_feedback",
-    "titans_get_candidates",
-    "titans_demote",
-    "titans_archive",
-    "titans_get_stats",
-    "titans_route",
-    "titans_search_pool",
+# Bob3 Memory tool names that sub-agents can use
+_MEMORY_TOOLS: list[str] = [
+    "memory_add",
+    "memory_search",
+    "memory_get",
+    "memory_record_feedback",
+    "memory_archive",
+    "memory_demote",
+    "memory_delete",
+    "memory_get_stats",
+    "memory_get_candidates",
+    "memory_list_pools",
 ]
 
 # Perplexity MCP tool names (available via the Claude Code MCP plugin)
@@ -126,10 +124,10 @@ def get_bob3_managed_servers() -> list[MCPServerConfig]:
 def get_allowed_tools() -> list[str]:
     """Return the list of MCP tool names available to sub-agents.
 
-    Currently returns TITANS Memory tools. Perplexity and Puppeteer
-    tools are available automatically via the Claude Code environment.
+    Currently returns bob3-memory tools. Perplexity and Puppeteer tools
+    are available automatically via the Claude Code environment.
     """
-    return list(_TITANS_TOOLS)
+    return list(_MEMORY_TOOLS)
 
 
 def get_perplexity_tools() -> list[str]:

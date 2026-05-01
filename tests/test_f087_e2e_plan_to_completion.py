@@ -64,8 +64,7 @@ def spec_file(tmp_path):
                 "description": "Foundation feature with no dependencies",
                 "priority": 10,
                 "acceptance_criteria": [
-                    "Feature A is fully implemented",
-                    "Tests pass for Feature A",
+                    "File exists: feature_a.txt",
                 ],
             },
             {
@@ -73,8 +72,7 @@ def spec_file(tmp_path):
                 "description": "Depends on Feature A",
                 "priority": 20,
                 "acceptance_criteria": [
-                    "Feature B is fully implemented",
-                    "Tests pass for Feature B",
+                    "File exists: feature_b.txt",
                 ],
                 "depends_on": ["Feature A"],
             },
@@ -83,8 +81,7 @@ def spec_file(tmp_path):
                 "description": "Depends on Feature B",
                 "priority": 30,
                 "acceptance_criteria": [
-                    "Feature C is fully implemented",
-                    "Tests pass for Feature C",
+                    "File exists: feature_c.txt",
                 ],
                 "depends_on": ["Feature B"],
             },
@@ -267,6 +264,11 @@ class TestE2ERunToCompletion:
                 target_id = kwargs.get("target_id")
                 feature = get_feature(target_id)
                 execution_order.append(feature.name)
+
+                # Simulate the sub-agent producing the artifact expected by
+                # the feature's "File exists: feature_X.txt" acceptance criterion.
+                suffix = feature.name.rsplit(" ", 1)[-1].lower()
+                (workspace / f"feature_{suffix}.txt").write_text("implemented")
 
                 mock_result = ExecutionResult(
                     text=f"{feature.name} implemented successfully.",
@@ -458,6 +460,13 @@ class TestE2ECostTracking:
             async def mock_spawn(*args, **kwargs):
                 nonlocal call_count
                 call_count += 1
+                # Simulate producing the artifact expected by the feature's
+                # "File exists: feature_X.txt" acceptance criterion.
+                target_id = kwargs.get("target_id")
+                if target_id is not None:
+                    feature = get_feature(target_id)
+                    suffix = feature.name.rsplit(" ", 1)[-1].lower()
+                    (workspace / f"feature_{suffix}.txt").write_text("implemented")
                 mock_result = ExecutionResult(
                     text=f"Feature {call_count} done.",
                     is_error=False,
@@ -539,6 +548,10 @@ class TestE2EEvidenceCreation:
             async def mock_spawn(*args, **kwargs):
                 target_id = kwargs.get("target_id")
                 feature = get_feature(target_id)
+                # Simulate producing the artifact expected by the feature's
+                # "File exists: feature_X.txt" acceptance criterion.
+                suffix = feature.name.rsplit(" ", 1)[-1].lower()
+                (workspace / f"feature_{suffix}.txt").write_text("implemented")
                 mock_result = ExecutionResult(
                     text=f"{feature.name} implemented successfully.",
                     is_error=False,

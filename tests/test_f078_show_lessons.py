@@ -65,7 +65,7 @@ class TestShowLessonsScopeFiltering:
     def test_global_scope_searches_all_lessons(self):
         """Global scope should search the entire lessons pool."""
         from bob3.cli import main
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         mock_result = MemoryResult(
             success=True,

@@ -7,6 +7,7 @@ planning features, running builds, and checking status.
 import logging
 import pathlib
 import re
+import sqlite3
 import uuid
 
 import click
@@ -17,7 +18,18 @@ from rich.table import Table
 from rich.text import Text
 
 from bob3 import __version__
-from bob3.db import compute_spec_hash, create_features_from_spec, get_connection, get_database_path, get_feature, init_database, list_calibration_alerts, list_features, query_active_regressions, query_calibration_drift_summary, query_evidence
+from bob3 import db as _db
+from bob3.db import compute_spec_hash, create_features_from_spec, get_connection, get_feature, init_database, list_calibration_alerts, list_features, query_active_regressions, query_calibration_drift_summary, query_evidence
+
+
+def get_database_path():
+    """Indirect accessor so that tests patching ``bob3.db.get_database_path`` work.
+
+    Using a module-level function import would bind the name at import time
+    and bypass any patches the tests apply. Routing through the module
+    ensures the patch is honored at call time.
+    """
+    return _db.get_database_path()
 from bob3.logging_config import setup_logging
 from bob3.mcp_lifecycle import MCPStartupError, start_mcp_server, stop_mcp_server
 from bob3.pdf_utils import extract_pdf_text
@@ -44,17 +56,17 @@ def init(project_path, name):
     """Initialize a new Bob3 project.
 
     Creates the project workspace directory, initializes the SQLite database
-    with the full schema, and inserts a project record. Starts the TITANS
-    Memory MCP server to verify it is available.
+    with the full schema, and inserts a project record. Starts the
+    bob3-memory MCP server to verify it is available.
 
     PROJECT_PATH is the path to the project workspace directory.
     """
     logger.info("Initializing project at %s", project_path)
 
-    # Start TITANS Memory MCP server (required for all operations)
+    # Start bob3-memory MCP server (required for all operations)
     try:
         start_mcp_server()
-        logger.info("TITANS Memory MCP server started")
+        logger.info("bob3-memory MCP server started")
     except MCPStartupError as exc:
         logger.error("Failed to start MCP server: %s", exc)
         raise SystemExit(1)
@@ -85,10 +97,19 @@ def init(project_path, name):
     finally:
         conn.close()
 
+    # Step 4: Install bob3 skills into the workspace so sub-agents can
+    # discover them via Claude Code's skill search.
+    from bob3.skills_installer import install_skills_to_workspace
+
+    installed_skills = install_skills_to_workspace(project_path)
+    logger.debug("Installed %d skills", len(installed_skills))
+
     logger.info("Project '%s' initialized at %s", project_name, project_path)
-    # Step 4: Display success message
+    # Step 5: Display success message
     click.echo(f"Project '{project_name}' initialized at {project_path}")
     click.echo(f"Database created: {db_path}")
+    if installed_skills:
+        click.echo(f"Installed {len(installed_skills)} bob3 skills for sub-agents")
 
 
 @main.command()
@@ -153,11 +174,16 @@ def plan(spec_file, create):
     spec_hash = compute_spec_hash(spec_path)
     logger.info("Spec hash computed: %s", spec_hash[:12])
 
-    # Update project record with spec hash if a project exists
+    # Update project record with spec hash if a project exists.
+    # Silently skip when no database or projects table exists — this lets
+    # `bob3 plan <spec>` work as a pure preview without requiring `bob3 init`.
     db_path = get_database_path()
     conn = get_connection(db_path=db_path)
     try:
-        row = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()
+        try:
+            row = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()
+        except sqlite3.OperationalError:
+            row = None
         if row:
             conn.execute(
                 "UPDATE projects SET spec_hash = ?, spec_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -234,9 +260,13 @@ def _run_orchestration_loop(
 
     from bob3.orchestrator.run_loop import LoopTermination, OrchestrationLoop
 
-    project = get_connection().execute(
-        "SELECT workspace_path FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
+    conn = get_connection()
+    try:
+        project = conn.execute(
+            "SELECT workspace_path FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+    finally:
+        conn.close()
     workspace = project[0] if project else ""
 
     loop = OrchestrationLoop(
@@ -268,23 +298,27 @@ def _run_orchestration_loop(
     "--no-mcp",
     is_flag=True,
     default=False,
-    help="Skip starting TITANS Memory MCP server (for environments without OPENAI_API_KEY).",
+    help="Skip starting the bob3-memory MCP server (for environments where embeddings are unavailable).",
 )
 def run(feature, run_all, max_cost, fresh, no_mcp):
     """Execute the build plan using Claude Code sub-agents.
 
     Spawns sub-agents to implement features and run tests.
-    Starts the TITANS Memory MCP server before any operations (unless --no-mcp).
+    Starts the bob3-memory MCP server before any operations (unless --no-mcp).
     Automatically resumes interrupted work unless --fresh is specified.
+
+    Note: --feature currently scopes the run to that feature's project but
+    the orchestration loop still picks any ready feature in that project.
+    Single-feature scoping is coming soon.
     """
     logger.info("Starting build run")
     console = Console()
 
-    # Start TITANS Memory MCP server (required for all operations)
+    # Start bob3-memory MCP server (required for all operations)
     if not no_mcp:
         try:
             start_mcp_server()
-            logger.info("TITANS Memory MCP server started")
+            logger.info("bob3-memory MCP server started")
         except MCPStartupError as exc:
             logger.error("Failed to start MCP server: %s", exc)
             raise SystemExit(1)
@@ -295,8 +329,17 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
         click.echo(f"Max cost: ${max_cost:.2f}")
 
     if feature:
-        logger.info("Running feature: %s", feature)
-        click.echo(f"Running feature: {feature}")
+        # NOTE: --feature currently scopes to the feature's project; the
+        # orchestration loop still picks any ready feature in that project.
+        # Single-feature scoping is tracked as follow-up work.
+        logger.info(
+            "Running in project containing feature %s (loop picks ready features)",
+            feature,
+        )
+        click.echo(
+            f"Running in project containing feature {feature} "
+            "(note: all ready features in this project may run)"
+        )
 
         # Get the project and feature
         db_path = get_database_path()
@@ -931,21 +974,21 @@ def show_feature(feature_id):
 
 
 def _fetch_lessons(scope: str | None = None) -> list[dict]:
-    """Fetch lessons from TITANS Memory.
+    """Fetch lessons from bob3 memory.
 
     Args:
         scope: "global" for all lessons, "project" for project-scoped lessons,
             or None (defaults to global).
 
     Returns:
-        A list of lesson dicts from TITANS Memory.
+        A list of lesson dicts from bob3-memory.
     """
     import asyncio
 
-    from bob3.titans_memory_client import TitansMemoryClient
+    from bob3.memory_client import BobMemoryClient
 
     workspace = str(pathlib.Path.cwd())
-    client = TitansMemoryClient(workspace=workspace)
+    client = BobMemoryClient(workspace=workspace)
 
     async def _search():
         result = await client.search_memory(
@@ -1003,9 +1046,9 @@ def _parse_lesson_content(content: str) -> dict[str, str]:
     help="Filter scope: 'global' for all lessons, 'project' for project-scoped lessons.",
 )
 def show_lessons_cmd(scope):
-    """Show lessons learned from TITANS Memory.
+    """Show lessons learned from bob3 memory.
 
-    Displays lessons stored in the TITANS Memory lessons pool,
+    Displays lessons stored in the bob3 memory lessons pool,
     including the lesson content, usefulness score, and times applied.
 
     Use --scope to filter: 'global' shows all lessons, 'project' shows

@@ -383,34 +383,54 @@ def handle_execution_result(
     feature: Feature,
     spawn_result: SpawnResult,
     shutdown_requested: bool = False,
+    verification_passed: bool = True,
+    verification_summary: str | None = None,
 ) -> dict[str, Any]:
     """Handle the result of executing a feature sub-agent.
 
     Performs all post-execution bookkeeping:
     1. Parses the execution result (success/failure)
-    2. Updates the feature status (completed/failed/interrupted)
+    2. Updates the feature status (completed/failed/interrupted/needs_human)
     3. Creates evidence artifacts from the execution output
-    4. Updates project-level cost tracking
+    4. Updates project-level cost tracking (atomically, with budget enforcement)
+
+    A feature is only marked 'completed' and dependents cascaded to 'ready'
+    when BOTH the sub-agent succeeded AND verification passed. If the
+    sub-agent succeeded but verification failed, the feature is marked
+    'needs_human' and no cascade is performed.
 
     Args:
         project_id: The project ID.
         feature: The feature that was executed.
         spawn_result: The SpawnResult from the sub-agent.
         shutdown_requested: If True, errors result in 'interrupted' status.
+        verification_passed: If False and the sub-agent succeeded, the
+            feature is marked 'needs_human' and no cascade is performed.
+        verification_summary: Optional human-readable summary of the
+            verification result (recorded in the evidence payload).
 
     Returns:
         Dict with keys: success, cost_usd, duration_ms, error_message,
-        evidence_id.
+        evidence_id, verification_passed.
     """
     result = spawn_result.execution_result
     agent_run_id = getattr(spawn_result.agent_run, "id", None)
 
+    # Success is only "true success" when execution succeeded AND verification
+    # passed; a verification failure on a successful sub-agent run should NOT
+    # be reported as success (callers rely on this to avoid cascading).
+    is_success = (not result.is_error) and verification_passed
+
     outcome: dict[str, Any] = {
-        "success": not result.is_error,
+        "success": is_success,
         "cost_usd": result.total_cost_usd,
         "duration_ms": result.duration_ms,
-        "error_message": result.error_message if result.is_error else None,
+        "error_message": result.error_message if result.is_error else (
+            f"Verification failed: {verification_summary}"
+            if not verification_passed else None
+        ),
         "evidence_id": None,
+        "verification_passed": verification_passed,
     }
 
     # Step 2: Update feature status
@@ -419,6 +439,11 @@ def handle_execution_result(
             db.update_feature(feature.id, status="interrupted")
         else:
             db.update_feature(feature.id, status="failed")
+    elif not verification_passed:
+        # Sub-agent reported success but verification failed — do NOT mark
+        # as completed and do NOT cascade dependents. This prevents
+        # downstream features from being unlocked on unverified work.
+        db.update_feature(feature.id, status="needs_human")
     else:
         db.update_feature(feature.id, status="completed")
 
@@ -445,6 +470,17 @@ def handle_execution_result(
         evidence_content = json.dumps({
             "status": "interrupted" if shutdown_requested else "failed",
             "error_message": result.error_message,
+            "output_text": result.text[:2000] if result.text else "",
+            "duration_ms": result.duration_ms,
+            "num_turns": result.num_turns,
+            "cost_usd": result.total_cost_usd,
+            "agent_run_id": agent_run_id,
+        })
+    elif not verification_passed:
+        evidence_type = "execution_error"
+        evidence_content = json.dumps({
+            "status": "needs_human",
+            "error_message": f"Verification failed: {verification_summary}",
             "output_text": result.text[:2000] if result.text else "",
             "duration_ms": result.duration_ms,
             "num_turns": result.num_turns,
@@ -478,12 +514,12 @@ def handle_execution_result(
             exc_info=True,
         )
 
-    # Step 4: Update project cost tracking
+    # Step 4: Update project cost tracking atomically (also enforces budget)
     if result.total_cost_usd is not None:
-        project = db.get_project(project_id)
-        if project is not None:
-            new_total = project.total_cost_usd + result.total_cost_usd
-            db.update_project(project_id, total_cost_usd=new_total)
+        db.update_project_cost(
+            project_id=project_id,
+            cost_usd=result.total_cost_usd,
+        )
 
     return outcome
 
@@ -609,10 +645,10 @@ class OrchestrationLoop:
         research_exec = research_result.execution_result
         if research_exec.total_cost_usd is not None:
             self.total_cost += research_exec.total_cost_usd
-            project = db.get_project(self.project_id)
-            if project is not None:
-                new_total = project.total_cost_usd + research_exec.total_cost_usd
-                db.update_project(self.project_id, total_cost_usd=new_total)
+            db.update_project_cost(
+                project_id=self.project_id,
+                cost_usd=research_exec.total_cost_usd,
+            )
 
         # Store research results in DB (even if research failed, record the attempt)
         findings = research_exec.text if not research_exec.is_error else None
@@ -807,14 +843,76 @@ class OrchestrationLoop:
             options=options,
         )
 
-        # F070: Handle execution result (status, evidence, cost)
+        # F113: Run verification BEFORE marking the feature completed so
+        # that a verification failure does NOT cascade 'ready' status to
+        # dependent features. Verification only runs when the sub-agent
+        # didn't itself error.
         result = spawn_result.execution_result
+        verification_passed: bool = True
+        verification_summary: str | None = None
+        verification_result: dict | None = None
+
+        if not result.is_error and self.workspace:
+            try:
+                verification_result = run_verification_checklist(
+                    workspace=self.workspace,
+                    acceptance_criteria=feature.acceptance_criteria,
+                    feature_description=feature.description,
+                )
+                verification_passed = bool(verification_result.get("passed", True))
+                verification_summary = verification_result.get("summary")
+                if verification_passed:
+                    logger.info(
+                        "Feature %s passed verification checklist", feature.id
+                    )
+                else:
+                    logger.warning(
+                        "Feature %s failed verification checklist: %s",
+                        feature.id,
+                        verification_summary,
+                    )
+                    logger.error(
+                        "Feature %s will be marked needs_human due to failed verification",
+                        feature.id,
+                    )
+            except Exception:
+                logger.debug(
+                    "Verification checklist failed for feature %s",
+                    feature.id,
+                    exc_info=True,
+                )
+                # If verification itself errors out, treat as pass so we
+                # don't block features on internal verification bugs.
+                verification_passed = True
+
+        # F070: Handle execution result (status, evidence, cost).
+        # When verification_passed=False and the sub-agent succeeded,
+        # handle_execution_result marks the feature 'needs_human' and
+        # skips the dependent cascade.
         outcome = handle_execution_result(
             project_id=self.project_id,
             feature=feature,
             spawn_result=spawn_result,
             shutdown_requested=self.shutdown_requested,
+            verification_passed=verification_passed,
+            verification_summary=verification_summary,
         )
+
+        # Store verification_checklist evidence only when verification
+        # actually ran (i.e. sub-agent succeeded and workspace is set).
+        if verification_result is not None:
+            try:
+                db.create_evidence(
+                    project_id=self.project_id,
+                    feature_id=feature.id,
+                    type="verification_checklist",
+                    content=json.dumps(verification_result),
+                )
+            except Exception:
+                logger.debug(
+                    "Could not store verification evidence for feature %s",
+                    feature.id,
+                )
 
         # Update loop-level counters
         if result.is_error:
@@ -848,64 +946,19 @@ class OrchestrationLoop:
                         updated_feature.max_refinement_attempts if updated_feature else "?",
                         result.error_message,
                     )
+        elif not verification_passed:
+            # Sub-agent succeeded but verification failed. Do NOT commit,
+            # do NOT cascade, do NOT count as completed.
+            self.features_failed += 1
+            logger.error(
+                "Feature %s failed verification: %s",
+                feature.id,
+                verification_summary,
+            )
         else:
-            # F113: Run verification-before-completion checklist
-            if self.workspace:
-                try:
-                    verification = run_verification_checklist(
-                        workspace=self.workspace,
-                        acceptance_criteria=feature.acceptance_criteria,
-                        feature_description=feature.description,
-                    )
-                    if verification["passed"]:
-                        logger.info(
-                            "Feature %s passed verification checklist", feature.id
-                        )
-                    else:
-                        logger.warning(
-                            "Feature %s failed verification checklist: %s",
-                            feature.id,
-                            verification["summary"],
-                        )
-                        # Mark feature as needs_human when verification fails
-                        db.update_feature(
-                            feature_id=feature.id,
-                            status="needs_human",
-                        )
-                        logger.error(
-                            "Feature %s marked as needs_human due to failed verification",
-                            feature.id,
-                        )
-                        # Set result to error so feature isn't marked complete
-                        result = SubAgentResult(
-                            is_error=True,
-                            error_message=f"Verification failed: {verification['summary']}",
-                            duration_ms=int((time.time() - start_time) * 1000),
-                            num_turns=0,
-                        )
-                    # Store verification result as evidence
-                    try:
-                        db.create_evidence(
-                            project_id=self.project_id,
-                            feature_id=feature.id,
-                            type="verification_checklist",
-                            content=json.dumps(verification),
-                        )
-                    except Exception:
-                        logger.debug(
-                            "Could not store verification evidence for feature %s",
-                            feature.id,
-                        )
-                except Exception:
-                    logger.debug(
-                        "Verification checklist failed for feature %s",
-                        feature.id,
-                        exc_info=True,
-                    )
-
-            # F114: Commit feature changes to git (only if verification passed)
+            # F114: Commit feature changes to git (only once verification passed)
             commit_sha: str | None = None
-            if self.workspace and not result.is_error:
+            if self.workspace:
                 try:
                     commit_sha = git_commit_feature(
                         feature_id=feature.id,
@@ -919,32 +972,36 @@ class OrchestrationLoop:
                         exc_info=True,
                     )
 
-            # Only increment completed count and log success if not an error
-            if not result.is_error:
-                self.features_completed += 1
-                logger.info("Feature %s completed successfully", feature.id)
-            else:
-                logger.error("Feature %s failed: %s", feature.id, result.error_message)
+            self.features_completed += 1
+            logger.info("Feature %s completed successfully", feature.id)
 
-        # Track loop-level cost
+        # Track loop-level cost (always — even on failure we paid for the tokens)
         if result.total_cost_usd is not None:
             self.total_cost += result.total_cost_usd
 
         # F108: Update progress notes after each sub-agent session
         if self.workspace:
             try:
-                outcome = "completed" if not result.is_error else (
-                    "interrupted" if self.shutdown_requested else "failed"
-                )
+                if result.is_error:
+                    progress_outcome = (
+                        "interrupted" if self.shutdown_requested else "failed"
+                    )
+                    blockers = result.error_message
+                elif not verification_passed:
+                    progress_outcome = "failed"
+                    blockers = f"Verification failed: {verification_summary}"
+                else:
+                    progress_outcome = "completed"
+                    blockers = None
                 update_progress_notes(
                     workspace=self.workspace,
                     feature_id=feature.id,
                     feature_name=feature.name,
-                    outcome=outcome,
+                    outcome=progress_outcome,
                     duration_ms=result.duration_ms,
                     num_turns=result.num_turns,
                     cost_usd=result.total_cost_usd,
-                    blockers=result.error_message if result.is_error else None,
+                    blockers=blockers,
                 )
             except Exception:
                 logger.debug(
@@ -956,8 +1013,11 @@ class OrchestrationLoop:
         # Clear current feature tracking
         self._current_feature = None
 
-        # Cascade update dependents
-        if not result.is_error:
+        # Cascade update dependents — only when the feature truly succeeded
+        # (sub-agent succeeded AND verification passed). This is the second
+        # cascade (F123 layer); note handle_execution_result already ran
+        # update_dependent_features_readiness in the success path.
+        if not result.is_error and verification_passed:
             cascade_update_dependents(feature.id)
 
         return spawn_result

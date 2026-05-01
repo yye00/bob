@@ -515,12 +515,16 @@ class ScopeChange(BaseModel):
 
 
 # ============================================================
-# TITANS FORGETTING AUDIT
+# MEMORY FORGETTING AUDIT
 # ============================================================
 
 
 class ForgettingEvent(BaseModel):
-    """Audit log for TITANS Memory forgetting actions."""
+    """Audit log for bob3 memory forgetting actions.
+
+    Note: table/column names retain the legacy 'titans' prefix from the
+    pre-bob3-memory schema; only docs/labels have been updated.
+    """
 
     id: str
     project_id: str | None = None

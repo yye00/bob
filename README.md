@@ -6,7 +6,7 @@ Bob3 reads a spec describing the project you want built, decomposes it into feat
 
 ## What makes it different
 
-- **MCP plugin integration** — Sub-agents can use Perplexity (web research), Puppeteer (browser automation), and TITANS Memory (surprise-based persistent learning).
+- **MCP plugin integration** — Sub-agents can use Perplexity (web research), Puppeteer (browser automation), and Bob3 Memory (local semantic memory backed by mem0ai + Ollama + Qdrant).
 - **Semantic verification** — Completed features are checked against acceptance criteria with stub/mock detection, not just "did tests pass."
 - **Research fallback** — Stuck features automatically trigger a research agent that queries the web before another implementation attempt.
 - **Feature decomposition** — Oversized features are split into sub-features on demand.
@@ -17,7 +17,8 @@ Bob3 reads a spec describing the project you want built, decomposes it into feat
 
 - Python >= 3.11
 - An active Claude Code Max Pro subscription (or `ANTHROPIC_API_KEY`)
-- [TITANS Memory MCP server](https://github.com/your-org/titans-memory) installed at `/home/captain/work/AI/titans-memory` (adjust path in `src/bob3/orchestrator/mcp_config.py` if installed elsewhere)
+
+Bob3 Memory is fully local and in-process: it uses [FastEmbed](https://github.com/qdrant/fastembed) (ONNX, CPU) for text embeddings and [Qdrant](https://qdrant.tech/) on-disk for the vector store. The default embedding model (`BAAI/bge-small-en-v1.5`, ~90 MB) downloads automatically on first use. No external embedding API, no background daemon, no `OPENAI_API_KEY` required.
 
 ## Installation
 
@@ -38,14 +39,14 @@ bob3 --help
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `OPENAI_API_KEY` | Yes | Embeddings for TITANS Memory MCP |
+| `BOB3_EMBEDDER_MODEL` | No | Override the FastEmbed model (default: `BAAI/bge-small-en-v1.5`) |
+| `BOB3_MEMORY_DIR` | No | Override the on-disk path where Qdrant stores the bob3 memory collection (default: `~/.local/share/bob3`) |
 | `PERPLEXITY_API_KEY` | No | Enables the Perplexity research MCP |
 | `ANTHROPIC_API_KEY` | No | Only needed if not using Claude Code Max Pro |
 
-Add to your shell profile:
+Add to your shell profile if needed:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
 export PERPLEXITY_API_KEY="pplx-..."  # optional
 ```
 
@@ -117,6 +118,10 @@ bob3 show-calibration
 bob3 show-regressions
 ```
 
+## Usage
+
+See the Quickstart above for a full walkthrough and the Commands section below for the complete reference.
+
 ## Commands
 
 | Command | Purpose |
@@ -130,7 +135,7 @@ bob3 show-regressions
 | `bob3 list-features` | List all features with their status |
 | `bob3 show-feature <id>` | Detailed view of one feature |
 | `bob3 show-evidence <id>` | Evidence artifacts for a feature |
-| `bob3 show-lessons` | Lessons stored in TITANS Memory |
+| `bob3 show-lessons` | Lessons stored in Bob3 Memory |
 | `bob3 show-calibration` | Confidence calibration drift |
 | `bob3 show-regressions` | Active regression events |
 
@@ -191,7 +196,9 @@ src/bob3/
 ├── mcp_lifecycle.py                # MCP server start/stop
 ├── orientation.py                  # Sub-agent orientation protocol
 ├── pdf_utils.py                    # PDF extraction
-├── titans_memory_client.py         # TITANS Memory client
+├── memory.py                       # Bob3 Memory backend (mem0 + Ollama + Qdrant)
+├── memory_client.py                # Async in-process memory client
+├── memory_mcp.py                   # Memory MCP server for sub-agents
 ├── superpowers.py                  # Verification checklist + TDD detection
 ├── enhanced_verification.py        # Acceptance criteria validation
 ├── ast_checks.py                   # Stub/mock detection
@@ -225,7 +232,7 @@ bob3 plan --create   ─▶   features table (SQLite)
    MCP tools:         feature work:
    - Perplexity       - write code
    - Puppeteer        - write tests
-   - TITANS Memory    - run tests
+   - Bob3 Memory      - run tests
                  │
                  ▼
    verify acceptance criteria
@@ -242,7 +249,7 @@ bob3 plan --create   ─▶   features table (SQLite)
 
 - **Claude Code SDK only** — All Claude interactions go through `claude-code-sdk`. No subprocess CLI calls, no direct `anthropic` SDK usage.
 - **SQLite for state** — Project state (features, tasks, evidence, agent runs, costs) lives in `bob3.db`.
-- **TITANS Memory for knowledge** — Lessons, facts, and cross-session context live in the TITANS MCP, not the local DB.
+- **Bob3 Memory for knowledge** — Lessons, facts, and cross-session context live in the local Qdrant store (via mem0ai + Ollama), not the local DB.
 - **Feature-level git commits** — Each completed feature gets its own commit for easy rollback.
 - **Graceful shutdown** — SIGINT/SIGTERM checkpoints state so `bob3 run` resumes cleanly.
 

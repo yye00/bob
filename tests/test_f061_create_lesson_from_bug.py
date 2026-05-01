@@ -104,7 +104,7 @@ class TestCreateLessonFromBugExists:
     """Step 1: create_lesson_from_bug() must exist on TitansMemoryClient."""
 
     def test_method_exists(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         assert hasattr(client, "create_lesson_from_bug")
@@ -113,14 +113,14 @@ class TestCreateLessonFromBugExists:
     def test_method_is_async(self):
         import inspect
 
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         assert inspect.iscoroutinefunction(client.create_lesson_from_bug)
 
     @pytest.mark.asyncio
     async def test_accepts_bug_id_parameter(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
 
@@ -138,7 +138,7 @@ class TestCreateLessonFromBugExists:
 
     @pytest.mark.asyncio
     async def test_returns_memory_result(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
 
@@ -165,7 +165,7 @@ class TestExtractTriggerContext:
 
     @pytest.mark.asyncio
     async def test_trigger_includes_error_type(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -186,7 +186,7 @@ class TestExtractTriggerContext:
 
     @pytest.mark.asyncio
     async def test_trigger_includes_error_message(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -207,7 +207,7 @@ class TestExtractTriggerContext:
 
     @pytest.mark.asyncio
     async def test_trigger_includes_error_context_when_present(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -229,7 +229,7 @@ class TestExtractTriggerContext:
     @pytest.mark.asyncio
     async def test_trigger_without_error_context(self, project):
         """When error_context is None, trigger still works from error_type + message."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         bug = db.create_bug(
             project_id=project.id,
@@ -270,7 +270,7 @@ class TestLessonFormat:
 
     @pytest.mark.asyncio
     async def test_content_has_trigger_section(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -291,7 +291,7 @@ class TestLessonFormat:
 
     @pytest.mark.asyncio
     async def test_content_has_lesson_section(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -312,7 +312,7 @@ class TestLessonFormat:
 
     @pytest.mark.asyncio
     async def test_content_has_solution_section(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -334,7 +334,7 @@ class TestLessonFormat:
     @pytest.mark.asyncio
     async def test_lesson_includes_root_cause(self, resolved_bug):
         """The LESSON section should include the root_cause from the bug."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -356,7 +356,7 @@ class TestLessonFormat:
     @pytest.mark.asyncio
     async def test_solution_includes_fix_action(self, resolved_bug):
         """The SOLUTION section should include the fix_action."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -378,7 +378,7 @@ class TestLessonFormat:
     @pytest.mark.asyncio
     async def test_content_sections_on_separate_lines(self, resolved_bug):
         """Each section should be on a separate line."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -412,7 +412,7 @@ class TestTitansAddCall:
 
     @pytest.mark.asyncio
     async def test_pool_is_lessons(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -432,7 +432,7 @@ class TestTitansAddCall:
 
     @pytest.mark.asyncio
     async def test_metadata_includes_bug_id(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -454,7 +454,7 @@ class TestTitansAddCall:
 
     @pytest.mark.asyncio
     async def test_metadata_includes_feature_id(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -476,7 +476,7 @@ class TestTitansAddCall:
 
     @pytest.mark.asyncio
     async def test_metadata_includes_error_type(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         add_memory_calls = []
@@ -499,7 +499,7 @@ class TestTitansAddCall:
     @pytest.mark.asyncio
     async def test_metadata_without_feature_id(self, project):
         """When bug has no feature_id, metadata should not include it."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         bug = db.create_bug(
             project_id=project.id,
@@ -541,7 +541,7 @@ class TestStoreMemoryIdInBugLedger:
 
     @pytest.mark.asyncio
     async def test_titans_memory_id_stored_on_success(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
 
@@ -561,7 +561,7 @@ class TestStoreMemoryIdInBugLedger:
 
     @pytest.mark.asyncio
     async def test_titans_memory_id_not_stored_on_failure(self, resolved_bug):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
 
@@ -582,7 +582,7 @@ class TestStoreMemoryIdInBugLedger:
     @pytest.mark.asyncio
     async def test_extracts_memory_id_from_dict_data(self, resolved_bug):
         """When data is a dict with 'id' key, extract memory_id from it."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
 
@@ -601,7 +601,7 @@ class TestStoreMemoryIdInBugLedger:
 
     @pytest.mark.asyncio
     async def test_bug_not_found_returns_error(self):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         result = await client.create_lesson_from_bug(bug_id="nonexistent-bug-id")
@@ -621,7 +621,7 @@ class TestFullIntegration:
     @pytest.mark.asyncio
     async def test_full_lifecycle(self, project, feature, task):
         """Create bug -> resolve -> create lesson -> verify lesson content + DB update."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         # Create and resolve a bug
         bug = db.create_bug(
@@ -685,7 +685,7 @@ class TestFullIntegration:
     @pytest.mark.asyncio
     async def test_lesson_from_bug_without_root_cause(self, project):
         """Lesson creation works even without a root_cause."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         bug = db.create_bug(
             project_id=project.id,
@@ -719,7 +719,7 @@ class TestFullIntegration:
     @pytest.mark.asyncio
     async def test_lesson_failure_does_not_corrupt_bug(self, resolved_bug):
         """If TITANS fails, the bug record remains unchanged."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         original_bug = db.get_bug(resolved_bug.id)
         assert original_bug.titans_memory_id is None

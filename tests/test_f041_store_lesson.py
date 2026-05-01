@@ -1,7 +1,7 @@
-"""Tests for F041: Implement lesson storage in TITANS memory.
+"""Tests for F041: Lesson storage in Bob3 memory (formerly TITANS).
 
 Validates that the store_lesson() function:
-- Step 1: Add store_lesson() function using titans_add
+- Step 1: Add store_lesson() function using the memory backend
 - Step 2: Format: trigger_context + lesson + solution
 - Step 3: Route to 'lessons' pool explicitly
 - Step 4: Include metadata: feature_id, error_type, fix_action
@@ -13,35 +13,79 @@ from unittest.mock import patch
 import pytest
 
 
+class _StubBackend:
+    """Minimal stub BobMemory backend for store_lesson tests."""
+
+    def __init__(self):
+        self.add_calls = []
+        self.search_calls = []
+        self.search_results: list = []
+
+    def add(self, content, *, pool=None, metadata=None):
+        self.add_calls.append(
+            {"content": content, "pool": pool, "metadata": metadata}
+        )
+        return {
+            "id": f"stub-{len(self.add_calls)}",
+            "content": content,
+            "pool": pool or "facts",
+            "metadata": metadata or {},
+        }
+
+    def search(self, query, *, pool=None, limit=10, include_archived=False):
+        self.search_calls.append(
+            {"query": query, "pool": pool, "limit": limit}
+        )
+        return list(self.search_results)
+
+    def record_feedback(self, memory_id, success):
+        return True
+
+    def get(self, memory_id):
+        return None
+
+    def get_stats(self):
+        return {"total": 0, "pools": {}, "statuses": {}}
+
+    def archive(self, memory_id):
+        return True
+
+    def demote(self, memory_id):
+        return True
+
+    def get_demotion_candidates(self, **kwargs):
+        return []
+
+
 # ===================================================================
-# Step 1: store_lesson() function exists and uses titans_add
+# Step 1: store_lesson() function exists
 # ===================================================================
 
 
 class TestStoreLessonExists:
-    """Step 1: store_lesson() must exist on TitansMemoryClient and use titans_add."""
+    """Step 1: store_lesson() must exist on BobMemoryClient."""
 
     def test_store_lesson_method_exists(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient
 
-        client = TitansMemoryClient(workspace="/tmp/test")
+        client = BobMemoryClient(workspace="/tmp/test", backend=_StubBackend())
         assert hasattr(client, "store_lesson")
         assert callable(client.store_lesson)
 
     def test_store_lesson_is_async(self):
         import inspect
 
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient
 
-        client = TitansMemoryClient(workspace="/tmp/test")
+        client = BobMemoryClient(workspace="/tmp/test", backend=_StubBackend())
         assert inspect.iscoroutinefunction(client.store_lesson)
 
     @pytest.mark.asyncio
     async def test_store_lesson_delegates_to_add_memory(self):
         """store_lesson() should internally call add_memory() with pool='lessons'."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient, MemoryResult
 
-        client = TitansMemoryClient(workspace="/tmp/test")
+        client = BobMemoryClient(workspace="/tmp/test", backend=_StubBackend())
 
         add_memory_calls = []
 
@@ -52,7 +96,6 @@ class TestStoreLessonExists:
             return MemoryResult(
                 success=True,
                 data={"id": "mem-lesson-1", "content": content},
-                raw_text="{}",
             )
 
         with patch.object(client, "add_memory", side_effect=capture_add_memory):
@@ -66,36 +109,21 @@ class TestStoreLessonExists:
         assert len(add_memory_calls) == 1
 
     @pytest.mark.asyncio
-    async def test_store_lesson_uses_titans_add_tool(self):
-        """store_lesson() must ultimately call titans_add via the sub-agent."""
-        from bob3.titans_memory_client import (
-            TOOL_TITANS_ADD,
-            MemoryResult,
-            TitansMemoryClient,
+    async def test_store_lesson_hits_backend_add(self):
+        """store_lesson() must ultimately call the backend's add()."""
+        from bob3.memory_client import BobMemoryClient
+
+        backend = _StubBackend()
+        client = BobMemoryClient(workspace="/tmp/test", backend=backend)
+
+        await client.store_lesson(
+            trigger_context="Some trigger",
+            lesson="Some lesson",
+            solution="Some solution",
         )
 
-        client = TitansMemoryClient(workspace="/tmp/test")
-        prompts_seen = []
-
-        async def capture_prompt(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(
-                success=True,
-                data={"id": "mem-lesson-1"},
-                raw_text="{}",
-            )
-
-        with patch.object(
-            client, "_execute_tool_prompt", side_effect=capture_prompt
-        ):
-            await client.store_lesson(
-                trigger_context="Some trigger",
-                lesson="Some lesson",
-                solution="Some solution",
-            )
-
-        assert len(prompts_seen) == 1
-        assert TOOL_TITANS_ADD in prompts_seen[0]
+        assert len(backend.add_calls) == 1
+        assert backend.add_calls[0]["pool"] == "lessons"
 
 
 # ===================================================================
@@ -108,19 +136,19 @@ class TestStoreLessonFormat:
 
     @pytest.fixture
     def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient
 
-        return TitansMemoryClient(workspace="/tmp/test")
+        return BobMemoryClient(workspace="/tmp/test", backend=_StubBackend())
 
     @pytest.mark.asyncio
     async def test_content_contains_trigger(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append(content)
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -135,13 +163,13 @@ class TestStoreLessonFormat:
 
     @pytest.mark.asyncio
     async def test_content_contains_lesson(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append(content)
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -156,13 +184,13 @@ class TestStoreLessonFormat:
 
     @pytest.mark.asyncio
     async def test_content_contains_solution(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append(content)
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -178,13 +206,13 @@ class TestStoreLessonFormat:
     @pytest.mark.asyncio
     async def test_content_format_is_structured(self, client):
         """Content should have all three parts in structured format."""
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append(content)
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -194,7 +222,6 @@ class TestStoreLessonFormat:
             )
 
         content = add_memory_calls[0]
-        # All three sections must be present
         assert "TRIGGER: SQLite lock timeout" in content
         assert "LESSON: Use WAL mode for concurrent access" in content
         assert "SOLUTION: Enable WAL mode in connection setup" in content
@@ -202,13 +229,13 @@ class TestStoreLessonFormat:
     @pytest.mark.asyncio
     async def test_content_parts_are_separated(self, client):
         """Each part should be on a separate line."""
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append(content)
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -234,52 +261,32 @@ class TestStoreLessonPool:
     """Step 3: store_lesson() must explicitly route to the 'lessons' pool."""
 
     @pytest.fixture
-    def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+    def client_with_backend(self):
+        from bob3.memory_client import BobMemoryClient
 
-        return TitansMemoryClient(workspace="/tmp/test")
-
-    @pytest.mark.asyncio
-    async def test_add_memory_called_with_lessons_pool(self, client):
-        from bob3.titans_memory_client import MemoryResult
-
-        add_memory_calls = []
-
-        async def capture(content, pool=None, metadata=None):
-            add_memory_calls.append({"content": content, "pool": pool})
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
-
-        with patch.object(client, "add_memory", side_effect=capture):
-            await client.store_lesson(
-                trigger_context="T",
-                lesson="L",
-                solution="S",
-            )
-
-        assert add_memory_calls[0]["pool"] == "lessons"
+        backend = _StubBackend()
+        return BobMemoryClient(workspace="/tmp/test", backend=backend), backend
 
     @pytest.mark.asyncio
-    async def test_prompt_contains_lessons_pool(self, client):
-        """The prompt sent to the sub-agent must specify the 'lessons' pool."""
-        from bob3.titans_memory_client import MemoryResult
+    async def test_add_memory_called_with_lessons_pool(self, client_with_backend):
+        client, backend = client_with_backend
+        await client.store_lesson(
+            trigger_context="T",
+            lesson="L",
+            solution="S",
+        )
+        assert backend.add_calls[0]["pool"] == "lessons"
 
-        prompts_seen = []
-
-        async def capture_prompt(prompt):
-            prompts_seen.append(prompt)
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
-
-        with patch.object(
-            client, "_execute_tool_prompt", side_effect=capture_prompt
-        ):
-            await client.store_lesson(
-                trigger_context="T",
-                lesson="L",
-                solution="S",
-            )
-
-        assert len(prompts_seen) == 1
-        assert "lessons" in prompts_seen[0]
+    @pytest.mark.asyncio
+    async def test_backend_add_receives_lessons_pool(self, client_with_backend):
+        """The backend.add() must be called with pool='lessons'."""
+        client, backend = client_with_backend
+        await client.store_lesson(
+            trigger_context="T",
+            lesson="L",
+            solution="S",
+        )
+        assert backend.add_calls[0]["pool"] == "lessons"
 
 
 # ===================================================================
@@ -292,19 +299,19 @@ class TestStoreLessonMetadata:
 
     @pytest.fixture
     def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient
 
-        return TitansMemoryClient(workspace="/tmp/test")
+        return BobMemoryClient(workspace="/tmp/test", backend=_StubBackend())
 
     @pytest.mark.asyncio
     async def test_metadata_includes_feature_id(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append({"metadata": metadata})
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -320,13 +327,13 @@ class TestStoreLessonMetadata:
 
     @pytest.mark.asyncio
     async def test_metadata_includes_error_type(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append({"metadata": metadata})
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -342,13 +349,13 @@ class TestStoreLessonMetadata:
 
     @pytest.mark.asyncio
     async def test_metadata_includes_fix_action(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append({"metadata": metadata})
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -364,13 +371,13 @@ class TestStoreLessonMetadata:
 
     @pytest.mark.asyncio
     async def test_all_metadata_fields_together(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append({"metadata": metadata})
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -391,13 +398,13 @@ class TestStoreLessonMetadata:
     @pytest.mark.asyncio
     async def test_no_metadata_when_none_provided(self, client):
         """When no optional metadata is given, metadata should be None."""
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append({"metadata": metadata})
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -411,13 +418,13 @@ class TestStoreLessonMetadata:
     @pytest.mark.asyncio
     async def test_partial_metadata(self, client):
         """Only provided metadata fields should be included."""
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         add_memory_calls = []
 
         async def capture(content, pool=None, metadata=None):
             add_memory_calls.append({"metadata": metadata})
-            return MemoryResult(success=True, data={"id": "m1"}, raw_text="{}")
+            return MemoryResult(success=True, data={"id": "m1"})
 
         with patch.object(client, "add_memory", side_effect=capture):
             await client.store_lesson(
@@ -425,7 +432,6 @@ class TestStoreLessonMetadata:
                 lesson="L",
                 solution="S",
                 feature_id="F041",
-                # error_type and fix_action not provided
             )
 
         meta = add_memory_calls[0]["metadata"]
@@ -446,120 +452,92 @@ class TestStoreLessonFullCycle:
     @pytest.mark.asyncio
     async def test_store_and_search_lesson_cycle(self):
         """Store a lesson and then search for it in the lessons pool."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient
 
-        client = TitansMemoryClient(workspace="/tmp/test")
-        call_sequence = []
+        backend = _StubBackend()
+        client = BobMemoryClient(workspace="/tmp/test", backend=backend)
 
-        async def track_calls(prompt):
-            call_sequence.append(prompt)
-            if "titans_add" in prompt:
-                return MemoryResult(
-                    success=True,
-                    data={
-                        "id": "mem-lesson-42",
-                        "content": "TRIGGER: ...\nLESSON: ...\nSOLUTION: ...",
-                        "metadata": {"pool": "lessons", "feature_id": "F041"},
-                    },
-                    raw_text="{}",
-                )
-            elif "titans_search" in prompt:
-                return MemoryResult(
-                    success=True,
-                    data=[
-                        {
-                            "id": "mem-lesson-42",
-                            "content": "TRIGGER: DB lock\nLESSON: Use WAL\nSOLUTION: Enable WAL",
-                            "metadata": {"pool": "lessons", "feature_id": "F041"},
-                            "retrieval_weight": 0.9,
-                        }
-                    ],
-                    raw_text="[]",
-                )
-            return MemoryResult(success=False, error="unexpected")
+        # Store a lesson
+        store_result = await client.store_lesson(
+            trigger_context="DB lock timeout during concurrent writes",
+            lesson="Use WAL mode for concurrent access",
+            solution="Enable WAL mode in connection setup",
+            feature_id="F041",
+            error_type="OperationalError",
+            fix_action="Set journal_mode=WAL",
+        )
+        assert store_result.success is True
+        stored_id = store_result.data["id"]
 
-        with patch.object(
-            client, "_execute_tool_prompt", side_effect=track_calls
-        ):
-            # Store a lesson
-            store_result = await client.store_lesson(
-                trigger_context="DB lock timeout during concurrent writes",
-                lesson="Use WAL mode for concurrent access",
-                solution="Enable WAL mode in connection setup",
-                feature_id="F041",
-                error_type="OperationalError",
-                fix_action="Set journal_mode=WAL",
-            )
-            assert store_result.success is True
-            assert store_result.data["id"] == "mem-lesson-42"
+        # The backend should now "return" this memory on search
+        backend.search_results = [
+            {
+                "id": stored_id,
+                "content": (
+                    "TRIGGER: DB lock timeout during concurrent writes\n"
+                    "LESSON: Use WAL mode for concurrent access\n"
+                    "SOLUTION: Enable WAL mode in connection setup"
+                ),
+                "pool": "lessons",
+                "score": 0.9,
+                "metadata": {
+                    "pool": "lessons",
+                    "feature_id": "F041",
+                },
+            }
+        ]
 
-            # Search for the lesson in the lessons pool
-            search_result = await client.search_memory(
-                query="DB lock WAL mode",
-                pool="lessons",
-            )
-            assert search_result.success is True
-            assert isinstance(search_result.data, list)
-            assert len(search_result.data) >= 1
-            assert search_result.data[0]["id"] == "mem-lesson-42"
-            assert search_result.data[0]["metadata"]["pool"] == "lessons"
+        # Search for the lesson in the lessons pool
+        search_result = await client.search_memory(
+            query="DB lock WAL mode",
+            pool="lessons",
+        )
+        assert search_result.success is True
+        assert isinstance(search_result.data, list)
+        assert len(search_result.data) >= 1
+        assert search_result.data[0]["id"] == stored_id
+        assert search_result.data[0]["metadata"]["pool"] == "lessons"
 
-        # Verify both calls went through
-        assert len(call_sequence) == 2
-        # First call should be titans_add (from store_lesson)
-        assert "titans_add" in call_sequence[0]
-        assert "lessons" in call_sequence[0]  # pool must be specified
-        # Second call should be titans_search_pool (search with pool filter)
-        assert "titans_search" in call_sequence[1]
-        assert "lessons" in call_sequence[1]
+        # Verify backend saw both operations
+        assert len(backend.add_calls) == 1
+        assert backend.add_calls[0]["pool"] == "lessons"
+        assert len(backend.search_calls) == 1
+        assert backend.search_calls[0]["pool"] == "lessons"
 
     @pytest.mark.asyncio
     async def test_store_lesson_returns_memory_result(self):
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient, MemoryResult
 
-        client = TitansMemoryClient(workspace="/tmp/test")
+        client = BobMemoryClient(workspace="/tmp/test", backend=_StubBackend())
 
-        async def fake(prompt):
-            return MemoryResult(
-                success=True,
-                data={"id": "mem-99", "content": "stored"},
-                raw_text="{}",
-            )
-
-        with patch.object(
-            client, "_execute_tool_prompt", side_effect=fake
-        ):
-            result = await client.store_lesson(
-                trigger_context="T",
-                lesson="L",
-                solution="S",
-            )
+        result = await client.store_lesson(
+            trigger_context="T",
+            lesson="L",
+            solution="S",
+        )
 
         assert isinstance(result, MemoryResult)
         assert result.success is True
-        assert result.data["id"] == "mem-99"
+        assert "id" in result.data
 
     @pytest.mark.asyncio
     async def test_store_lesson_propagates_failure(self):
-        """If titans_add fails, store_lesson should propagate the failure."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        """If the backend.add raises, store_lesson should return failure."""
+        from bob3.memory_client import BobMemoryClient
 
-        client = TitansMemoryClient(workspace="/tmp/test")
+        backend = _StubBackend()
 
-        async def fail(prompt):
-            return MemoryResult(
-                success=False,
-                error="MCP server unavailable",
-            )
+        def raise_add(*args, **kwargs):
+            raise RuntimeError("backend unavailable")
 
-        with patch.object(
-            client, "_execute_tool_prompt", side_effect=fail
-        ):
-            result = await client.store_lesson(
-                trigger_context="T",
-                lesson="L",
-                solution="S",
-            )
+        backend.add = raise_add
+        client = BobMemoryClient(workspace="/tmp/test", backend=backend)
+
+        result = await client.store_lesson(
+            trigger_context="T",
+            lesson="L",
+            solution="S",
+        )
 
         assert result.success is False
         assert "unavailable" in result.error

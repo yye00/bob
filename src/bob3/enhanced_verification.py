@@ -143,23 +143,39 @@ def _check_criterion(
         return (workspace / "CMakeLists.txt").exists()
 
     # Pattern 4: "No compilation errors" or "No crashes"
+    # Previously returned True unconditionally — that let any criterion with
+    # this phrase soft-pass without running a compile. We can't run the build
+    # here (that would require process execution), so report False to force
+    # the agent/reviewer to verify it another way instead of silent-passing.
     if "no compilation errors" in criterion_lower or "no errors" in criterion_lower:
-        # Assume true if source files exist (compilation check is runtime)
-        return True
+        logger.debug(
+            "Criterion requires runtime verification (compile), cannot confirm statically: %s",
+            criterion,
+        )
+        return False
 
     # Pattern 5: "Method returns value in [X, Y] range"
-    if "returns value in" in criterion_lower or "return" in criterion_lower and "range" in criterion_lower:
+    # Use explicit parentheses: match "returns value in" OR ("return" AND "range")
+    if ("returns value in" in criterion_lower) or (
+        "return" in criterion_lower and "range" in criterion_lower
+    ):
         # Check that method exists (actual range validation is runtime)
         match = re.search(r"(\w+)\(\)", criterion)
         if match:
             func_name = match.group(1)
             return _search_for_function(workspace, func_name, is_python_project, is_cmake_project)
-        return True  # Soft pass if can't parse
+        return False  # Cannot verify the range statically
 
     # Pattern 6: "Test run: command completes" or "run X completes"
+    # Previously returned True unconditionally — a test-run criterion
+    # requires actual execution to confirm. Return False so it does not
+    # silently pass without evidence.
     if "completes" in criterion_lower and ("run" in criterion_lower or "test" in criterion_lower):
-        # Assume test exists if mentioned (actual execution is runtime)
-        return True
+        logger.debug(
+            "Criterion requires runtime verification (test/run), cannot confirm statically: %s",
+            criterion,
+        )
+        return False
 
     # Pattern 7: Specific behavior checks like "calls ML model when --enable-ml-cpr=true"
     if "calls" in criterion_lower or "call" in criterion_lower:
@@ -174,9 +190,11 @@ def _check_criterion(
                     is_cmake_project or is_opm_project
                 )
 
-    # Default: soft pass (can't validate this criterion statically)
-    logger.debug("Could not statically validate criterion: %s (soft pass)", criterion)
-    return True
+    # Default: unrecognized criterion — hard-fail so the checklist does not
+    # silently pass criteria we don't know how to verify. Previously this
+    # returned True, which let any unrecognized phrase trivially pass.
+    logger.debug("Could not statically validate criterion: %s (unrecognized, failing)", criterion)
+    return False
 
 
 def _search_for_function(

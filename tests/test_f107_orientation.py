@@ -185,21 +185,21 @@ class TestOrientationWithTitans:
             feature_id="F107",
             workspace="/tmp/workspace",
         )
-        assert "titans_search" in result
+        assert "memory_search" in result
 
     def test_bootstrap_f016_skips_titans(self):
         result = get_orientation_prompt(
             feature_id="F016",
             workspace="/tmp/workspace",
         )
-        assert "titans_search" not in result
+        assert "memory_search" not in result
 
     def test_bootstrap_f017_skips_titans(self):
         result = get_orientation_prompt(
             feature_id="F017",
             workspace="/tmp/workspace",
         )
-        assert "titans_search" not in result
+        assert "memory_search" not in result
 
     def test_bootstrap_includes_skip_explanation(self):
         result = get_orientation_prompt(
@@ -249,7 +249,7 @@ class TestRetryFlag:
             workspace="/tmp/workspace",
             is_retry=True,
         )
-        assert "titans_search" not in result
+        assert "memory_search" not in result
 
 
 # ============================================================
@@ -311,7 +311,7 @@ class TestWrapPromptWithOrientation:
             feature_id="F016",
             workspace="/tmp/workspace",
         )
-        assert "titans_search" not in result
+        assert "memory_search" not in result
 
     def test_includes_feature_name_when_provided(self):
         result = wrap_prompt_with_orientation(
@@ -346,11 +346,11 @@ class TestGetPostCompletionPrompt:
 
     def test_includes_titans_add(self):
         result = get_post_completion_prompt(feature_id="F107")
-        assert "titans_add" in result
+        assert "memory_add" in result
 
     def test_includes_feedback_recording(self):
         result = get_post_completion_prompt(feature_id="F107")
-        assert "titans_record_feedback" in result or "feedback" in result.lower()
+        assert "memory_record_feedback" in result or "feedback" in result.lower()
 
     def test_includes_feature_id(self):
         result = get_post_completion_prompt(feature_id="F107")
@@ -382,8 +382,8 @@ class TestBootstrapIntegration:
             feature_id="F016",
             workspace="/tmp/workspace",
         )
-        assert "titans_search" not in result
-        assert "titans_add" not in result
+        assert "memory_search" not in result
+        assert "memory_add" not in result
         # But should still have basic orientation
         assert "pwd" in result
         assert "git log" in result
@@ -396,8 +396,8 @@ class TestBootstrapIntegration:
             feature_id="F017",
             workspace="/tmp/workspace",
         )
-        assert "titans_search" not in result
-        assert "titans_add" not in result
+        assert "memory_search" not in result
+        assert "memory_add" not in result
         assert "pwd" in result
         assert "Implement MCP Server Lifecycle" in result
 
@@ -408,4 +408,4 @@ class TestBootstrapIntegration:
             feature_id="F107",
             workspace="/tmp/workspace",
         )
-        assert "titans_search" in result
+        assert "memory_search" in result

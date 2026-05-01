@@ -19,7 +19,7 @@ import pytest
 
 from bob3 import db
 from bob3.models import BugLedger, SubAgentRun
-from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
 
 @pytest.fixture()

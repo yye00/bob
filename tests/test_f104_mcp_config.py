@@ -2,7 +2,7 @@
 
 Validates that the MCP configuration module:
 - Defines MCPServerConfig dataclass with required fields
-- Configures TITANS_MEMORY_MCP with managed_by_bob3=True
+- Configures BOB3_MEMORY_MCP with managed_by_bob3=True
 - Configures PERPLEXITY_MCP with managed_by_bob3=False
 - Configures PUPPETEER_MCP with managed_by_bob3=False
 - Provides get_mcp_config() helper
@@ -96,53 +96,48 @@ class TestMCPServerConfigDataclass:
 
 
 # ===================================================================
-# Step 3: TITANS_MEMORY_MCP config
+# Step 3: BOB3_MEMORY_MCP config (formerly TITANS_MEMORY_MCP)
 # ===================================================================
 
 
-class TestTitansMemoryMCPConfig:
-    """Step 3: TITANS_MEMORY_MCP config with managed_by_bob3=True."""
+class TestBob3MemoryMCPConfig:
+    """Step 3: BOB3_MEMORY_MCP config with managed_by_bob3=True."""
 
-    def test_titans_memory_config_exists(self):
-        from bob3.orchestrator.mcp_config import TITANS_MEMORY_MCP
+    def test_memory_config_exists(self):
+        from bob3.orchestrator.mcp_config import BOB3_MEMORY_MCP
 
-        assert TITANS_MEMORY_MCP is not None
+        assert BOB3_MEMORY_MCP is not None
 
-    def test_titans_memory_is_mcp_server_config(self):
-        from bob3.orchestrator.mcp_config import TITANS_MEMORY_MCP, MCPServerConfig
+    def test_memory_is_mcp_server_config(self):
+        from bob3.orchestrator.mcp_config import BOB3_MEMORY_MCP, MCPServerConfig
 
-        assert isinstance(TITANS_MEMORY_MCP, MCPServerConfig)
+        assert isinstance(BOB3_MEMORY_MCP, MCPServerConfig)
 
-    def test_titans_memory_name(self):
-        from bob3.orchestrator.mcp_config import TITANS_MEMORY_MCP
+    def test_memory_name(self):
+        from bob3.orchestrator.mcp_config import BOB3_MEMORY_MCP
 
-        assert "titans" in TITANS_MEMORY_MCP.name.lower()
+        assert BOB3_MEMORY_MCP.name == "bob3-memory"
 
-    def test_titans_memory_command(self):
-        from bob3.orchestrator.mcp_config import TITANS_MEMORY_MCP
+    def test_memory_command(self):
+        from bob3.orchestrator.mcp_config import BOB3_MEMORY_MCP
 
-        assert TITANS_MEMORY_MCP.command == [
-            "uv",
-            "--directory",
-            "/home/captain/work/AI/titans-memory",
-            "run",
-            "titans-memory",
-        ]
+        assert BOB3_MEMORY_MCP.command == ["python", "-m", "bob3.memory_mcp"]
 
-    def test_titans_memory_managed_by_bob3(self):
-        from bob3.orchestrator.mcp_config import TITANS_MEMORY_MCP
+    def test_memory_managed_by_bob3(self):
+        from bob3.orchestrator.mcp_config import BOB3_MEMORY_MCP
 
-        assert TITANS_MEMORY_MCP.managed_by_bob3 is True
+        assert BOB3_MEMORY_MCP.managed_by_bob3 is True
 
-    def test_titans_memory_requires_openai_key(self):
-        from bob3.orchestrator.mcp_config import TITANS_MEMORY_MCP
+    def test_memory_env_vars_empty(self):
+        """Bob3 Memory no longer requires OPENAI_API_KEY — everything is local."""
+        from bob3.orchestrator.mcp_config import BOB3_MEMORY_MCP
 
-        assert "OPENAI_API_KEY" in TITANS_MEMORY_MCP.env_vars
+        assert BOB3_MEMORY_MCP.env_vars == []
 
-    def test_titans_memory_is_required(self):
-        from bob3.orchestrator.mcp_config import TITANS_MEMORY_MCP
+    def test_memory_is_required(self):
+        from bob3.orchestrator.mcp_config import BOB3_MEMORY_MCP
 
-        assert TITANS_MEMORY_MCP.required is True
+        assert BOB3_MEMORY_MCP.required is True
 
 
 # ===================================================================
@@ -217,12 +212,12 @@ class TestGetMCPConfig:
         result = get_mcp_config()
         assert isinstance(result, dict)
 
-    def test_get_mcp_config_contains_titans(self):
+    def test_get_mcp_config_contains_bob3_memory(self):
         from bob3.orchestrator.mcp_config import get_mcp_config
 
         result = get_mcp_config()
         names = {config.name for config in result.values()}
-        assert any("titans" in n.lower() for n in names)
+        assert "bob3-memory" in names
 
     def test_get_mcp_config_contains_perplexity(self):
         from bob3.orchestrator.mcp_config import get_mcp_config
@@ -267,12 +262,12 @@ class TestGetBob3ManagedServers:
         result = get_bob3_managed_servers()
         assert isinstance(result, list)
 
-    def test_contains_titans_memory(self):
+    def test_contains_bob3_memory(self):
         from bob3.orchestrator.mcp_config import get_bob3_managed_servers
 
         result = get_bob3_managed_servers()
         names = [config.name for config in result]
-        assert any("titans" in n.lower() for n in names)
+        assert "bob3-memory" in names
 
     def test_does_not_contain_perplexity(self):
         from bob3.orchestrator.mcp_config import get_bob3_managed_servers
@@ -296,7 +291,10 @@ class TestGetBob3ManagedServers:
             assert config.managed_by_bob3 is True
 
     def test_results_are_mcp_server_configs(self):
-        from bob3.orchestrator.mcp_config import get_bob3_managed_servers, MCPServerConfig
+        from bob3.orchestrator.mcp_config import (
+            get_bob3_managed_servers,
+            MCPServerConfig,
+        )
 
         result = get_bob3_managed_servers()
         for config in result:
@@ -311,20 +309,20 @@ class TestGetBob3ManagedServers:
 class TestMCPConfigIntegration:
     """MCP configs can be used with build_sub_agent_options."""
 
-    def test_titans_config_produces_valid_mcp_servers_dict(self):
-        """TITANS_MEMORY_MCP can be converted to an mcp_servers dict for the SDK."""
-        from bob3.orchestrator.mcp_config import TITANS_MEMORY_MCP
+    def test_memory_config_produces_valid_mcp_servers_dict(self):
+        """BOB3_MEMORY_MCP can be converted to an mcp_servers dict for the SDK."""
+        from bob3.orchestrator.mcp_config import BOB3_MEMORY_MCP
 
         mcp_dict = {
-            TITANS_MEMORY_MCP.name: {
+            BOB3_MEMORY_MCP.name: {
                 "type": "stdio",
-                "command": TITANS_MEMORY_MCP.command[0],
-                "args": TITANS_MEMORY_MCP.command[1:],
+                "command": BOB3_MEMORY_MCP.command[0],
+                "args": BOB3_MEMORY_MCP.command[1:],
             }
         }
-        assert TITANS_MEMORY_MCP.name in mcp_dict
-        assert mcp_dict[TITANS_MEMORY_MCP.name]["type"] == "stdio"
-        assert mcp_dict[TITANS_MEMORY_MCP.name]["command"] == "uv"
+        assert BOB3_MEMORY_MCP.name in mcp_dict
+        assert mcp_dict[BOB3_MEMORY_MCP.name]["type"] == "stdio"
+        assert mcp_dict[BOB3_MEMORY_MCP.name]["command"] == "python"
 
     def test_get_allowed_tools_returns_list(self):
         from bob3.orchestrator.mcp_config import get_allowed_tools
@@ -332,8 +330,28 @@ class TestMCPConfigIntegration:
         result = get_allowed_tools()
         assert isinstance(result, list)
 
-    def test_get_allowed_tools_contains_titans_tools(self):
+    def test_get_allowed_tools_contains_memory_tools(self):
         from bob3.orchestrator.mcp_config import get_allowed_tools
 
         result = get_allowed_tools()
-        assert any("titans" in tool.lower() for tool in result)
+        # Tools are named memory_* in the new configuration
+        assert any("memory" in tool.lower() for tool in result)
+
+    def test_get_allowed_tools_contains_expected_memory_tools(self):
+        """The allowed tools list should contain the full set of memory_* tools."""
+        from bob3.orchestrator.mcp_config import get_allowed_tools
+
+        result = get_allowed_tools()
+        expected = {
+            "memory_add",
+            "memory_search",
+            "memory_get",
+            "memory_record_feedback",
+            "memory_archive",
+            "memory_demote",
+            "memory_delete",
+            "memory_get_stats",
+            "memory_get_candidates",
+            "memory_list_pools",
+        }
+        assert expected.issubset(set(result))

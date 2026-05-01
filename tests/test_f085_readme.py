@@ -65,8 +65,8 @@ class TestProjectDescription:
         """README must list key features of Bob3."""
         lower = readme_text.lower()
         assert "mcp" in lower, "README must mention MCP integration"
-        assert "titans" in lower or "memory" in lower, (
-            "README must mention memory/TITANS"
+        assert "memory" in lower, (
+            "README must mention the memory system"
         )
 
 
@@ -92,9 +92,10 @@ class TestInstallationInstructions:
         )
 
     def test_mentions_environment_variables(self, readme_text):
-        """README must mention required environment variables."""
-        assert "OPENAI_API_KEY" in readme_text, (
-            "README must mention OPENAI_API_KEY"
+        """README must mention Ollama configuration (no API keys required)."""
+        lower = readme_text.lower()
+        assert "ollama" in lower, (
+            "README must mention Ollama for Bob3 Memory embeddings"
         )
 
 

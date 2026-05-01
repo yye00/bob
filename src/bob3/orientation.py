@@ -1,8 +1,8 @@
-"""Sub-agent orientation protocol with TITANS memory (F107) and progress notes (F108).
+"""Sub-agent orientation protocol with bob3 memory (F107) and progress notes (F108).
 
 Provides mandatory orientation context for all Bob3 sub-agents. Every
 sub-agent starts by running a series of orientation steps to recover
-project context, and optionally queries TITANS Memory for relevant
+project context, and optionally queries bob3 memory for relevant
 knowledge.
 
 F108 adds session continuity via claude-progress.txt:
@@ -40,9 +40,9 @@ Usage::
         cost_usd=0.50,
     )
 
-Bootstrap detection: Features F016 and F017 (TITANS integration itself)
-skip all TITANS memory operations since the memory system doesn't exist
-yet when those features are being implemented.
+Bootstrap detection: Features F016 and F017 (memory integration itself)
+skip all memory operations since the memory system doesn't exist yet
+when those features are being implemented.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# Feature IDs that represent TITANS bootstrapping — TITANS is not
+# Feature IDs that represent memory bootstrapping — bob3 memory is not
 # available yet when these features are being implemented.
 BOOTSTRAP_FEATURE_IDS: frozenset[str] = frozenset({"F016", "F017"})
 
@@ -226,10 +226,10 @@ def read_progress_notes(*, workspace: str) -> str:
 
 
 def is_bootstrap_feature(feature_id: str | None) -> bool:
-    """Check whether a feature is a TITANS bootstrap feature.
+    """Check whether a feature is a bob3 memory bootstrap feature.
 
-    Bootstrap features (F016, F017) cannot use TITANS memory because
-    they are the features that implement TITANS integration itself.
+    Bootstrap features (F016, F017) cannot use bob3 memory because
+    they are the features that implement memory integration itself.
 
     Args:
         feature_id: The feature ID to check, or None.
@@ -247,10 +247,10 @@ def get_memory_search_prompt(
     feature_name: str,
     feature_description: str,
 ) -> str:
-    """Generate TITANS memory search commands for feature context.
+    """Generate Bob3 memory search commands for feature context.
 
     Creates a prompt section that instructs the sub-agent to search
-    TITANS Memory across three pools: lessons, facts, and context.
+    Bob3 Memory across three pools: lessons, facts, and context.
 
     Args:
         feature_id: The feature ID being worked on.
@@ -258,18 +258,18 @@ def get_memory_search_prompt(
         feature_description: Description of what the feature does.
 
     Returns:
-        A prompt string with titans_search commands for all three pools.
+        A prompt string with memory_search commands for all three pools.
     """
     return (
         f"## Search for Relevant Knowledge ({feature_id})\n\n"
-        f"Use TITANS Memory to search for relevant past knowledge:\n\n"
+        f"Use Bob3 Memory to search for relevant past knowledge:\n\n"
         f"### Search lessons pool:\n"
-        f'titans_search("lessons {feature_id} {feature_name}")\n\n'
+        f'memory_search("lessons {feature_id} {feature_name}")\n\n'
         f"### Search facts pool:\n"
-        f'titans_search("facts {feature_description}")\n\n'
+        f'memory_search("facts {feature_description}")\n\n'
         f"### Search context pool:\n"
-        f'titans_search("context project state")\n'
-        f'titans_search("context recent changes")\n'
+        f'memory_search("context project state")\n'
+        f'memory_search("context recent changes")\n'
     )
 
 
@@ -289,7 +289,7 @@ def get_orientation_prompt(
     3. Query feature status
     4. cat claude-progress.txt
     5. git log --oneline -10
-    6. titans_search for relevant knowledge (if not bootstrap)
+    6. memory_search for relevant knowledge (if not bootstrap)
 
     On retry, also applies the systematic debugging protocol and
     searches for past fixes.
@@ -298,8 +298,8 @@ def get_orientation_prompt(
         feature_id: The feature being worked on.
         workspace: Path to the project workspace.
         is_retry: If True, adds debugging protocol and past-fix search.
-        feature_name: Optional feature name for TITANS searches.
-        feature_description: Optional feature description for TITANS searches.
+        feature_name: Optional feature name for Bob3 memory searches.
+        feature_description: Optional feature description for Bob3 memory searches.
 
     Returns:
         The orientation prompt string.
@@ -332,19 +332,19 @@ def get_orientation_prompt(
         "```\n",
     ]
 
-    # Step 6: TITANS memory search (skip for bootstrap features)
+    # Step 6: Bob3 memory search (skip for bootstrap features)
     if bootstrap:
         sections.append(
-            "## Step 6: TITANS Memory Search (SKIPPED - Bootstrap Feature)\n\n"
-            f"Feature {feature_id} is a bootstrap feature that implements TITANS\n"
-            "integration itself. Skipping TITANS memory operations since the\n"
+            "## Step 6: Bob3 Memory Search (SKIPPED - Bootstrap Feature)\n\n"
+            f"Feature {feature_id} is a bootstrap feature that implements memory\n"
+            "integration itself. Skipping memory operations since the\n"
             "memory system does not exist yet.\n"
         )
     else:
         name = feature_name or feature_id
         desc = feature_description or f"Feature {feature_id}"
         memory_prompt = get_memory_search_prompt(feature_id, name, desc)
-        sections.append(f"## Step 6: TITANS Memory Search\n\n{memory_prompt}\n")
+        sections.append(f"## Step 6: Bob3 Memory Search\n\n{memory_prompt}\n")
 
     # Retry additions: debugging protocol + past fix search
     if is_retry:
@@ -361,8 +361,8 @@ def get_orientation_prompt(
         if not bootstrap:
             retry_section += (
                 "### Search for previous fixes and lessons:\n"
-                f'titans_search("lessons fix {feature_id}")\n'
-                f'titans_search("lessons previous failure {feature_id}")\n'
+                f'memory_search("lessons fix {feature_id}")\n'
+                f'memory_search("lessons previous failure {feature_id}")\n'
             )
         else:
             retry_section += (
@@ -397,8 +397,8 @@ def wrap_prompt_with_orientation(
         feature_id: The feature being worked on.
         workspace: Path to the project workspace.
         is_retry: If True, adds debugging protocol.
-        feature_name: Optional feature name for TITANS searches.
-        feature_description: Optional feature description for TITANS searches.
+        feature_name: Optional feature name for Bob3 memory searches.
+        feature_description: Optional feature description for Bob3 memory searches.
         enable_tdd: If True, adds TDD mode instructions (F113).
         enable_verification: If True, adds verification checklist (F113, default True).
         enable_subagent: If True, adds sub-agent driven development (F113).
@@ -449,9 +449,9 @@ def get_post_completion_prompt(feature_id: str) -> str:
     """Generate post-completion memory storage instructions.
 
     After completing a task, sub-agents should store new knowledge
-    in TITANS Memory for future agents to benefit from.
+    in Bob3 Memory for future agents to benefit from.
 
-    Bootstrap features (F016/F017) skip this since TITANS is not
+    Bootstrap features (F016/F017) skip this since memory is not
     available yet.
 
     Args:
@@ -469,11 +469,11 @@ def get_post_completion_prompt(feature_id: str) -> str:
         "After completing your task successfully, store knowledge for future agents:\n\n"
         "1. Store any new facts learned:\n"
         "   ```\n"
-        '   titans_add("New fact about [technology/pattern]", pool="facts")\n'
+        '   memory_add("New fact about [technology/pattern]", pool="facts")\n'
         "   ```\n\n"
         "2. Store lessons from debugging or failures:\n"
         "   ```\n"
-        "   titans_add(\n"
+        "   memory_add(\n"
         '       "TRIGGER: [what triggered]\\n'\
         'LESSON: [what you learned]\\n'\
         'SOLUTION: [how you solved it]",\n'
@@ -482,6 +482,6 @@ def get_post_completion_prompt(feature_id: str) -> str:
         "   ```\n\n"
         "3. Record feedback on memories that helped:\n"
         "   ```\n"
-        "   titans_record_feedback(memory_id=\"mem_xxx\", success=True)\n"
+        "   memory_record_feedback(memory_id=\"mem_xxx\", success=True)\n"
         "   ```\n"
     )

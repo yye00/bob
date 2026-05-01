@@ -170,6 +170,15 @@ def build_sub_agent_options(
 
     if cwd is not None:
         kwargs["cwd"] = str(cwd)
+        # Ensure bob3 skills are available at <cwd>/.claude/skills/ so
+        # the sub-agent can discover them. Idempotent — only re-links on
+        # bob3 upgrades. Non-fatal on failure (skills are advisory).
+        try:
+            from bob3.skills_installer import install_skills_to_workspace
+
+            install_skills_to_workspace(cwd)
+        except Exception as exc:
+            logger.debug("Skill installation skipped: %s", exc)
 
     resolved_model = resolve_model_name(model)
     if resolved_model is not None:

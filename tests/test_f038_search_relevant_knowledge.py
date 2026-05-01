@@ -22,7 +22,7 @@ class TestSearchRelevantKnowledgeExists:
     """Step 1: search_relevant_knowledge() must exist on TitansMemoryClient."""
 
     def test_method_exists(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         assert hasattr(client, "search_relevant_knowledge")
@@ -31,7 +31,7 @@ class TestSearchRelevantKnowledgeExists:
     def test_method_is_async(self):
         import inspect
 
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         assert inspect.iscoroutinefunction(client.search_relevant_knowledge)
@@ -40,7 +40,7 @@ class TestSearchRelevantKnowledgeExists:
         """search_relevant_knowledge() must accept feature_name and description."""
         import inspect
 
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient as TitansMemoryClient
 
         sig = inspect.signature(TitansMemoryClient.search_relevant_knowledge)
         params = list(sig.parameters.keys())
@@ -51,7 +51,7 @@ class TestSearchRelevantKnowledgeExists:
         """search_relevant_knowledge() should accept an optional feature_id."""
         import inspect
 
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient as TitansMemoryClient
 
         sig = inspect.signature(TitansMemoryClient.search_relevant_knowledge)
         params = sig.parameters
@@ -70,13 +70,13 @@ class TestSearchWithFeatureContext:
 
     @pytest.fixture
     def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient as TitansMemoryClient
 
         return TitansMemoryClient(workspace="/tmp/test")
 
     @pytest.mark.asyncio
     async def test_search_uses_feature_name_in_query(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         search_calls = []
 
@@ -97,7 +97,7 @@ class TestSearchWithFeatureContext:
 
     @pytest.mark.asyncio
     async def test_search_uses_description_in_query(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         search_calls = []
 
@@ -118,7 +118,7 @@ class TestSearchWithFeatureContext:
     @pytest.mark.asyncio
     async def test_delegates_to_search_memory(self, client):
         """search_relevant_knowledge() must call search_memory()."""
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         search_calls = []
 
@@ -145,13 +145,13 @@ class TestSearchMultiplePools:
 
     @pytest.fixture
     def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient as TitansMemoryClient
 
         return TitansMemoryClient(workspace="/tmp/test")
 
     @pytest.mark.asyncio
     async def test_searches_facts_pool(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         pools_searched = []
 
@@ -169,7 +169,7 @@ class TestSearchMultiplePools:
 
     @pytest.mark.asyncio
     async def test_searches_lessons_pool(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         pools_searched = []
 
@@ -187,7 +187,7 @@ class TestSearchMultiplePools:
 
     @pytest.mark.asyncio
     async def test_searches_context_pool(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         pools_searched = []
 
@@ -205,7 +205,7 @@ class TestSearchMultiplePools:
 
     @pytest.mark.asyncio
     async def test_searches_all_three_pools(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         pools_searched = []
 
@@ -236,13 +236,13 @@ class TestRankedResults:
 
     @pytest.fixture
     def client(self):
-        from bob3.titans_memory_client import TitansMemoryClient
+        from bob3.memory_client import BobMemoryClient as TitansMemoryClient
 
         return TitansMemoryClient(workspace="/tmp/test")
 
     @pytest.mark.asyncio
     async def test_returns_memory_result(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         async def fake_search(query, pool=None, limit=10):
             return MemoryResult(success=True, data=[], raw_text="[]")
@@ -258,7 +258,7 @@ class TestRankedResults:
 
     @pytest.mark.asyncio
     async def test_results_sorted_by_retrieval_weight_descending(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         call_count = 0
 
@@ -314,7 +314,7 @@ class TestRankedResults:
 
     @pytest.mark.asyncio
     async def test_merges_results_from_all_pools(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         async def fake_search(query, pool=None, limit=10):
             if pool == "facts":
@@ -356,7 +356,7 @@ class TestRankedResults:
 
     @pytest.mark.asyncio
     async def test_handles_empty_results_from_all_pools(self, client):
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         async def fake_search(query, pool=None, limit=10):
             return MemoryResult(success=True, data=[], raw_text="[]")
@@ -374,7 +374,7 @@ class TestRankedResults:
     @pytest.mark.asyncio
     async def test_handles_failed_pool_search_gracefully(self, client):
         """If one pool search fails, others should still return results."""
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         async def fake_search(query, pool=None, limit=10):
             if pool == "lessons":
@@ -404,7 +404,7 @@ class TestRankedResults:
     @pytest.mark.asyncio
     async def test_results_without_retrieval_weight_sorted_last(self, client):
         """Results missing retrieval_weight should sort to the end."""
-        from bob3.titans_memory_client import MemoryResult
+        from bob3.memory_client import MemoryResult
 
         async def fake_search(query, pool=None, limit=10):
             if pool == "facts":
@@ -446,7 +446,7 @@ class TestFullKnowledgeSearchCycle:
     @pytest.mark.asyncio
     async def test_add_knowledge_then_search_relevant(self):
         """Add facts/lessons, then search_relevant_knowledge finds them."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         call_sequence = []
@@ -517,7 +517,7 @@ class TestFullKnowledgeSearchCycle:
     @pytest.mark.asyncio
     async def test_search_with_feature_id_included(self):
         """feature_id should be usable for more targeted search."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
         search_calls = []
@@ -540,7 +540,7 @@ class TestFullKnowledgeSearchCycle:
     @pytest.mark.asyncio
     async def test_all_pools_fail_returns_empty_success(self):
         """If all pool searches fail, return success with empty list."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
 
@@ -563,7 +563,7 @@ class TestFullKnowledgeSearchCycle:
         """A limit parameter should control max results per pool."""
         import inspect
 
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
 
@@ -591,7 +591,7 @@ class TestFullKnowledgeSearchCycle:
     @pytest.mark.asyncio
     async def test_deduplicates_results_across_pools(self):
         """If the same memory appears in multiple pools, deduplicate."""
-        from bob3.titans_memory_client import MemoryResult, TitansMemoryClient
+        from bob3.memory_client import MemoryResult, BobMemoryClient as TitansMemoryClient
 
         client = TitansMemoryClient(workspace="/tmp/test")
 

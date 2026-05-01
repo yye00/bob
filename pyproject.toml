@@ -14,6 +14,9 @@ dependencies = [
     "pydantic>=2.0",
     "PyMuPDF>=1.23.0",
     "PyYAML>=6.0",
+    "mem0ai>=0.1.0",
+    "mcp>=1.0",
+    "fastembed>=0.7.0",
 ]
 
 [project.scripts]
@@ -21,3 +24,6 @@ bob3 = "bob3.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"bob3" = ["schema.sql", "skills/**/SKILL.md"]

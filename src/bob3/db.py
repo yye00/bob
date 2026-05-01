@@ -640,7 +640,7 @@ def update_dependent_features_readiness(completed_feature_id: str) -> list[str]:
                 # Confidence should be assessed based on feature content,
                 # not just dependency completion.
                 # Leave confidence at default (0.0) to trigger proper assessment.
-                conn.execute(
+                update_cursor = conn.execute(
                     """
                     UPDATE features
                     SET status = 'ready'
@@ -649,7 +649,7 @@ def update_dependent_features_readiness(completed_feature_id: str) -> list[str]:
                     (feature_id,)
                 )
 
-                if conn.total_changes > 0:
+                if update_cursor.rowcount == 1:
                     updated_features.append(feature_id)
 
     return updated_features
