@@ -1,26 +1,29 @@
 """
 Graceful shutdown handler for Bob3 (F117).
 
-Catches SIGINT and SIGTERM to set a flag. The actual shutdown work
-(database I/O, subprocess shutdown) is performed by the main loop at
-safe points — NOT inside the signal handler. Per POSIX, signal handlers
+Catches SIGINT and SIGTERM to set a flag. Per POSIX, signal handlers
 should be async-signal-safe; doing arbitrary I/O can deadlock if the
 signal interrupts code that holds a non-reentrant lock (the most common
 case: SIGINT firing during ``conn.commit()`` deadlocks against the
 SQLite connection lock when the handler tries to commit again).
 
-The handler's responsibilities are split:
+This module provides the async-signal-safe primitive (the flag-setting
+:meth:`GracefulShutdownHandler._handle_signal` plus install/uninstall
+plumbing). It does NOT perform the actual shutdown work — that lives
+in the orchestration loop itself, see
+``bob3.orchestrator.run_loop.OrchestrationLoop`` (specifically the
+shutdown branch in ``run()`` and ``_create_interruption_checkpoint``).
 
-* :meth:`GracefulShutdownHandler._handle_signal` — runs in signal
-  context. Only sets ``shutdown_requested = True`` and logs a brief
-  message. On a second signal, raises :class:`SystemExit` (allowed in
-  handler context). Does NOT touch the database, subprocesses, or any
-  other non-reentrant resources.
-
-* :meth:`GracefulShutdownHandler._perform_shutdown` — runs in normal
-  code context (called by the main loop). Performs all the actual
-  shutdown actions: checkpoint, mark feature interrupted, stop MCP
-  server.
+History note: an earlier design had a ``_perform_shutdown`` method on
+this handler that did checkpointing, status updates, and MCP cleanup.
+That method was never wired into the orchestration loop in production
+(``OrchestrationLoop._install_signal_handlers`` installs its own inline
+flag-setting handler, not a ``GracefulShutdownHandler`` instance) and
+was removed to avoid dead code. The handler class is retained for the
+flag-setting contract and the async-signal-safety tests that verify
+it; if a future refactor wants to centralize the shutdown sequence
+back here, do it via dependency injection rather than the previous
+hidden coupling.
 
 Usage::
 
@@ -29,11 +32,10 @@ Usage::
     handler = GracefulShutdownHandler(conn=conn, project_id=project_id)
     handler.install()
 
-    # ... run sub-agent ...
-    # handler.set_active_feature(feature_id, feature_data)
+    # ... run loop ...
     # In the main loop, between safe points:
     #     if handler.shutdown_requested:
-    #         handler._perform_shutdown()
+    #         # caller performs its own shutdown sequence
     #         break
 
     handler.uninstall()
@@ -41,12 +43,9 @@ Usage::
 
 from __future__ import annotations
 
-import json
 import logging
 import signal
 import threading
-import time
-from datetime import datetime, timezone
 from types import FrameType
 from typing import Any
 
@@ -57,15 +56,20 @@ _SAFE_POINT_TIMEOUT_SECONDS = 30
 
 
 class GracefulShutdownHandler:
-    """Manages graceful shutdown on SIGINT/SIGTERM for Bob3.
+    """Manages graceful shutdown signal handling for Bob3.
 
-    Installs signal handlers that set a flag and perform shutdown actions
-    including checkpointing the current feature state, updating the
-    feature status to 'interrupted', and stopping the MCP server.
+    Installs signal handlers that set a flag (``shutdown_requested``)
+    when SIGINT/SIGTERM arrive. Polling callers are expected to notice
+    the flag at a safe point and perform their own shutdown work
+    (checkpointing, marking features 'interrupted', stopping the MCP
+    server). This class deliberately does NOT do any of that I/O —
+    see the module docstring for the deadlock rationale.
 
     Attributes:
         shutdown_requested: True once a signal has been received.
-        shutdown_complete: True once all shutdown actions have finished.
+        shutdown_complete: Set to True by callers once they have
+            finished their shutdown sequence (informational only;
+            this class never sets it).
     """
 
     def __init__(
@@ -159,9 +163,9 @@ class GracefulShutdownHandler:
 
         This runs in signal context. It MUST be async-signal-safe, so it
         only sets the ``shutdown_requested`` flag and logs a brief
-        message. The main loop is responsible for noticing the flag at a
-        safe point and calling :meth:`_perform_shutdown` from regular
-        (non-handler) code.
+        message. Polling callers are responsible for noticing the flag
+        at a safe point and performing their own shutdown work from
+        regular (non-handler) code.
 
         Doing database I/O, subprocess control, or anything else that
         may take a non-reentrant lock here can deadlock the process if
@@ -183,122 +187,13 @@ class GracefulShutdownHandler:
             )
             raise SystemExit(128 + signum)
 
-        # First signal: set the flag and return. The main loop polls
-        # ``shutdown_requested`` at safe points and will call
-        # ``_perform_shutdown`` from there. Do NOT perform shutdown
-        # work here — see module docstring for why.
+        # First signal: set the flag and return. The polling caller
+        # (e.g., the orchestration loop) is responsible for noticing
+        # the flag at a safe point and performing its own shutdown
+        # sequence. Do NOT perform shutdown work here — see module
+        # docstring for why.
         logger.warning(
             "Received %s — graceful shutdown requested; finishing current step",
             sig_name,
         )
         self.shutdown_requested = True
-
-    def _perform_shutdown(self) -> None:
-        """Execute the graceful shutdown sequence.
-
-        This MUST be called from regular code paths only, NOT from a
-        signal handler. It performs database I/O (checkpoint creation,
-        feature status update, ``conn.commit()``) and subprocess I/O
-        (stopping the MCP server) — all of which can deadlock if invoked
-        while the interrupted code holds a non-reentrant lock.
-
-        The intended caller is the main orchestration loop, which polls
-        :attr:`shutdown_requested` between feature executions and calls
-        this method from the resulting normal control flow.
-
-        Steps:
-
-        1. Create checkpoint with current state
-        2. Mark feature as 'interrupted'
-        3. Stop MCP server
-        4. Log resume message
-
-        Idempotent: calling this more than once is harmless (it sets
-        ``shutdown_complete = True`` and subsequent calls re-run the
-        sequence; in practice the main loop calls it exactly once).
-        """
-        from bob3.db import create_checkpoint, update_feature
-        from bob3.mcp_lifecycle import stop_mcp_server
-
-        logger.info("Graceful shutdown: starting checkpoint sequence")
-
-        feature_id = self._active_feature_id
-        feature_data = self._active_feature_data
-
-        if feature_id and feature_data:
-            # Step 1: Create checkpoint
-            try:
-                state = {
-                    "feature_id": feature_id,
-                    "feature_name": feature_data.get("name", ""),
-                    "feature_status_before": feature_data.get("status", "executing"),
-                    "project_id": self._project_id,
-                    "run_id": self._active_run_id,
-                    "interrupted_at": datetime.now(timezone.utc).isoformat(),
-                    "reason": "graceful_shutdown",
-                }
-                state_snapshot = json.dumps(state)
-
-                duration_ms = None
-                if self._execution_start_ms is not None:
-                    duration_ms = int(time.time() * 1000) - self._execution_start_ms
-
-                checkpoint = create_checkpoint(
-                    project_id=self._project_id,
-                    feature_id=feature_id,
-                    checkpoint_type="manual",
-                    state_snapshot=state_snapshot,
-                    cost_at_checkpoint=self._cost_so_far,
-                    duration_at_checkpoint_ms=duration_ms,
-                )
-                logger.info(
-                    "Checkpoint created: %s for feature '%s'",
-                    checkpoint.id,
-                    feature_id,
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to create checkpoint for feature '%s': %s",
-                    feature_id,
-                    exc,
-                )
-
-            # Step 2: Mark feature as interrupted
-            try:
-                update_feature(feature_id, status="interrupted")
-                logger.info("Feature '%s' marked as 'interrupted'", feature_id)
-            except Exception as exc:
-                logger.error(
-                    "Failed to mark feature '%s' as interrupted: %s",
-                    feature_id,
-                    exc,
-                )
-
-            # Commit any outstanding state on the caller's connection.
-            # ``db.create_checkpoint`` and ``db.update_feature`` open
-            # their own connections and commit there, but if the caller
-            # holds an additional connection (e.g. for read-only views)
-            # we still flush it here so the resume path sees a
-            # consistent snapshot.
-            if self._conn is not None:
-                try:
-                    self._conn.commit()
-                except Exception as exc:
-                    logger.error("Failed to commit shutdown state: %s", exc)
-        else:
-            logger.info(
-                "Graceful shutdown: no active feature to checkpoint"
-            )
-
-        # Step 3: Stop MCP server
-        try:
-            stop_mcp_server()
-            logger.info("MCP server stopped")
-        except Exception as exc:
-            logger.error("Failed to stop MCP server: %s", exc)
-
-        # Step 4: Log resume message
-        logger.info("Interrupted. Run `bob3 run` to resume.")
-        print("\nInterrupted. Run `bob3 run` to resume.")
-
-        self.shutdown_complete = True

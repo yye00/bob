@@ -414,3 +414,50 @@ def test_clean_workspace_skills_removes_copy_installs(
 def test_clean_workspace_skills_no_workspace_dir(tmp_path):
     """Cleaning a workspace with no .claude/skills dir is a no-op."""
     assert clean_workspace_skills(tmp_path) == []
+
+
+def test_clean_workspace_skills_preserves_user_symlinks(
+    fake_bundled_skills, workspace, tmp_path
+):
+    """User-created symlinks pointing OUTSIDE the bob3 bundled dir must
+    not be deleted by ``clean_workspace_skills``.
+
+    Regression: the previous implementation removed ANY symlink under
+    ``<workspace>/.claude/skills/`` — including a user's own custom
+    skill symlinked from somewhere else on disk. The fix routes the
+    decision through ``_is_bob3_managed`` so only links that resolve
+    INTO the current bob3 bundled skills directory are considered ours.
+    """
+    bundled, names = fake_bundled_skills
+    target_dir = workspace / ".claude" / "skills"
+
+    # Install bob3 skills first.
+    install_skills_to_workspace(workspace)
+    for name in names:
+        assert (target_dir / name).is_symlink()
+
+    # User adds their own custom skill via symlink to a directory
+    # OUTSIDE the bob3 bundled dir.
+    user_skill_src = tmp_path / "my-stuff"
+    user_skill_src.mkdir()
+    (user_skill_src / "SKILL.md").write_text("# my-custom-skill (user)\n")
+    (user_skill_src / "user_data").write_text("hands off")
+
+    user_link = target_dir / "my-custom-skill"
+    user_link.symlink_to(user_skill_src.resolve(), target_is_directory=True)
+    assert user_link.is_symlink()
+    # Sanity: it resolves to the user's external dir, NOT inside bundled.
+    assert user_link.resolve() == user_skill_src.resolve()
+
+    removed = clean_workspace_skills(workspace)
+
+    # Bob3 skills are gone.
+    for name in names:
+        assert not (target_dir / name).exists()
+        assert name in removed
+    # User symlink is preserved — both as a symlink and the target file.
+    assert user_link.is_symlink()
+    assert user_link.resolve() == user_skill_src.resolve()
+    assert (user_link / "SKILL.md").read_text().strip().endswith("(user)")
+    assert (user_link / "user_data").read_text() == "hands off"
+    assert "my-custom-skill" not in removed

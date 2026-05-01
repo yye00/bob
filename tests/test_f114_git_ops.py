@@ -667,3 +667,221 @@ class TestCommitFeatureErrorHandling:
         )
         assert sha is not None
         assert len(sha) == 40
+
+
+# ============================================================
+# Step 11: Hook-vs-infrastructure classification
+# ============================================================
+
+
+class TestCommitFailureClassification:
+    """commit_feature distinguishes hook rejections from infrastructure errors.
+
+    The previous implementation contained a heuristic fallback: any failed
+    `git commit` whose stderr+stdout was non-empty was promoted to
+    GitHookFailedError. That misclassified stale lockfiles, missing LFS,
+    permission errors, and merge conflicts. This suite locks in the
+    stricter classification.
+    """
+
+    def test_pre_commit_framework_output_is_hook_error(self, git_repo):
+        """`pre-commit` framework output (without literal 'hook' word in
+        every line) is still recognised as a hook rejection because the
+        framework's distinctive markers are matched."""
+        from bob3.git_ops import GitHookFailedError, commit_feature
+
+        # The pre-commit framework typically prints lines like
+        # "files were modified by this hook" — make sure that's caught.
+        _install_pre_commit_hook(
+            git_repo,
+            "#!/usr/bin/env bash\n"
+            "echo 'files were modified by this hook' >&2\n"
+            "exit 1\n",
+        )
+
+        (git_repo / "feature.py").write_text("# feature\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(git_repo),
+            capture_output=True, check=True,
+        )
+
+        with pytest.raises(GitHookFailedError):
+            commit_feature(
+                feature_id="F114",
+                message="hook should reject",
+                workspace=str(git_repo),
+            )
+
+    def test_stale_index_lock_is_commit_error_not_hook(self, git_repo):
+        """A stale .git/index.lock causes git commit to fail with an
+        infrastructure error message — must be classified as
+        GitCommitError, NOT GitHookFailedError."""
+        from bob3.git_ops import (
+            GitCommitError,
+            GitHookFailedError,
+            commit_feature,
+        )
+
+        # Stage real changes
+        (git_repo / "feature.py").write_text("# feature\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(git_repo),
+            capture_output=True, check=True,
+        )
+
+        # Drop a stale lockfile that git will refuse to step on.
+        lock = git_repo / ".git" / "index.lock"
+        lock.write_text("")
+
+        try:
+            with pytest.raises(GitCommitError) as exc_info:
+                commit_feature(
+                    feature_id="F114",
+                    message="should hit infrastructure error",
+                    workspace=str(git_repo),
+                )
+            err = exc_info.value
+            # Critical: must NOT be classified as a hook rejection.
+            assert not isinstance(err, GitHookFailedError), (
+                f"stale index.lock was misclassified as hook failure: "
+                f"stderr={err.stderr!r} stdout={err.stdout!r}"
+            )
+            combined = (err.stderr or "") + (err.stdout or "")
+            assert "index.lock" in combined.lower()
+        finally:
+            # Clean up so the fixture's temp dir tears down cleanly.
+            if lock.exists():
+                lock.unlink()
+
+    def test_permission_denied_is_commit_error_not_hook(self, git_repo, monkeypatch):
+        """A simulated permission-denied stderr from git is classified
+        as GitCommitError, not as a hook rejection."""
+        from bob3 import git_ops
+        from bob3.git_ops import (
+            GitCommitError,
+            GitHookFailedError,
+            commit_feature,
+        )
+
+        # Stage a real change so we get past the diff check.
+        (git_repo / "feature.py").write_text("# feature\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(git_repo),
+            capture_output=True, check=True,
+        )
+
+        real_run_git = git_ops._run_git
+
+        def fake_run_git(args, *, workspace):
+            if args and args[0] == "commit":
+                # Synthesize a permission-denied failure.
+                return subprocess.CompletedProcess(
+                    args=["git"] + list(args),
+                    returncode=128,
+                    stdout="",
+                    stderr=(
+                        "error: cannot open '.git/COMMIT_EDITMSG': "
+                        "Permission denied\n"
+                    ),
+                )
+            return real_run_git(args, workspace=workspace)
+
+        monkeypatch.setattr(git_ops, "_run_git", fake_run_git)
+
+        with pytest.raises(GitCommitError) as exc_info:
+            commit_feature(
+                feature_id="F114",
+                message="permission denied",
+                workspace=str(git_repo),
+            )
+        err = exc_info.value
+        assert not isinstance(err, GitHookFailedError)
+        assert "permission denied" in (err.stderr or "").lower()
+
+    def test_empty_output_failure_is_commit_error_not_hook(
+        self, git_repo, monkeypatch,
+    ):
+        """A failed commit with NO stderr/stdout output must NOT be
+        promoted to GitHookFailedError. It is a generic GitCommitError."""
+        from bob3 import git_ops
+        from bob3.git_ops import (
+            GitCommitError,
+            GitHookFailedError,
+            commit_feature,
+        )
+
+        (git_repo / "feature.py").write_text("# feature\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(git_repo),
+            capture_output=True, check=True,
+        )
+
+        real_run_git = git_ops._run_git
+
+        def fake_run_git(args, *, workspace):
+            if args and args[0] == "commit":
+                return subprocess.CompletedProcess(
+                    args=["git"] + list(args),
+                    returncode=1,
+                    stdout="",
+                    stderr="",
+                )
+            return real_run_git(args, workspace=workspace)
+
+        monkeypatch.setattr(git_ops, "_run_git", fake_run_git)
+
+        with pytest.raises(GitCommitError) as exc_info:
+            commit_feature(
+                feature_id="F114",
+                message="silent failure",
+                workspace=str(git_repo),
+            )
+        err = exc_info.value
+        # The critical assertion: no longer a hook error just because
+        # the commit failed silently.
+        assert not isinstance(err, GitHookFailedError)
+        assert err.returncode == 1
+
+    def test_unrecognized_output_failure_is_commit_error_not_hook(
+        self, git_repo, monkeypatch,
+    ):
+        """Non-empty but unrecognized stderr (no hook marker, no
+        infrastructure marker) is generic GitCommitError — the old
+        heuristic fallback that promoted these to GitHookFailedError
+        is removed."""
+        from bob3 import git_ops
+        from bob3.git_ops import (
+            GitCommitError,
+            GitHookFailedError,
+            commit_feature,
+        )
+
+        (git_repo / "feature.py").write_text("# feature\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(git_repo),
+            capture_output=True, check=True,
+        )
+
+        real_run_git = git_ops._run_git
+
+        def fake_run_git(args, *, workspace):
+            if args and args[0] == "commit":
+                return subprocess.CompletedProcess(
+                    args=["git"] + list(args),
+                    returncode=1,
+                    stdout="",
+                    stderr="error: something obscure went wrong\n",
+                )
+            return real_run_git(args, workspace=workspace)
+
+        monkeypatch.setattr(git_ops, "_run_git", fake_run_git)
+
+        with pytest.raises(GitCommitError) as exc_info:
+            commit_feature(
+                feature_id="F114",
+                message="obscure failure",
+                workspace=str(git_repo),
+            )
+        err = exc_info.value
+        assert not isinstance(err, GitHookFailedError)
+        assert "something obscure" in (err.stderr or "")

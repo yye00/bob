@@ -740,6 +740,54 @@ def complete_feature_and_cascade(feature_id: str) -> list[str]:
     return updated_features
 
 
+def find_orphaned_pending_features(project_id: str) -> list[str]:
+    """Return IDs of pending features whose all dependencies are completed.
+
+    A "pending" feature whose declared dependencies have ALL transitioned
+    to 'completed' is an orphan: it should have been promoted to 'ready'
+    by the cascade but wasn't (typically because of a crash between the
+    feature status update and the dependent cascade in some prior version
+    of the code).
+
+    Implemented as a single SQL query (no N+1 round-trips) so it stays
+    cheap on the resume-recovery scan even with thousands of pending
+    features. Specifically:
+
+    * ``EXISTS (... feature_dependencies fd ...)`` — only consider
+      features that actually have at least one declared dependency. A
+      'pending' feature with no deps is genuinely pending (e.g. it has
+      not yet met its readiness threshold) and must be left alone.
+    * ``NOT EXISTS (... dep.status != 'completed' ...)`` — every
+      dependency is 'completed'. Combined with the EXISTS clause above,
+      this gives "has at least one dep AND no incomplete deps".
+
+    Args:
+        project_id: The project to scan.
+
+    Returns:
+        List of feature IDs (strings) that are orphaned pending and
+        ready to be promoted to 'ready'. Empty list if none.
+    """
+    sql = """
+        SELECT f.id FROM features f
+        WHERE f.project_id = ?
+          AND f.status = 'pending'
+          AND EXISTS (
+              SELECT 1 FROM feature_dependencies fd
+              WHERE fd.feature_id = f.id
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM feature_dependencies fd
+              JOIN features dep ON fd.depends_on_feature_id = dep.id
+              WHERE fd.feature_id = f.id
+                AND dep.status != 'completed'
+          )
+    """
+    with connect() as conn:
+        rows = conn.execute(sql, (project_id,)).fetchall()
+    return [row[0] for row in rows]
+
+
 def assess_feature_confidence(feature_id: str) -> dict[str, float]:
     """Assess confidence scores for a feature based on its description and criteria.
 

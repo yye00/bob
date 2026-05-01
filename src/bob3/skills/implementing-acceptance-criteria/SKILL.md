@@ -59,25 +59,67 @@ Operational notes:
 - **No `shell=True`.** Both helpers invoke `python` via an explicit argv
   list. Don't wrap your criterion in shell pipes — express what you need
   directly in the python or pytest expression.
+- **`python:` is for SIMPLE assertions only.** The form is intended for
+  one-line numerical or sanity checks (`assert abs(compute() - 1.37) <
+  0.02`, `assert json.dumps({"a":1}) == '{"a": 1}'`). Anything more
+  complex — multi-step setup, file I/O, networking, subprocess, dynamic
+  imports — belongs in a real test file invoked via `pytest:`. The
+  allowlist below is deliberately strict so that writing complex logic
+  inline is uncomfortable on purpose; rewriting as `pytest:` is the
+  intended fix.
 - **`python:` has an import/operation allowlist.** Because `python: <expr>`
-  runs arbitrary Python in the workspace, an expression that imports
-  `subprocess`, `socket`, `urllib`, `http`, `shutil`, or that calls
-  `eval`, `exec`, `__import__`, `compile`, `os.system`, `os.environ`,
-  `os.remove`, `os.unlink`, `shutil.rmtree`, or `open(..., "w")` is
-  refused before execution and reports
-  `"Refused: criterion uses banned operation '<op>'"`. The allowlist is
-  enforced by an AST scan, not a string match — renaming the import does
-  not bypass it. This is a hardening measure, not a full sandbox: writing
-  Python that escapes the check is possible with effort, but a single
-  malicious line will not work. **If you need unrestricted access (file
-  I/O, networking, subprocess, etc.), use the `pytest:` form.** Pytest is
-  itself sandboxed by the test framework — collection-time errors fail
-  the criterion safely, and a real test file gives you a place to write
-  setup/teardown that doesn't smuggle into the inline expression. The
-  reverse migration (rewriting a `python:` one-liner as a tiny
-  `tests/test_criterion.py` with one assertion plus a `pytest:` node id
-  pointing at it) is almost always the right move when the allowlist
-  rejects your criterion.
+  runs arbitrary Python in the workspace, the AST of the expression is
+  scanned before execution and refused if it uses any banned operation.
+  Banned categories (current as of the F124 hardening pass):
+    - **Banned modules** (top-level imports and `from <mod> import ...`):
+      `subprocess`, `socket`, `urllib`, `http`, `requests`, `ftplib`,
+      `telnetlib`, `smtplib`, `shutil`, `ctypes`, `multiprocessing`,
+      `pty`, `pickle`, `marshal`, `importlib`, `runpy`, `pkgutil`. The
+      last three close the dynamic-import escape (e.g.
+      `importlib.import_module("os")`).
+    - **Banned call names** (refused regardless of argument values):
+      `eval`, `exec`, `compile`, `__import__`, `getattr`, `setattr`,
+      `delattr`, `globals`, `locals`, `vars`. `getattr`/`setattr` are
+      banned even with constant args because the attacker can construct
+      any string at runtime; `globals`/`locals`/`vars` return mutable
+      namespaces.
+    - **Banned attribute names** (refused on access, with or without a
+      call): `system`, `popen`, `spawn*`, `exec*`, `remove`, `unlink`,
+      `rmdir`, `removedirs`, `rmtree`, `environ`, `putenv`, `chmod`,
+      `chown`, `kill`, `killpg`, `fork`, `forkpty`, plus the dunder
+      escape-path attributes `__class__`, `__bases__`, `__subclasses__`,
+      `__mro__`, `mro`, `__dict__`, `__globals__`, `__builtins__`,
+      `__init_subclass__`, `__getattribute__`, `__getattr__`. The dunder
+      set blocks the classic
+      `().__class__.__bases__[0].__subclasses__()` sandbox-escape walk.
+    - **`open(<path>, <mode>)` write modes** (any of `w`, `a`, `x`, `+`)
+      are refused. Read modes (`r`, default) are allowed for sentinel
+      files.
+  Refusal reports `"Refused: criterion uses banned operation '<op>'"`.
+
+### Why this is restricted
+
+The allowlist is **not a sandbox**. Python sandboxing is fundamentally
+unsolved — given enough effort, an expression can probably escape any
+ban set we install. The goal is much narrower: **prevent a single
+careless or malicious line from doing damage with no effort at all**.
+Concretely, this layer exists to:
+
+1. **Stop trivially exploitable specs.** A spec author who writes
+   `python: import os; os.system("rm -rf ~")` should be refused before
+   the subprocess runs, not after.
+2. **Make footguns visible.** If your criterion needs `subprocess` or
+   `urllib`, that's a strong signal you should be using `pytest:` with
+   a real test file that has setup/teardown and a clear failure mode.
+3. **Force the right form for the job.** `python:` is for one-line
+   assertions; `pytest:` is for everything else. The allowlist nudges
+   spec authors toward the form that matches their use case.
+
+If a benign criterion is rejected, **rewrite it as a `pytest:` node**
+pointing at a small `tests/test_criterion.py`. That is the documented
+escape hatch and is almost always cleaner anyway — pytest gives you
+fixtures, isolation, and clear failure reporting that an inline
+expression cannot.
 
 ## How to write criteria-driven code
 

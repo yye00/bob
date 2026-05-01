@@ -1423,6 +1423,72 @@ class TestSelfTestRecursionGuard:
         assert result.get("severity") == "warning"
         assert "recursion guard" in result["details"].lower()
 
+    def test_workspace_at_bob3_repo_root_fires_guard(self):
+        """Bug 4 (off-by-one): workspace at bob3 repo root must trip the guard.
+
+        Previously the guard was anchored at ``parents[1]`` (``src/``), so
+        passing the bob3 *repo root* (``parents[2]``) — which is NOT under
+        ``src/`` — would NOT trigger the guard and the verifier would
+        recursively run bob3's own pytest suite. Anchoring the guard at the
+        repo root fixes that.
+        """
+        import bob3
+        bob3_repo_root = pathlib.Path(bob3.__file__).resolve().parents[2]
+
+        from bob3.superpowers import _check_tests_pass
+
+        result = _check_tests_pass(bob3_repo_root, "src", "tests")
+        assert result["name"] == "tests_pass"
+        assert result["passed"] is True
+        assert result.get("severity") == "warning"
+        assert "recursion guard" in result["details"].lower()
+
+    def test_workspace_at_bob3_src_subdirectory_fires_guard(self):
+        """A real subdirectory of the bob3 repo (``<bob3>/src``) triggers the guard."""
+        import bob3
+        bob3_src_dir = pathlib.Path(bob3.__file__).resolve().parents[1]
+        # Sanity: this is a real path on disk inside the repo.
+        assert bob3_src_dir.is_dir()
+        assert bob3_src_dir.name == "src"
+
+        from bob3.superpowers import _check_tests_pass
+
+        result = _check_tests_pass(bob3_src_dir, "bob3", "tests")
+        assert result["name"] == "tests_pass"
+        assert result["passed"] is True
+        assert result.get("severity") == "warning"
+        assert "recursion guard" in result["details"].lower()
+
+    def test_unrelated_project_src_does_not_fire_guard(self, tmp_path):
+        """An unrelated project whose workspace is its own ``src/`` must NOT be skipped.
+
+        Previous off-by-one anchored the guard at bob3's ``src/``. Any
+        workspace whose resolved path was an unrelated ``.../src`` would
+        compare unequal to bob3's specific ``src/`` and not trip — that's
+        fine — but the regression case it allowed was a workspace like
+        ``<bob3>/src/another_thing/`` (a child of bob3's ``src/``) being
+        treated as bob3 itself even when it was an unrelated nested
+        project. We assert here that an unrelated workspace at
+        ``<unrelated>/src/`` outside the bob3 repo does NOT fire the
+        guard, regardless of being named ``src``.
+        """
+        # Build an unrelated project at <tmp>/unrelated_project with a real
+        # src/ and a tiny passing test under tests/. _check_tests_pass on
+        # the unrelated src/ must NOT short-circuit on the recursion guard;
+        # since unrelated_src has no Python sources of its own under "src",
+        # the natural exit is the "no Python source files" warning, NOT
+        # the recursion-guard warning.
+        unrelated = tmp_path / "unrelated_project"
+        unrelated_src = unrelated / "src"
+        unrelated_src.mkdir(parents=True)
+
+        from bob3.superpowers import _check_tests_pass
+
+        result = _check_tests_pass(unrelated_src, "src", "tests")
+        assert result["name"] == "tests_pass"
+        # Must not have hit the recursion guard.
+        assert "recursion guard" not in result["details"].lower()
+
 
 # ===================================================================
 # No forbidden patterns

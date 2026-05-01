@@ -620,3 +620,200 @@ class TestCLIFreshFlag:
         # --help should show the flag in output
         assert result.exit_code == 0
         assert "--fresh" in result.output or "fresh" in result.output
+
+
+# ============================================================
+# Orphaned-pending recovery: scalability regression
+# ============================================================
+
+
+class TestOrphanedPendingRecoveryPerformance:
+    """The orphan-recovery scan must use a single SQL query, not N+1.
+
+    The pre-fix implementation looped over all 'pending' features and
+    issued ``get_feature_dependencies`` + ``get_feature`` for each, so a
+    project with N pending features and D deps each cost roughly
+    1 + N*(1+D) DB round-trips. The fix moves the detection into a
+    single ``find_orphaned_pending_features`` query plus N small
+    UPDATEs. This test pins both correctness (only true orphans
+    promoted) and a generous wall-clock budget so a regression that
+    re-introduced the N+1 fetch loop would fail loudly.
+    """
+
+    def test_finds_only_orphaned_pending_features(self, tmp_db, project):
+        """Mixed orphaned and non-orphaned populations: pick only orphans."""
+        from bob3.db import (
+            add_feature_dependency,
+            create_feature,
+            find_orphaned_pending_features,
+            update_feature,
+        )
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            # Build 10 'completed' anchor features that orphans depend on.
+            anchors = []
+            for i in range(10):
+                f = create_feature(
+                    project_id=project.id,
+                    name=f"anchor-{i}",
+                    description="completed dependency",
+                    status="ready",
+                    priority=1,
+                    risk_category="low",
+                )
+                update_feature(f.id, status="completed")
+                anchors.append(f)
+
+            # Build a single 'pending' anchor for the non-orphans.
+            non_completed_anchor = create_feature(
+                project_id=project.id,
+                name="non-completed-anchor",
+                description="still pending",
+                status="ready",
+                priority=1,
+                risk_category="low",
+            )
+            update_feature(non_completed_anchor.id, status="pending")
+
+            # 100 orphaned pending features: each depends on 2 completed anchors.
+            orphan_ids = []
+            for i in range(100):
+                f = create_feature(
+                    project_id=project.id,
+                    name=f"orphan-{i}",
+                    description="orphaned pending",
+                    status="ready",
+                    priority=1,
+                    risk_category="low",
+                )
+                update_feature(f.id, status="pending")
+                add_feature_dependency(
+                    feature_id=f.id,
+                    depends_on_feature_id=anchors[i % 10].id,
+                )
+                add_feature_dependency(
+                    feature_id=f.id,
+                    depends_on_feature_id=anchors[(i + 1) % 10].id,
+                )
+                orphan_ids.append(f.id)
+
+            # 100 non-orphaned pending features: each depends on the
+            # still-pending anchor (so they should NOT be promoted).
+            non_orphan_ids = []
+            for i in range(100):
+                f = create_feature(
+                    project_id=project.id,
+                    name=f"non-orphan-{i}",
+                    description="legitimate pending",
+                    status="ready",
+                    priority=1,
+                    risk_category="low",
+                )
+                update_feature(f.id, status="pending")
+                add_feature_dependency(
+                    feature_id=f.id,
+                    depends_on_feature_id=non_completed_anchor.id,
+                )
+                non_orphan_ids.append(f.id)
+
+            found = find_orphaned_pending_features(project.id)
+            assert set(found) == set(orphan_ids)
+            assert not (set(found) & set(non_orphan_ids))
+
+    def test_recovery_scan_completes_quickly(self, tmp_db, project):
+        """100 orphans + 100 non-orphans, recovery completes in < 500ms.
+
+        With the single-query implementation this typically runs in
+        well under 100ms; the 500ms ceiling is generous and only meant
+        to fire if the N+1 fetch loop is reintroduced.
+        """
+        import time
+
+        from bob3.db import (
+            add_feature_dependency,
+            create_feature,
+            update_feature,
+        )
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            # 10 completed anchors used by orphans
+            anchors = []
+            for i in range(10):
+                f = create_feature(
+                    project_id=project.id,
+                    name=f"perf-anchor-{i}",
+                    description="dep",
+                    status="ready",
+                    priority=1,
+                    risk_category="low",
+                )
+                update_feature(f.id, status="completed")
+                anchors.append(f)
+
+            non_completed_anchor = create_feature(
+                project_id=project.id,
+                name="perf-non-completed",
+                description="dep",
+                status="ready",
+                priority=1,
+                risk_category="low",
+            )
+            update_feature(non_completed_anchor.id, status="pending")
+
+            # 100 orphans (deps all completed)
+            orphan_ids = []
+            for i in range(100):
+                f = create_feature(
+                    project_id=project.id,
+                    name=f"perf-orphan-{i}",
+                    description="orphan",
+                    status="ready",
+                    priority=1,
+                    risk_category="low",
+                )
+                update_feature(f.id, status="pending")
+                add_feature_dependency(
+                    feature_id=f.id,
+                    depends_on_feature_id=anchors[i % 10].id,
+                )
+                add_feature_dependency(
+                    feature_id=f.id,
+                    depends_on_feature_id=anchors[(i + 1) % 10].id,
+                )
+                orphan_ids.append(f.id)
+
+            # 100 non-orphans (one dep still pending)
+            for i in range(100):
+                f = create_feature(
+                    project_id=project.id,
+                    name=f"perf-nonorphan-{i}",
+                    description="non-orphan",
+                    status="ready",
+                    priority=1,
+                    risk_category="low",
+                )
+                update_feature(f.id, status="pending")
+                add_feature_dependency(
+                    feature_id=f.id,
+                    depends_on_feature_id=non_completed_anchor.id,
+                )
+
+            loop = OrchestrationLoop(project_id=project.id)
+
+            start = time.monotonic()
+            loop._recover_orphaned_pending_features()
+            elapsed_ms = (time.monotonic() - start) * 1000
+
+            # All 100 orphans should now be 'ready'; non-orphans stay 'pending'.
+            promoted = [
+                fid for fid in orphan_ids
+                if get_feature(fid).status == "ready"
+            ]
+            assert len(promoted) == 100, (
+                f"expected 100 promotions, got {len(promoted)}"
+            )
+
+            assert elapsed_ms < 500, (
+                f"orphan recovery took {elapsed_ms:.1f}ms — likely "
+                f"regressed back to N+1 query loop"
+            )

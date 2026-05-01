@@ -1,6 +1,7 @@
 """Tests for F007: Create cli.py with Click framework and basic command structure."""
 
 import pathlib
+import re
 
 import pytest
 from click.testing import CliRunner
@@ -88,6 +89,46 @@ class TestCommandsExist:
         actual = set(main.commands.keys())
         assert expected.issubset(actual), (
             f"Missing commands: {expected - actual}"
+        )
+
+    def test_all_documented_commands_exist(self):
+        """Every command listed in the README's command table must be registered.
+
+        Parses the README.md "Commands" table and asserts that each ``bob3 <cmd>``
+        entry corresponds to a registered Click command. This guards against
+        documentation drift where the README advertises a command that does not
+        actually exist (or vice versa, where a command is added without docs).
+        """
+        from bob3.cli import main
+
+        readme = (WORKSPACE / "README.md").read_text()
+
+        # Locate the "## Commands" section
+        match = re.search(
+            r"^##\s+Commands\s*$(.*?)(?=^##\s+|\Z)",
+            readme,
+            re.MULTILINE | re.DOTALL,
+        )
+        assert match is not None, "README.md must have a '## Commands' section"
+
+        commands_section = match.group(1)
+
+        # Extract command names from `bob3 <name>` occurrences in the table.
+        # The first column has rows like: | `bob3 init <path>` | ... |
+        documented = set()
+        for m in re.finditer(r"`bob3\s+([a-z][a-z-]*)", commands_section):
+            documented.add(m.group(1))
+
+        assert documented, (
+            "No commands could be parsed from the README Commands section; "
+            "table format may have changed."
+        )
+
+        registered = set(main.commands.keys())
+        missing = documented - registered
+        assert not missing, (
+            f"README documents commands that are not registered in cli.py: "
+            f"{sorted(missing)}"
         )
 
 

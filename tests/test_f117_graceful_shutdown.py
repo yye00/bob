@@ -635,9 +635,10 @@ class TestSignalHandlerIsAsyncSignalSafe:
             cost_so_far=0.1,
         )
 
+        # The handler must not perform any DB or subprocess I/O from
+        # signal context. We patch the I/O surfaces and verify the
+        # handler doesn't reach for them.
         with patch(
-            "bob3.signal_handler.GracefulShutdownHandler._perform_shutdown"
-        ) as perform, patch(
             "bob3.db.create_checkpoint"
         ) as create_cp, patch(
             "bob3.db.update_feature"
@@ -649,7 +650,6 @@ class TestSignalHandlerIsAsyncSignalSafe:
             # The flag must be set...
             assert handler.shutdown_requested is True
             # ...but no I/O must have happened from the handler.
-            perform.assert_not_called()
             create_cp.assert_not_called()
             upd.assert_not_called()
             stop_mcp.assert_not_called()
@@ -679,62 +679,6 @@ class TestSignalHandlerIsAsyncSignalSafe:
         mock_conn.execute.assert_not_called()
         mock_conn.cursor.assert_not_called()
 
-    def test_main_loop_can_call_perform_shutdown_safely(self, tmp_db, project):
-        """``_perform_shutdown`` is callable from regular (non-handler) code.
-
-        The public API requires that callers (the main loop) invoke
-        ``_perform_shutdown`` themselves once they observe the flag at
-        a safe point. This verifies it actually does the work in that
-        context.
-        """
-        import sqlite3
-
-        from bob3.signal_handler import GracefulShutdownHandler
-
-        with patch("bob3.db.get_database_path", return_value=tmp_db):
-            conn = sqlite3.connect(str(tmp_db))
-            conn.row_factory = sqlite3.Row
-            try:
-                feature = create_feature(
-                    project_id=project.id,
-                    name="safe-point feature",
-                    description="for shutdown test",
-                    status="executing",
-                    priority=1,
-                    risk_category="low",
-                )
-                handler = GracefulShutdownHandler(
-                    conn=conn, project_id=project.id
-                )
-                handler.set_active_feature(
-                    feature_id=feature.id,
-                    feature_data={
-                        "name": feature.name,
-                        "status": "executing",
-                    },
-                    cost_so_far=0.25,
-                )
-
-                # Simulate the main loop noticing the flag and calling
-                # the cleanup from a normal code path.
-                handler.shutdown_requested = True
-                with patch(
-                    "bob3.mcp_lifecycle.stop_mcp_server"
-                ) as stop_mcp:
-                    handler._perform_shutdown()
-
-                # Cleanup ran: feature is interrupted, MCP server stopped,
-                # shutdown_complete flag is set.
-                assert handler.shutdown_complete is True
-                stop_mcp.assert_called_once()
-
-                # And the feature was updated in the database (committed
-                # via the connection passed to the handler).
-                updated = get_feature(feature.id)
-                assert updated.status == "interrupted"
-            finally:
-                conn.close()
-
     def test_double_signal_raises_systemexit(self):
         """A second signal during shutdown raises :class:`SystemExit`.
 
@@ -763,7 +707,7 @@ class TestSignalHandlerIsAsyncSignalSafe:
 
         This mirrors what the orchestration loop does: poll
         ``shutdown_requested`` at a safe point between feature
-        executions, then call ``_perform_shutdown`` itself.
+        executions, then perform its own shutdown sequence.
         """
         from bob3.signal_handler import GracefulShutdownHandler
 

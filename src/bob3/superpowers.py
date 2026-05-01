@@ -112,13 +112,20 @@ def _check_tests_pass(workspace: pathlib.Path, src_dir: str, test_dir: str) -> d
             "details": f"workspace does not exist: {workspace}",
         }
 
-    # Recursion guard: if the workspace resolves to bob3's own source tree
-    # (during self-development), running pytest there would re-enter bob3's
-    # own test suite and may re-initialize memory backends or contaminate
-    # parent state. Skip with a warning instead.
+    # Recursion guard: if the workspace resolves to bob3's own repository
+    # tree (during self-development), running pytest there would re-enter
+    # bob3's own test suite and may re-initialize memory backends or
+    # contaminate parent state. Skip with a warning instead.
+    #
+    # parents[2] is the bob3 repo root, e.g. for
+    #   /home/.../bob3.1/src/bob3/__init__.py
+    # parents[0] = src/bob3, parents[1] = src/, parents[2] = bob3.1 (repo root).
+    # Using parents[1] (src/) would incorrectly skip any unrelated project
+    # whose workspace happened to be its own ``src/`` directory or a child
+    # of bob3's ``src/`` (e.g. ``bob3/src/another_thing/``).
     try:
         import bob3  # local import to avoid circulars during module load.
-        bob3_root = pathlib.Path(bob3.__file__).resolve().parents[1]  # src/
+        bob3_root = pathlib.Path(bob3.__file__).resolve().parents[2]  # repo root
         workspace_resolved = pathlib.Path(workspace).resolve()
         if workspace_resolved == bob3_root or bob3_root in workspace_resolved.parents:
             return {

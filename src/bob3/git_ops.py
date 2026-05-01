@@ -79,18 +79,39 @@ class GitRepoError(GitCommitError):
 # ---------------------------------------------------------------
 
 
-# Substrings that, when found in git stderr after a `git commit` failure,
-# indicate a hook rejection rather than a generic git error.
+# Substrings that, when found in git stderr/stdout after a `git commit`
+# failure, indicate a hook rejection rather than a generic git error.
+# Match is case-insensitive. ONLY actual hook markers belong here — do
+# not add generic git error fragments. Misclassifying infrastructure
+# errors (stale lockfiles, missing LFS, merge conflicts, etc.) as hook
+# failures routes them to the wrong recovery path.
 _HOOK_REJECTION_MARKERS = (
-    "pre-commit hook",
-    "commit-msg hook",
-    "pre-commit-msg hook",
-    "prepare-commit-msg hook",
-    "post-commit hook",
     "hook failed",
     "hook exited",
     "hook declined",
-    "hook script",
+    "hook script failed",
+    "pre-commit hook",
+    "commit-msg hook",
+    "pre-push hook",
+    "pre-receive hook",
+    # Common pre-commit framework outputs:
+    "files were modified by this hook",
+    "the .pre-commit-config.yaml file is not staged",
+)
+
+# Substrings that indicate a non-hook infrastructure failure: stale
+# lockfiles, missing executables, permissions issues, merge conflicts,
+# remote rejections, etc. These should be reported as GitCommitError —
+# they are not hook problems and the caller should not treat them as
+# such. Match is case-insensitive.
+_INFRASTRUCTURE_ERROR_MARKERS = (
+    "index.lock",
+    "could not lock",
+    "no such file or directory",
+    "permission denied",
+    "remote rejected",
+    "merge conflict",
+    "would be overwritten",
 )
 
 # Substrings indicating the directory isn't a git repository.
@@ -103,6 +124,11 @@ _NOT_A_REPO_MARKERS = (
 def _looks_like_hook_failure(stderr: str, stdout: str) -> bool:
     blob = f"{stderr}\n{stdout}".lower()
     return any(marker in blob for marker in _HOOK_REJECTION_MARKERS)
+
+
+def _looks_like_infrastructure_error(stderr: str, stdout: str) -> bool:
+    blob = f"{stderr}\n{stdout}".lower()
+    return any(marker in blob for marker in _INFRASTRUCTURE_ERROR_MARKERS)
 
 
 def _looks_like_not_a_repo(stderr: str, stdout: str, *, workspace: str) -> bool:
@@ -233,7 +259,9 @@ def commit_feature(
 
     if commit_result.returncode != 0:
         full_cmd = ["git"] + commit_cmd
-        # Distinguish: hook rejection vs. repo error vs. anything else.
+        # Distinguish: repo error vs. hook rejection vs. infrastructure
+        # vs. anything else. Order matters: a missing repo always wins
+        # because almost every other check would also match.
         if _looks_like_not_a_repo(
             commit_result.stderr, commit_result.stdout, workspace=workspace
         ):
@@ -244,6 +272,13 @@ def commit_feature(
                 stderr=commit_result.stderr,
                 command=full_cmd,
             )
+        # Only classify as a hook failure when stderr/stdout actually
+        # contains a recognized hook marker. There is no heuristic
+        # fallback — silent failures and unrecognized output are
+        # generic GitCommitError. This avoids misclassifying
+        # infrastructure errors (stale lock files, missing LFS,
+        # permission denials, merge conflicts, etc.) as hook
+        # rejections.
         if _looks_like_hook_failure(commit_result.stderr, commit_result.stdout):
             raise GitHookFailedError(
                 f"git commit rejected by hook (rc={commit_result.returncode}): "
@@ -253,25 +288,27 @@ def commit_feature(
                 stderr=commit_result.stderr,
                 command=full_cmd,
             )
-        # Heuristic fallback: if a commit fails with a non-zero return code
-        # but the stderr is empty or short and there ARE staged changes, it's
-        # most likely a hook that exited non-zero without a recognizable
-        # message. Treat as hook failure rather than a generic error so the
-        # caller can route it to needs_human and surface the output.
+        # Infrastructure errors (lockfile, missing tool, permissions,
+        # merge conflict, etc.) — surfaced as GitCommitError so the
+        # caller can apply the correct recovery (retry / wait / human
+        # intervention) rather than the hook-rejection path.
         combined = (commit_result.stderr + commit_result.stdout).strip()
-        if combined:
-            # Plausible hook output without a recognized marker.
-            raise GitHookFailedError(
+        if _looks_like_infrastructure_error(
+            commit_result.stderr, commit_result.stdout
+        ):
+            raise GitCommitError(
                 f"git commit failed (rc={commit_result.returncode}): "
-                f"{combined}",
+                f"{combined or 'infrastructure error'}",
                 returncode=commit_result.returncode,
                 stdout=commit_result.stdout,
                 stderr=commit_result.stderr,
                 command=full_cmd,
             )
+        # Anything else: generic git failure. We do NOT promote this to
+        # GitHookFailedError just because output is non-empty.
         raise GitCommitError(
-            f"git commit failed (rc={commit_result.returncode}) "
-            f"with no output",
+            f"git commit failed (rc={commit_result.returncode})"
+            + (f": {combined}" if combined else " with no output"),
             returncode=commit_result.returncode,
             stdout=commit_result.stdout,
             stderr=commit_result.stderr,

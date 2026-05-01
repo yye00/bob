@@ -43,19 +43,18 @@ def _is_bob3_managed(dest: Path, bundled_skills_dir: Path) -> bool:
     """Return True if ``dest`` is a bob3-managed install (symlink or copy).
 
     A path counts as bob3-managed if:
-    - It is a symlink (we always assume our installs use symlinks where
-      possible; users editing skills would use real directories).
-    - It is a real directory but every file present is identical-by-name
-      to a file under the corresponding bundled skill directory and it
-      contains a SKILL.md (heuristic for a copy fallback we made).
+    - It is a symlink that resolves INTO the current bob3 bundled
+      skills directory (i.e. a link we installed). User-created
+      symlinks pointing at their own external skill dir are NOT
+      considered ours.
+    - It is a real directory containing the ``.bob3-installed`` marker
+      file (copy-fallback installs we own), provided the skill name
+      matches a bundled skill.
 
     For safety, we err on the side of *not* deleting unless we are sure.
-    A symlink is always considered ours; real directories are only
-    considered ours if a sentinel marker (``.bob3-installed``) is
-    present.
     """
     if dest.is_symlink():
-        return True
+        return _symlink_resolves_into(dest, bundled_skills_dir)
     marker = dest / ".bob3-installed"
     if dest.is_dir() and marker.is_file():
         # Cross-check that the skill name matches a bundled skill.
@@ -252,12 +251,17 @@ def install_skills_to_workspace(
 def clean_workspace_skills(workspace: str | Path) -> list[str]:
     """Remove only bob3-installed skills from a workspace.
 
-    Walks ``<workspace>/.claude/skills/`` and removes:
-    - any symlink (assumed to be a bob3 install — we never create real
-      directories without a sentinel marker),
-    - any directory containing the ``.bob3-installed`` marker file.
+    Walks ``<workspace>/.claude/skills/`` and removes only entries that
+    are bob3-managed, as determined by :func:`_is_bob3_managed`:
 
-    User-created directories (no symlink, no marker) are left alone.
+    - symlinks that resolve into the current bob3 bundled skills
+      directory (i.e. links we created), and
+    - real directories that contain the ``.bob3-installed`` marker
+      file (copy-fallback installs we own).
+
+    User-created entries — including symlinks pointing at the user's
+    own skills outside the bob3 bundled tree, and plain directories
+    without the marker — are left alone.
 
     Returns the list of skill names that were removed.
     """
@@ -270,10 +274,7 @@ def clean_workspace_skills(workspace: str | Path) -> list[str]:
 
     removed: list[str] = []
     for entry in sorted(target_dir.iterdir()):
-        if entry.is_symlink():
-            if _remove_dest(entry):
-                removed.append(entry.name)
-        elif entry.is_dir() and _is_bob3_managed(entry, source_dir):
+        if _is_bob3_managed(entry, source_dir):
             if _remove_dest(entry):
                 removed.append(entry.name)
         # else: user-owned, skip

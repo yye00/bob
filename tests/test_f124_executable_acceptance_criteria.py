@@ -570,3 +570,269 @@ class TestPythonCriterionAllowlist:
             is_opm_project=False,
         )
         assert passed is True, details
+
+    # ------------------------------------------------------------------
+    # Bypass-closure tests — ensure each historical allowlist hole stays
+    # closed. These exercise the second hardening pass that added
+    # ``importlib``/``runpy``/``pkgutil`` to the banned-module set,
+    # ``getattr``/``setattr``/``delattr``/``globals``/``locals``/``vars``
+    # to the banned-call-name set, and the dunder escape-path attributes
+    # (``__class__``, ``__bases__``, ``__subclasses__``, ``__mro__``,
+    # ``mro``, ``__dict__``, ``__globals__``, ``__builtins__``,
+    # ``__init_subclass__``, ``__getattribute__``) to the banned-attribute
+    # set.
+    # ------------------------------------------------------------------
+
+    def test_importlib_import_module_is_refused(self, tmp_path):
+        """``importlib.import_module("os")`` is the canonical bypass for
+        the ``import os`` ban — ``importlib`` itself must be banned."""
+        passed, details = _check_criterion_with_details(
+            criterion=(
+                'python: import importlib; m = importlib.import_module("os")'
+            ),
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "importlib" in details.lower()
+
+    def test_runpy_is_refused(self, tmp_path):
+        """``runpy`` can execute modules as ``__main__``; it must be banned."""
+        passed, details = _check_criterion_with_details(
+            criterion='python: import runpy; runpy.run_module("os")',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "runpy" in details.lower()
+
+    def test_pkgutil_is_refused(self, tmp_path):
+        """``pkgutil`` exposes loader-fetching primitives; it must be banned."""
+        passed, details = _check_criterion_with_details(
+            criterion='python: import pkgutil; pkgutil.find_loader("os")',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "pkgutil" in details.lower()
+
+    def test_getattr_with_dunder_import_is_refused(self, tmp_path):
+        """``getattr(__import__("os"), "system")("id")`` must be refused.
+
+        ``getattr`` lets the attacker construct any attribute name dynamically,
+        so the attribute allowlist alone is insufficient — ``getattr`` is
+        banned by name regardless of its arguments.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion='python: getattr(__import__("os"), "system")("id")',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        # ``__import__`` happens to be the first banned token reached in
+        # AST walk order, but either token is acceptable proof of refusal.
+        assert "getattr" in details or "__import__" in details
+
+    def test_getattr_alone_is_refused_even_with_benign_args(self, tmp_path):
+        """``getattr`` is banned regardless of args — even ``getattr(x, "y")``.
+
+        A spec that legitimately needs ``getattr`` should use ``pytest:``
+        with a real test file. We deliberately do not try to allow
+        "obviously safe" ``getattr`` calls because the attacker controls
+        the args.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion='python: x = object(); v = getattr(x, "__class__")',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+
+    def test_setattr_is_refused(self, tmp_path):
+        """``setattr(sys, "argv", [])`` must be refused — state-mutation hole."""
+        passed, details = _check_criterion_with_details(
+            criterion='python: import sys; setattr(sys, "argv", [])',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "setattr" in details
+
+    def test_delattr_is_refused(self, tmp_path):
+        passed, details = _check_criterion_with_details(
+            criterion='python: x = object(); delattr(x, "y")',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "delattr" in details
+
+    def test_globals_is_refused(self, tmp_path):
+        """``globals()`` returns a mutable dict over the caller namespace."""
+        passed, details = _check_criterion_with_details(
+            criterion='python: g = globals(); g["x"] = 1',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "globals" in details
+
+    def test_locals_is_refused(self, tmp_path):
+        passed, details = _check_criterion_with_details(
+            criterion="python: l = locals()",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "locals" in details
+
+    def test_vars_is_refused(self, tmp_path):
+        passed, details = _check_criterion_with_details(
+            criterion="python: v = vars()",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "vars" in details
+
+    def test_class_bases_subclasses_chain_is_refused(self, tmp_path):
+        """``().__class__.__bases__[0].__subclasses__()`` is the classic
+        sandbox-escape pattern. Every link in the chain is independently
+        banned via the dunder-attribute set."""
+        passed, details = _check_criterion_with_details(
+            criterion="python: ().__class__.__bases__[0].__subclasses__()",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        # The first banned attribute hit in AST walk order is acceptable.
+        assert (
+            "__class__" in details
+            or "__bases__" in details
+            or "__subclasses__" in details
+        )
+
+    def test_mro_method_is_refused(self, tmp_path):
+        """``cls.mro()`` and ``cls.__mro__`` must both be refused."""
+        passed, details = _check_criterion_with_details(
+            criterion="python: x = int.mro()",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "mro" in details
+
+    def test_dunder_mro_attribute_is_refused(self, tmp_path):
+        passed, details = _check_criterion_with_details(
+            criterion='python: x = "".__class__.__mro__',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+
+    def test_func_globals_attribute_is_refused(self, tmp_path):
+        """``f.__globals__`` exposes the caller's globals — refused."""
+        passed, details = _check_criterion_with_details(
+            criterion="python: f = lambda: 0; g = f.__globals__",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "__globals__" in details
+
+    def test_builtins_getattribute_is_refused(self, tmp_path):
+        """``__builtins__.__getattribute__("eval")`` must be refused.
+
+        Both ``__builtins__`` (the namespace) and ``__getattribute__``
+        (the dunder accessor) are independently banned.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion=(
+                'python: f = __builtins__.__getattribute__("eval")'
+            ),
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+
+    def test_dict_attribute_is_refused(self, tmp_path):
+        """``obj.__dict__`` is a mutable namespace and is refused."""
+        passed, details = _check_criterion_with_details(
+            criterion="python: x = object(); d = x.__dict__",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "__dict__" in details
+
+    def test_benign_json_dumps_still_works(self, tmp_path):
+        """``import json; json.dumps(...)`` is a normal benign use case."""
+        passed, details = _check_criterion_with_details(
+            criterion='python: import json; assert json.dumps({"a": 1}) == \'{"a": 1}\'',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, f"benign json criterion incorrectly refused: {details!r}"
+        assert details == ""
+
+    def test_benign_sum_assertion_still_works(self, tmp_path):
+        """``assert sum([1,2,3]) == 6`` must not be a false positive."""
+        passed, details = _check_criterion_with_details(
+            criterion="python: assert sum([1,2,3]) == 6",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, f"benign sum criterion incorrectly refused: {details!r}"
+        assert details == ""

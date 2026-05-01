@@ -64,6 +64,16 @@ _PYTHON_CRITERION_BANNED_MODULES: frozenset[str] = frozenset(
         "pty",
         "pickle",
         "marshal",
+        # Dynamic-import escape hatches: each provides a way to load and
+        # execute another module by name, sidestepping the static ``import``
+        # check above. ``importlib.import_module("os")`` is the canonical
+        # bypass; ``runpy.run_module`` runs a module as ``__main__`` (which
+        # can include a side-effecting top level); ``pkgutil`` exposes
+        # ``find_loader`` / ``get_loader`` that return loadable module
+        # objects.
+        "importlib",
+        "runpy",
+        "pkgutil",
     }
 )
 
@@ -72,12 +82,24 @@ _PYTHON_CRITERION_BANNED_MODULES: frozenset[str] = frozenset(
 # ``compile(...)`` etc. by AST name and by attribute access (``foo.eval``,
 # ``builtins.exec``). We also catch ``open(..., "w")`` style writes via a
 # specialised check on ``open``.
+#
+# ``getattr``/``setattr``/``delattr`` are refused because they let an
+# attacker construct any attribute name dynamically (``getattr(o, "sys"+
+# "tem")``), bypassing the attribute-name allowlist below. ``globals``,
+# ``locals``, and ``vars`` return mutable mappings of the caller's
+# namespace; mutating them is an arbitrary-code-execution primitive.
 _PYTHON_CRITERION_BANNED_CALL_NAMES: frozenset[str] = frozenset(
     {
         "eval",
         "exec",
         "compile",
         "__import__",
+        "getattr",
+        "setattr",
+        "delattr",
+        "globals",
+        "locals",
+        "vars",
     }
 )
 
@@ -85,6 +107,15 @@ _PYTHON_CRITERION_BANNED_CALL_NAMES: frozenset[str] = frozenset(
 # they hang off (``os.system``, ``shutil.rmtree``, ``os.environ``, etc.).
 # Matching is on the trailing attribute name only — that catches both
 # ``os.system(...)`` and ``import os as _o; _o.system(...)``.
+#
+# The dunder attributes below close the classic Python sandbox-escape
+# pattern that walks the class hierarchy to reach ``object.__subclasses__``
+# and from there any class in the running interpreter (most notably
+# ``BuiltinImporter`` / ``Popen`` / etc.). Examples blocked:
+#   ``().__class__.__bases__[0].__subclasses__()``
+#   ``"".__class__.__mro__[-1].__subclasses__()``
+#   ``(lambda: 0).__globals__["__builtins__"]``
+#   ``__builtins__.__getattribute__("eval")``
 _PYTHON_CRITERION_BANNED_ATTRIBUTES: frozenset[str] = frozenset(
     {
         "system",
@@ -110,6 +141,18 @@ _PYTHON_CRITERION_BANNED_ATTRIBUTES: frozenset[str] = frozenset(
         "killpg",
         "fork",
         "forkpty",
+        # Dunder attribute escape paths.
+        "__class__",
+        "__bases__",
+        "__subclasses__",
+        "__mro__",
+        "mro",
+        "__dict__",
+        "__globals__",
+        "__builtins__",
+        "__init_subclass__",
+        "__getattribute__",
+        "__getattr__",
     }
 )
 
@@ -128,9 +171,30 @@ def _expression_uses_banned_operation(expression: str) -> str | None:
 
     This is intentionally minimal — it catches the obvious paths
     (``import os; os.system(...)``, ``__import__("subprocess")``,
-    ``open("/etc/passwd", "w")``) but does NOT prevent every possible
-    abuse (e.g. ``getattr(__builtins__, "ev"+"al")(...)``). It raises
-    the bar enough that a spec can't trivially shell out.
+    ``open("/etc/passwd", "w")``, ``getattr(__import__("os"), "system")``,
+    ``().__class__.__bases__[0].__subclasses__()``,
+    ``__builtins__.__getattribute__("eval")``) but is NOT a sandbox.
+    Specs needing unrestricted access should use the ``pytest:`` form,
+    which is itself sandboxed by the test framework.
+
+    Detection rules:
+        * ``import <banned>`` / ``from <banned> import ...`` are refused —
+          including dynamic-import escape modules like ``importlib``,
+          ``runpy``, ``pkgutil``.
+        * Bare-name calls (``eval(...)``, ``__import__(...)``,
+          ``getattr(...)``, ``setattr(...)``, ``globals()``,
+          ``locals()``, ``vars()``) are refused regardless of argument
+          form. ``getattr(o, name)`` is refused even when ``name`` is a
+          dynamically constructed (non-constant) string, because the
+          attacker controls the construction.
+        * Attribute-call form (``foo.system(...)``,
+          ``cls.__subclasses__()``, ``obj.__getattribute__(...)``) is
+          refused on the trailing attribute name.
+        * Bare attribute reads (``os.environ``, ``().__class__``,
+          ``f.__globals__``, ``__builtins__.__dict__``) are refused —
+          mutable namespaces and dunder escape-paths are blocked even
+          without a call.
+        * Bare references to banned builtins (``f = eval``) are refused.
     """
     try:
         tree = ast.parse(expression, mode="exec")
@@ -162,7 +226,11 @@ def _expression_uses_banned_operation(expression: str) -> str | None:
             if bad is not None:
                 return f"from {bad} import ..."
 
-        # Plain-name calls: ``eval(...)``, ``exec(...)``, ``__import__(...)``.
+        # Plain-name calls: ``eval(...)``, ``exec(...)``, ``__import__(...)``,
+        # ``getattr(...)``, ``setattr(...)``, ``globals()``, ``locals()``,
+        # ``vars()``. These are refused regardless of the form of their
+        # arguments — ``getattr(__import__("os"), "sys"+"tem")`` is just as
+        # dangerous as ``getattr(o, "system")``, so we never look at args.
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
@@ -184,19 +252,28 @@ def _expression_uses_banned_operation(expression: str) -> str | None:
                         ch in _OPEN_WRITE_MODE_CHARS for ch in mode_str
                     ):
                         return f"open(..., {mode_str!r})"
-            # Attribute calls: ``os.system(...)``, ``shutil.rmtree(...)``.
+            # Attribute calls: ``os.system(...)``, ``shutil.rmtree(...)``,
+            # ``cls.__subclasses__()``, ``obj.__getattribute__("eval")``.
+            # We also refuse attribute-call forms of the banned-call-name
+            # set (``builtins.getattr(...)``, ``b.eval(...)``) so a wrapper
+            # module can't smuggle in the call.
             if isinstance(func, ast.Attribute):
                 if func.attr in _PYTHON_CRITERION_BANNED_ATTRIBUTES:
+                    return f".{func.attr}(...)"
+                if func.attr in _PYTHON_CRITERION_BANNED_CALL_NAMES:
                     return f".{func.attr}(...)"
 
         # Bare attribute access (no call): ``os.environ`` is dangerous even
         # without a call because it's a mutable mapping the expression can
-        # mutate. ``Call`` was already handled above; here we catch reads.
+        # mutate. ``Call`` was already handled above; here we catch reads
+        # of dunder escape-path attributes (``().__class__``,
+        # ``f.__globals__``, ``cls.__bases__``, ``obj.__dict__``) too.
         elif isinstance(node, ast.Attribute):
             if node.attr in _PYTHON_CRITERION_BANNED_ATTRIBUTES:
                 return f".{node.attr}"
 
-        # Bare name reference to a banned builtin (e.g. ``f = eval``).
+        # Bare name reference to a banned builtin (e.g. ``f = eval``,
+        # ``g = getattr``). Catches "rename then call" smuggling.
         elif isinstance(node, ast.Name):
             if node.id in _PYTHON_CRITERION_BANNED_CALL_NAMES:
                 return node.id

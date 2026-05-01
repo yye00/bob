@@ -60,6 +60,40 @@ The loop runs until one of these termination conditions:
 - All remaining features are blocked/failed
 - Budget is exceeded
 - Graceful shutdown is requested (SIGINT/SIGTERM)
+
+Shutdown handling — where it lives
+----------------------------------
+``OrchestrationLoop._install_signal_handlers`` installs an inline
+flag-setting handler that simply sets ``self.shutdown_requested = True``.
+The flag is then checked between feature iterations at the top of
+``run()``; once observed, the loop stops the MCP server and returns
+``LoopTermination.SHUTDOWN_REQUESTED``. The actual shutdown sequence
+(checkpoint creation, marking features 'interrupted', MCP cleanup) lives
+HERE in the loop, NOT in ``bob3.signal_handler.GracefulShutdownHandler``.
+
+That handler class is currently retained only for its async-signal-safe
+flag-setting primitive and the tests that pin that contract; its earlier
+``_perform_shutdown`` method was unwired in production and has been
+removed. If a future refactor wants to centralize the shutdown sequence
+into a reusable handler, do it via dependency injection rather than the
+previous hidden coupling.
+
+KNOWN LIMITATION — Ctrl-C latency during sub-agent execution
+------------------------------------------------------------
+``self.shutdown_requested`` is only checked between feature iterations
+in ``run()``. While ``await spawn_sub_agent(...)`` is in flight (which
+can take 10-20 minutes for a real implementation sub-agent), the flag
+is set by the signal handler but not acted on until the sub-agent
+returns. Pressing Ctrl-C during a long sub-agent will set the flag
+immediately and log a warning, but the loop will not actually stop
+until the current sub-agent finishes (or the second Ctrl-C raises
+SystemExit via the signal handler).
+
+TODO: plumb a shutdown-requested callable into ``spawn_sub_agent`` so
+the SDK message-consumption loop can cancel the client between message
+events. That requires changes in ``claude_executor.py`` and is not done
+here. As a stopgap, the loop logs a clear warning when shutdown is
+observed, telling the user roughly how long they might have to wait.
 """
 
 from __future__ import annotations
@@ -1421,13 +1455,14 @@ class OrchestrationLoop:
         # Clear current feature tracking
         self._current_feature = None
 
-        # Cascade update dependents — only when the feature truly succeeded
-        # (sub-agent succeeded AND verification passed AND the post-success
-        # git commit wasn't rejected by a hook). This is the second cascade
-        # (F123 layer); note handle_execution_result already ran
-        # update_dependent_features_readiness in the success path.
-        if not result.is_error and verification_passed and not git_hook_failed:
-            cascade_update_dependents(feature.id)
+        # Note: dependent cascade is NOT re-run here. ``handle_execution_result``
+        # already invokes ``db.complete_feature_and_cascade`` atomically on the
+        # success path (status flip + readiness cascade in a single SQLite
+        # transaction). A second ``cascade_update_dependents`` here would be
+        # idempotent but wastes DB round-trips, and on the git-hook-rejection
+        # path the dependents have already been rolled back inline above. The
+        # rollback path explicitly re-pins dependents to 'pending' there, so
+        # no further cascade work is needed at this point.
 
         return spawn_result
 
@@ -1527,9 +1562,38 @@ class OrchestrationLoop:
             )
 
     def _install_signal_handlers(self) -> None:
-        """Install signal handlers for graceful shutdown."""
+        """Install signal handlers for graceful shutdown.
+
+        The handler is intentionally minimal: it only sets the
+        ``shutdown_requested`` flag (async-signal-safe) and emits a
+        warning. The flag is observed at the top of ``run()`` between
+        feature iterations.
+
+        KNOWN LIMITATION (mirrored in the module docstring): if the
+        signal arrives while ``await spawn_sub_agent(...)`` is in
+        flight, the loop will not actually stop until that sub-agent
+        finishes. The warning below tells the user this so they know
+        why Ctrl-C "doesn't work immediately" and that a second Ctrl-C
+        will force-exit via :class:`SystemExit`.
+        """
         def handler(signum, frame):
-            logger.info("Received signal %s, requesting shutdown", signum)
+            sig_name = signal.Signals(signum).name if hasattr(signal, "Signals") else str(signum)
+            if self.shutdown_requested:
+                # Second signal: force immediate exit. Raising SystemExit
+                # from a signal handler is permitted (the interpreter
+                # unwinds via the regular exception path).
+                logger.warning(
+                    "Received %s again during shutdown — forcing immediate exit",
+                    sig_name,
+                )
+                raise SystemExit(128 + signum)
+
+            logger.warning(
+                "Received %s — graceful shutdown requested. "
+                "Shutdown will be honored after the current sub-agent finishes "
+                "(this can take several minutes). Press Ctrl-C again to force exit.",
+                sig_name,
+            )
             self.request_shutdown()
 
         try:
@@ -1627,51 +1691,32 @@ class OrchestrationLoop:
     def _recover_orphaned_pending_features(self) -> None:
         """Promote pending features whose deps are all completed to 'ready'.
 
-        A crash between ``update_feature(..., status='completed')`` and
-        ``update_dependent_features_readiness(...)`` would leave dependents
-        in 'pending' with all dependencies satisfied — a state the loop
-        would otherwise never escape. We scan for that case on every
-        startup and repair it. Logs each promotion at INFO so the operator
-        can see the recovery happen.
+        A crash between the feature status update and the dependent cascade
+        in ``db.complete_feature_and_cascade`` would leave dependents in
+        'pending' with all dependencies satisfied — a state the loop would
+        otherwise never escape. We scan for that case on every startup and
+        repair it.
+
+        Implementation note: orphan detection is a single indexed SQL query
+        in ``db.find_orphaned_pending_features`` rather than the prior
+        N+1-style fetch-and-loop. This keeps recovery cheap on projects
+        with thousands of pending features (one ``SELECT`` plus N small
+        ``UPDATE`` calls, instead of 1 + 2N round-trips).
         """
-        pending = db.list_features(project_id=self.project_id, status="pending")
-        if not pending:
+        orphaned_ids = db.find_orphaned_pending_features(self.project_id)
+        if not orphaned_ids:
             return
 
-        promoted: list[str] = []
-        for feat in pending:
-            deps = db.get_feature_dependencies(feat.id)
-            if not deps:
-                # No declared deps; 'pending' here means it never met
-                # readiness threshold — leave it alone.
-                continue
-            all_completed = True
-            for dep in deps:
-                dep_feature = db.get_feature(dep.depends_on_feature_id)
-                if dep_feature is None or dep_feature.status != "completed":
-                    all_completed = False
-                    break
-            if not all_completed:
-                continue
-            # All deps satisfied — this is an orphaned pending feature.
-            db.update_feature(feat.id, status="ready")
-            promoted.append(feat.id)
-            logger.info(
-                "Recovery: promoted orphaned pending feature %s (%s) to 'ready' "
-                "(all %d dependencies completed; likely stranded by a "
-                "mid-cascade crash)",
-                feat.id,
-                feat.name,
-                len(deps),
-            )
+        for fid in orphaned_ids:
+            db.update_feature(feature_id=fid, status="ready")
+            logger.warning("Recovered orphaned pending feature %s -> ready", fid)
 
-        if promoted:
-            logger.info(
-                "Mid-cascade crash recovery: promoted %d orphaned pending "
-                "feature(s) to 'ready': %s",
-                len(promoted),
-                ", ".join(p[:8] for p in promoted),
-            )
+        logger.info(
+            "Mid-cascade crash recovery: promoted %d orphaned pending "
+            "feature(s) to 'ready': %s",
+            len(orphaned_ids),
+            ", ".join(p[:8] for p in orphaned_ids),
+        )
 
     async def _run_single_feature(self) -> LoopTermination:
         """Run only the target feature (one iteration) then exit.
