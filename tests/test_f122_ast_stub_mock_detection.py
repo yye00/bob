@@ -154,7 +154,13 @@ class TestDetectStubFunctions:
         assert len(findings) == 0
 
     def test_multiple_stubs_all_flagged(self):
-        """Multiple stub functions should all be detected."""
+        """Multiple definitive stub functions should all be detected at error severity.
+
+        ``real_one`` here returns a literal (42), which is a *warning*-level
+        heuristic, not an error. We assert specifically about error-severity
+        findings to keep the original contract: the three definitive stubs
+        are all flagged at error.
+        """
         source = textwrap.dedent("""\
             def stub1():
                 pass
@@ -169,8 +175,9 @@ class TestDetectStubFunctions:
                 raise NotImplementedError
         """)
         findings = detect_stub_functions(source, "src/example.py")
-        assert len(findings) == 3
-        names = {f.function_name for f in findings}
+        error_findings = [f for f in findings if f.severity == "error"]
+        assert len(error_findings) == 3
+        names = {f.function_name for f in error_findings}
         assert names == {"stub1", "stub2", "stub3"}
 
     def test_class_method_stub_flagged(self):
@@ -184,14 +191,27 @@ class TestDetectStubFunctions:
         assert len(findings) == 1
         assert findings[0].function_name == "method_stub"
 
-    def test_function_with_only_return_none_not_flagged(self):
-        """A function that returns None is valid, not a stub."""
+    def test_function_with_only_return_none_flagged_as_warning(self):
+        """A function whose entire body is ``return None`` is a heuristic stub.
+
+        This used to be allowed (the original ast_checks only caught
+        pass/.../raise NotImplementedError) which let a determined agent
+        bypass the detector with ``return None``. The literal-return heuristic
+        catches that at ``severity="warning"`` — softer than error so legacy
+        callers gating on ``passed`` are unaffected, but the finding is still
+        surfaced for review.
+        """
         source = textwrap.dedent("""\
             def returns_none():
                 return None
         """)
         findings = detect_stub_functions(source, "src/example.py")
-        assert len(findings) == 0
+        assert len(findings) == 1
+        assert findings[0].function_name == "returns_none"
+        assert findings[0].severity == "warning"
+        # Definitive (error) stubs must NOT increase from this case.
+        error_findings = [f for f in findings if f.severity == "error"]
+        assert error_findings == []
 
     def test_invalid_syntax_returns_empty(self):
         """Invalid Python source should not crash, returns empty list."""
@@ -222,6 +242,174 @@ class TestDetectStubFunctions:
         findings = detect_stub_functions(source, "src/example.py")
         assert len(findings) == 1
         assert findings[0].function_name == "inner"
+
+    # ------------------------------------------------------------------
+    # Severity field — original patterns must remain ``severity="error"``.
+    # Regression coverage so a future change cannot silently downgrade
+    # them. See task: "Make sure to not break existing tests by changing
+    # the severity of ALREADY-detected patterns."
+    # ------------------------------------------------------------------
+
+    def test_pass_only_function_severity_is_error(self):
+        """Regression: ``def foo(): pass`` is still flagged at error severity."""
+        source = textwrap.dedent("""\
+            def foo():
+                pass
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        assert len(findings) == 1
+        assert findings[0].severity == "error"
+
+    def test_ellipsis_severity_is_error(self):
+        source = textwrap.dedent("""\
+            def bar():
+                ...
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        assert len(findings) == 1
+        assert findings[0].severity == "error"
+
+    def test_raise_not_implemented_severity_is_error(self):
+        source = textwrap.dedent("""\
+            def baz():
+                raise NotImplementedError("todo")
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        assert len(findings) == 1
+        assert findings[0].severity == "error"
+
+
+# ============================================================
+# Warning-severity heuristics for trivial-return stubs
+# ============================================================
+
+
+class TestWarningStubHeuristics:
+    """Step: catch trivial-return bypasses (``return 0``, ``return None``, ...).
+
+    These are softer signals than the ``pass`` / ``...`` /
+    ``raise NotImplementedError`` patterns — a function genuinely returning
+    a literal can be valid — so they are reported at ``severity="warning"``.
+    """
+
+    def test_compute_returning_zero_is_warning(self):
+        """``def compute(): return 0`` is a heuristic stub (warning)."""
+        source = textwrap.dedent("""\
+            def compute():
+                return 0
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        assert len(findings) == 1
+        assert findings[0].function_name == "compute"
+        assert findings[0].severity == "warning"
+        # Reason should call out the computation-name heuristic.
+        assert "computation" in findings[0].reason.lower()
+
+    def test_parse_returning_none_is_warning(self):
+        """``def parse(x): return None`` is a heuristic stub (warning)."""
+        source = textwrap.dedent("""\
+            def parse(x):
+                return None
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        assert len(findings) == 1
+        assert findings[0].function_name == "parse"
+        assert findings[0].severity == "warning"
+
+    def test_compute_underscore_prefix_returning_empty_dict_is_warning(self):
+        """The computation-name heuristic also matches ``compute_x``-style names."""
+        source = textwrap.dedent("""\
+            def compute_score():
+                return {}
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        assert len(findings) == 1
+        assert findings[0].function_name == "compute_score"
+        assert findings[0].severity == "warning"
+
+    def test_real_call_return_not_flagged(self):
+        """``def regular_func(): return computed_value()`` is NOT flagged.
+
+        Returning the result of a function call (not a literal) means real
+        work is happening, so neither the literal-return nor the
+        computation-name heuristic should fire.
+        """
+        source = textwrap.dedent("""\
+            def regular_func():
+                return computed_value()
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        assert findings == []
+
+    def test_compute_with_real_call_not_flagged(self):
+        """A computation-named function returning a real call is NOT flagged."""
+        source = textwrap.dedent("""\
+            def compute():
+                return real_helper(42)
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        assert findings == []
+
+    def test_return_self_attr_unassigned_is_warning(self):
+        """``return self.x`` where ``self.x`` is never assigned is a warning."""
+        source = textwrap.dedent("""\
+            class Thing:
+                def get_value(self):
+                    return self.value
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        # ``get_value`` returns ``self.value`` but no ``self.value = ...``
+        # exists in the class — heuristic fires.
+        assert len(findings) >= 1
+        get_value_findings = [f for f in findings if f.function_name == "get_value"]
+        assert len(get_value_findings) == 1
+        assert get_value_findings[0].severity == "warning"
+        # All findings here should be warnings (no error stubs).
+        assert all(f.severity == "warning" for f in findings)
+
+    def test_return_self_attr_assigned_elsewhere_not_flagged(self):
+        """``return self.x`` is fine when ``self.x`` is assigned somewhere."""
+        source = textwrap.dedent("""\
+            class Thing:
+                def __init__(self, v):
+                    self.value = v
+
+                def get_value(self):
+                    return self.value
+        """)
+        findings = detect_stub_functions(source, "src/example.py")
+        # ``__init__`` is not a stub (it has a real assignment), and
+        # ``get_value`` should NOT trigger the warning because
+        # ``self.value`` is assigned in ``__init__``.
+        assert findings == []
+
+    def test_warning_does_not_break_passed_flag(self):
+        """Heuristic warnings must NOT flip ``verify_no_stubs_or_mocks.passed``.
+
+        The aggregator only fails verification on error-severity findings;
+        otherwise legacy callers that gate on ``passed`` (or on
+        ``len(result["stub_findings"]) == 0``) would suddenly start failing
+        on benign ``return None`` patterns. Warnings live in a separate
+        ``stub_warnings`` field for review.
+        """
+        sources = {
+            "src/bob3/module.py": textwrap.dedent("""\
+                def returns_none():
+                    return None
+            """),
+        }
+        result = verify_no_stubs_or_mocks(sources)
+        assert result["passed"] is True
+        # Definitive (error) stub findings stay empty so legacy callers
+        # gating on this list don't suddenly fail.
+        assert result["stub_findings"] == []
+        # The warning is reported in the dedicated warnings list.
+        assert "stub_warnings" in result
+        assert len(result["stub_warnings"]) == 1
+        assert result["stub_warnings"][0].severity == "warning"
+        assert result["stub_warnings"][0].function_name == "returns_none"
+        # Summary still surfaces the warning so a human reviewer sees it.
+        assert "returns_none" in result["summary"]
 
 
 # ============================================================
@@ -318,11 +506,16 @@ class TestVerifyNoStubsOrMocks:
     """Test the combined verification function."""
 
     def test_clean_source_passes(self):
-        """Clean source with real implementations passes."""
+        """Clean source with real implementations passes.
+
+        Use a body that performs computation on its arguments — the
+        literal-return heuristic does not match because the return value
+        is not a literal, so no warning fires either.
+        """
         sources = {
             "src/bob3/module.py": textwrap.dedent("""\
-                def real_func():
-                    return 42
+                def real_func(a, b):
+                    return a + b
             """),
         }
         result = verify_no_stubs_or_mocks(sources)

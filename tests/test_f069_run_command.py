@@ -480,7 +480,15 @@ class TestContinuousLoop:
 
     @pytest.mark.asyncio
     async def test_loop_accumulates_cost(self, tmp_db, project, ready_features):
-        """Loop tracks cumulative cost across features."""
+        """Loop tracks cumulative cost across features.
+
+        Cost is now tracked atomically in the DB (project.total_cost_usd)
+        rather than in a separate in-memory accumulator that could drift.
+        Bug 1 regression test: self.total_cost is no longer incremented in
+        execute_feature; the canonical total lives in the DB.
+        """
+        from bob3.db import get_project
+
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             loop = OrchestrationLoop(project_id=project.id)
 
@@ -506,7 +514,9 @@ class TestContinuousLoop:
             ):
                 await loop.run()
 
-            assert loop.total_cost == pytest.approx(3.75)  # 3 features * 1.25
+            # Project DB total is the canonical accumulator: 3 features * 1.25
+            updated_project = get_project(project.id)
+            assert updated_project.total_cost_usd == pytest.approx(3.75)
 
 
 class TestCLIRunCommand:
@@ -542,3 +552,168 @@ class TestCLIRunCommand:
                     assert call_kwargs[1].get("max_cost") == 50.0 or (
                         len(call_kwargs[0]) > 1 and call_kwargs[0][1] == 50.0
                     )
+
+
+# ============================================================
+# Bug 4: --feature truly scopes to a single feature
+# ============================================================
+
+
+class TestRunFeatureScoping:
+    """'bob3 run --feature <id>' must run ONLY that feature."""
+
+    def test_run_feature_only_runs_target(self, tmp_db, project, ready_features):
+        """Bug 4 regression: --feature A must NOT run feature B.
+
+        Set up two ready features A and B in the same project. Invoke
+        'bob3 run --feature <A.id>' via CliRunner. Assert that A's status
+        changed (was processed) AND B's status is unchanged. Assert
+        exactly one spawn_sub_agent call.
+        """
+        feat_a = ready_features[0]
+        feat_b = ready_features[1]
+
+        async def mock_spawn(*args, **kwargs):
+            mock_result = ExecutionResult(
+                text="done",
+                is_error=False,
+                duration_ms=1000,
+                num_turns=5,
+                total_cost_usd=0.25,
+            )
+            mock_agent_run = MagicMock()
+            mock_agent_run.id = str(uuid.uuid4())
+            return SpawnResult(
+                execution_result=mock_result,
+                agent_run=mock_agent_run,
+            )
+
+        spawn_mock = AsyncMock(side_effect=mock_spawn)
+
+        runner = CliRunner()
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            with patch("bob3.cli.start_mcp_server"):
+                with patch(
+                    "bob3.orchestrator.run_loop.spawn_sub_agent", spawn_mock
+                ):
+                    result = runner.invoke(main, ["run", "--feature", feat_a.id])
+                    assert result.exit_code == 0, result.output
+
+            # Exactly one spawn — only A.
+            assert spawn_mock.call_count == 1, (
+                f"Expected exactly 1 spawn for --feature scoping, "
+                f"got {spawn_mock.call_count}"
+            )
+
+            # A was processed.
+            updated_a = get_feature(feat_a.id)
+            assert updated_a.status == "completed", (
+                f"Feature A should be completed, got {updated_a.status}"
+            )
+
+            # B was NOT processed — still 'ready' from the fixture.
+            updated_b = get_feature(feat_b.id)
+            assert updated_b.status == "ready", (
+                f"Feature B should be untouched (ready), got {updated_b.status}"
+            )
+
+    def test_run_feature_with_tiny_max_cost_returns_budget_exceeded(
+        self, tmp_db, project, ready_features
+    ):
+        """Bug 3 regression: --feature must honour --max-cost.
+
+        Pre-populate the project total_cost_usd above the max_cost so
+        budget_exceeded() trips before the feature is spawned. Assert
+        that no spawn occurred.
+        """
+        from bob3.db import update_project
+
+        feat_a = ready_features[0]
+
+        # Pre-populate so the budget is already exceeded.
+        update_project(project.id, total_cost_usd=0.50)
+
+        spawn_mock = AsyncMock()
+
+        runner = CliRunner()
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            with patch("bob3.cli.start_mcp_server"):
+                with patch(
+                    "bob3.orchestrator.run_loop.spawn_sub_agent", spawn_mock
+                ):
+                    result = runner.invoke(
+                        main,
+                        [
+                            "run",
+                            "--feature",
+                            feat_a.id,
+                            "--max-cost",
+                            "0.01",
+                        ],
+                    )
+                    assert result.exit_code == 0, result.output
+
+            # Budget gate should have prevented any spawn.
+            assert spawn_mock.call_count == 0, (
+                f"Expected 0 spawns when budget already exceeded, "
+                f"got {spawn_mock.call_count}"
+            )
+            # And the message should say budget exceeded.
+            assert "Budget" in result.output or "budget" in result.output
+
+    def test_run_feature_pending_with_unmet_deps_is_blocked(self, tmp_db, project):
+        """Bug 5 regression: a 'pending' target whose deps are not all
+        completed must NOT run; the loop returns ALL_BLOCKED.
+        """
+        from bob3.db import (
+            add_feature_dependency,
+            create_feature,
+            update_feature,
+        )
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            # Dependency that is NOT completed.
+            dep = create_feature(
+                project_id=project.id,
+                name="Dep",
+                status="pending",
+                priority=10,
+            )
+            target = create_feature(
+                project_id=project.id,
+                name="Target",
+                status="pending",
+                priority=20,
+            )
+            update_feature(
+                target.id,
+                conf_spec_understanding=0.9,
+                conf_impl_correctness=0.9,
+                conf_test_adequacy=0.9,
+                readiness_score=0.9,
+            )
+            add_feature_dependency(
+                feature_id=target.id, depends_on_feature_id=dep.id
+            )
+
+            spawn_mock = AsyncMock()
+
+            with patch("bob3.cli.start_mcp_server"):
+                with patch(
+                    "bob3.orchestrator.run_loop.spawn_sub_agent", spawn_mock
+                ):
+                    runner = CliRunner()
+                    result = runner.invoke(
+                        main, ["run", "--feature", target.id]
+                    )
+                    assert result.exit_code == 0, result.output
+
+            # No spawn should have happened.
+            assert spawn_mock.call_count == 0
+            # The CLI prints "Feature is blocked." for ALL_BLOCKED in
+            # single-feature mode.
+            assert "blocked" in result.output.lower()
+
+            # Target stayed pending; dep stayed pending.
+            assert get_feature(target.id).status == "pending"
+            assert get_feature(dep.id).status == "pending"

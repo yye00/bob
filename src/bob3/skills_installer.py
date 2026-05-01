@@ -13,6 +13,7 @@ existing workspaces).
 from __future__ import annotations
 
 import logging
+import shutil
 from importlib import resources
 from pathlib import Path
 
@@ -38,16 +39,154 @@ def list_bundled_skills() -> list[str]:
     )
 
 
-def install_skills_to_workspace(workspace: str | Path) -> list[str]:
+def _is_bob3_managed(dest: Path, bundled_skills_dir: Path) -> bool:
+    """Return True if ``dest`` is a bob3-managed install (symlink or copy).
+
+    A path counts as bob3-managed if:
+    - It is a symlink (we always assume our installs use symlinks where
+      possible; users editing skills would use real directories).
+    - It is a real directory but every file present is identical-by-name
+      to a file under the corresponding bundled skill directory and it
+      contains a SKILL.md (heuristic for a copy fallback we made).
+
+    For safety, we err on the side of *not* deleting unless we are sure.
+    A symlink is always considered ours; real directories are only
+    considered ours if a sentinel marker (``.bob3-installed``) is
+    present.
+    """
+    if dest.is_symlink():
+        return True
+    marker = dest / ".bob3-installed"
+    if dest.is_dir() and marker.is_file():
+        # Cross-check that the skill name matches a bundled skill.
+        bundled = bundled_skills_dir / dest.name
+        return bundled.is_dir() and (bundled / "SKILL.md").is_file()
+    return False
+
+
+def _symlink_resolves_into(dest: Path, expected_dir: Path) -> bool:
+    """Return True iff ``dest`` is a symlink resolving inside ``expected_dir``.
+
+    Uses ``resolve(strict=True)`` so a broken symlink raises and we
+    return False. We also require the resolved target to live under the
+    given bob3 bundled skills dir so an old workspace pointing at a
+    deleted bob3 install is detected as stale.
+    """
+    if not dest.is_symlink():
+        return False
+    try:
+        resolved = dest.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    try:
+        resolved.relative_to(expected_dir.resolve())
+    except ValueError:
+        return False
+    return resolved.is_dir() and (resolved / "SKILL.md").is_file()
+
+
+def _remove_dest(dest: Path) -> bool:
+    """Best-effort removal of ``dest`` (symlink or directory).
+
+    Returns True on success, False on failure (with a logged warning).
+    """
+    try:
+        if dest.is_symlink() or dest.is_file():
+            dest.unlink()
+        elif dest.is_dir():
+            shutil.rmtree(dest)
+        return True
+    except OSError as exc:
+        logger.warning("Could not remove %s: %s", dest, exc)
+        return False
+
+
+def _verify_install(dest: Path) -> bool:
+    """Verify that ``dest`` resolves to a directory containing SKILL.md."""
+    try:
+        resolved = dest.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    if not resolved.is_dir():
+        return False
+    return (resolved / "SKILL.md").is_file()
+
+
+def _install_one(skill_src: Path, dest: Path) -> bool:
+    """Install a single skill at ``dest`` from ``skill_src``.
+
+    Tries a symlink first, falls back to a directory copy. Verifies the
+    install resolves cleanly and contains a SKILL.md before returning
+    True. On failure, attempts to clean up and returns False.
+    """
+    # Attempt 1: symlink
+    try:
+        dest.symlink_to(skill_src.resolve(), target_is_directory=True)
+    except OSError as exc:
+        logger.debug("Symlink failed (%s); falling back to copy for %s", exc, dest)
+    else:
+        if _verify_install(dest):
+            return True
+        # Symlink created but doesn't resolve to a usable directory —
+        # remove and fall through to copy.
+        logger.warning(
+            "Symlink at %s did not resolve to a readable skill dir; falling back to copy",
+            dest,
+        )
+        _remove_dest(dest)
+
+    # Attempt 2: directory copy
+    try:
+        shutil.copytree(skill_src, dest)
+        # Drop a marker so we know this is a bob3-managed copy and may
+        # safely refresh it on subsequent runs.
+        try:
+            (dest / ".bob3-installed").write_text("bob3\n")
+        except OSError:
+            # Non-fatal: marker is a nice-to-have. If we can't write it
+            # the directory is still usable; we just won't auto-refresh.
+            logger.debug("Could not write .bob3-installed marker in %s", dest)
+    except OSError as copy_exc:
+        logger.warning(
+            "Could not install skill %s to %s: %s", skill_src.name, dest, copy_exc
+        )
+        return False
+
+    if not _verify_install(dest):
+        logger.warning("Copied skill at %s did not verify; removing", dest)
+        _remove_dest(dest)
+        return False
+    return True
+
+
+def install_skills_to_workspace(
+    workspace: str | Path, *, idempotent: bool = True
+) -> list[str]:
     """Install all bob3 skills into ``<workspace>/.claude/skills/``.
 
     Each skill is symlinked if possible (to stay in sync with bob3
     upgrades); falls back to a directory copy if symlinking fails (e.g.
     Windows without admin, or a filesystem that doesn't support them).
 
-    Returns the list of skill names installed. Idempotent: re-running
-    refreshes symlinks but does not touch user-added skills that aren't
-    bob3-bundled.
+    Returns the list of skill names installed. Idempotent semantics
+    (when ``idempotent=True``):
+
+    - First call: creates symlinks (or copies) for every bundled skill.
+    - Subsequent calls: refreshes any stale entries (broken symlinks or
+      symlinks pointing outside the current bob3 bundled skills dir),
+      and leaves working entries alone.
+    - If ``dest`` is a real directory with no ``.bob3-installed`` marker
+      it's treated as user-owned and never modified.
+
+    A symlink that already resolves into the current bob3 bundled skills
+    dir and contains SKILL.md is considered already-installed and is
+    not re-created (avoids inotify churn for watchers).
+
+    After creating each symlink the function calls
+    ``dest.resolve(strict=True)`` and verifies ``(dest / 'SKILL.md')``
+    is a regular file. If verification fails, falls back to a
+    ``shutil.copytree`` copy; if that also fails, the skill is logged
+    and skipped.
     """
     workspace_path = Path(workspace).resolve()
     target_dir = workspace_path / ".claude" / "skills"
@@ -59,7 +198,7 @@ def install_skills_to_workspace(workspace: str | Path) -> list[str]:
         return []
 
     installed: list[str] = []
-    for skill_src in source_dir.iterdir():
+    for skill_src in sorted(source_dir.iterdir()):
         if not skill_src.is_dir():
             continue
         if not (skill_src / "SKILL.md").is_file():
@@ -67,38 +206,76 @@ def install_skills_to_workspace(workspace: str | Path) -> list[str]:
 
         dest = target_dir / skill_src.name
 
-        # Refresh: remove an existing symlink or bob3-bundled copy so we
-        # always point at the currently-installed bob3 skills. Don't touch
-        # user-added skills that happen to share a name but aren't from us
-        # — if dest exists as a regular directory that isn't one of ours,
-        # skip it.
+        # Decide whether to refresh, reuse, or skip.
+        needs_install = True
         if dest.is_symlink():
-            try:
-                dest.unlink()
-            except OSError as exc:
-                logger.warning("Could not remove stale symlink %s: %s", dest, exc)
-                continue
-        elif dest.exists() and dest.is_dir():
-            # Only replace if it looks like a prior bob3-installed copy
-            # (heuristic: presence of SKILL.md with our matching content
-            # would be too strict; instead we skip to be safe).
-            logger.debug("Skipping %s; existing directory is not a symlink", dest)
-            continue
-
-        try:
-            dest.symlink_to(skill_src.resolve(), target_is_directory=True)
-            installed.append(skill_src.name)
-        except OSError as exc:
-            # Fall back to a copy if symlinks aren't supported here.
-            logger.debug("Symlink failed (%s); falling back to copy for %s", exc, dest)
-            import shutil
-            try:
-                shutil.copytree(skill_src, dest)
+            if idempotent and _symlink_resolves_into(dest, source_dir):
+                # Already a working bob3 symlink — leave it alone.
                 installed.append(skill_src.name)
-            except OSError as copy_exc:
-                logger.warning(
-                    "Could not install skill %s to %s: %s", skill_src.name, dest, copy_exc
+                needs_install = False
+            else:
+                # Stale: broken target, or pointing at a moved/deleted
+                # bob3 install. Replace it.
+                if not _remove_dest(dest):
+                    logger.warning(
+                        "Stale symlink at %s could not be removed; skipping %s",
+                        dest,
+                        skill_src.name,
+                    )
+                    continue
+        elif dest.exists():
+            if dest.is_dir() and _is_bob3_managed(dest, source_dir):
+                # A previous copy-install we own — refresh it.
+                if not _remove_dest(dest):
+                    logger.warning(
+                        "Could not refresh bob3 copy at %s; skipping %s",
+                        dest,
+                        skill_src.name,
+                    )
+                    continue
+            else:
+                # User-owned directory or file: never touch.
+                logger.debug(
+                    "Skipping %s; existing entry is user-owned (not bob3-managed)",
+                    dest,
                 )
+                continue
+
+        if needs_install:
+            if _install_one(skill_src, dest):
+                installed.append(skill_src.name)
 
     logger.info("Installed %d skills into %s", len(installed), target_dir)
     return installed
+
+
+def clean_workspace_skills(workspace: str | Path) -> list[str]:
+    """Remove only bob3-installed skills from a workspace.
+
+    Walks ``<workspace>/.claude/skills/`` and removes:
+    - any symlink (assumed to be a bob3 install — we never create real
+      directories without a sentinel marker),
+    - any directory containing the ``.bob3-installed`` marker file.
+
+    User-created directories (no symlink, no marker) are left alone.
+
+    Returns the list of skill names that were removed.
+    """
+    workspace_path = Path(workspace).resolve()
+    target_dir = workspace_path / ".claude" / "skills"
+    if not target_dir.is_dir():
+        return []
+
+    source_dir = get_bundled_skills_dir()
+
+    removed: list[str] = []
+    for entry in sorted(target_dir.iterdir()):
+        if entry.is_symlink():
+            if _remove_dest(entry):
+                removed.append(entry.name)
+        elif entry.is_dir() and _is_bob3_managed(entry, source_dir):
+            if _remove_dest(entry):
+                removed.append(entry.name)
+        # else: user-owned, skip
+    logger.info("Removed %d bob3 skills from %s", len(removed), target_dir)
+    return removed

@@ -189,8 +189,17 @@ def update_progress_notes(
         blockers=blockers,
         notes=notes,
     )
-    # The new_entry already ends with ---, split it back to get the content
-    new_entry_content = new_entry.rstrip(ENTRY_SEPARATOR).rstrip("\n").strip()
+    # The new_entry already ends with ---, split it back to get the content.
+    # NOTE: ``rstrip(ENTRY_SEPARATOR)`` would treat the argument as a SET of
+    # chars and strip any trailing '-', silently truncating content like
+    # '--verbose' or 'something-'. ``removesuffix`` (Python 3.9+) strips the
+    # literal string instead.
+    new_entry_content = (
+        new_entry.removesuffix("\n" + ENTRY_SEPARATOR)
+        .removesuffix(ENTRY_SEPARATOR)
+        .rstrip("\n")
+        .strip()
+    )
     entries.append(new_entry_content)
 
     # Trim to keep only the last MAX_PROGRESS_ENTRIES

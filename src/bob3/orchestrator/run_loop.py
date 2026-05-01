@@ -5,6 +5,39 @@ from the database, spawns Claude sub-agents to implement them, and
 tracks progress until all features are completed or no more progress
 can be made.
 
+Execution model — SEQUENTIAL at the orchestrator level
+-------------------------------------------------------
+Bob3's orchestration loop runs features SEQUENTIALLY: at most one
+top-level feature is in flight at any time. The main loop in ``run()``
+picks a single ready feature, awaits ``execute_feature``, then loops.
+There is no ``asyncio.gather`` or task fan-out across sibling features.
+
+This is intentional, not a TODO:
+
+1. SQLite WAL with a single writer — concurrent feature writers
+   would serialize on the DB anyway, and we'd inherit lock-contention
+   debugging on top.
+2. Cost tracking and budget enforcement assume sequential cost
+   accumulation. ``self.total_cost``, ``update_project_cost``, and
+   ``budget_exceeded`` are checked once per iteration; concurrent
+   features would race on the running total and could overshoot
+   ``max_cost`` by N feature-budgets at once.
+3. Failure isolation — a failed sibling shouldn't poison parallel
+   peers. With features running one at a time, a failure cleanly
+   updates state, possibly cascades, and the next iteration replans
+   against the new state.
+
+What IS supported is *recursive* sub-agent parallelism: a sub-agent
+spawned by ``execute_feature`` may, via ``claude_executor.spawn_sub_agent``
+and the Superpowers "subagent-driven-development" skill (F113), spawn
+its own sub-agents to decompose internal work. That recursion is bounded
+by the Claude Code SDK and is unrelated to the orchestrator-level loop,
+which still dispatches exactly one top-level feature at a time.
+
+If you are reading this expecting concurrent feature execution: it is
+not implemented and not currently planned. Updating prose to claim
+otherwise creates a false expectation; please don't.
+
 F109 adds research mode integration:
 - Before execution, checks if a feature needs research
 - Spawns a research sub-agent via Perplexity MCP when needed
@@ -31,9 +64,11 @@ The loop runs until one of these termination conditions:
 
 from __future__ import annotations
 
+import collections
 import enum
 import json
 import logging
+import os
 import re
 import signal
 from typing import Any
@@ -41,6 +76,9 @@ from typing import Any
 from bob3 import db
 from bob3.mcp_lifecycle import stop_mcp_server
 from bob3.git_ops import (
+    GitCommitError,
+    GitHookFailedError,
+    GitRepoError,
     commit_feature as git_commit_feature,
     get_status as git_get_status,
     revert_feature as git_revert_feature,
@@ -99,6 +137,115 @@ class LoopTermination(enum.Enum):
     ALL_BLOCKED = "all_blocked"
     BUDGET_EXCEEDED = "budget_exceeded"
     SHUTDOWN_REQUESTED = "shutdown_requested"
+
+
+# ---------------------------------------------------------------
+# Cost normalization (Max Pro / OAuth subscription handling)
+# ---------------------------------------------------------------
+#
+# Claude Code Max Pro is a flat-fee OAuth subscription, so the SDK reports
+# total_cost_usd=None for every result. If we silently pass None through to
+# update_project_cost(), accumulated cost stays at 0.0 forever and budget
+# enforcement becomes a no-op. To keep budgets meaningful, we fall back to
+# a turn-count proxy: a small per-turn estimate that lets a runaway
+# sub-agent still trip the budget guard.
+#
+# The proxy rate ($0.05/turn) is deliberately approximate; users can tune
+# it via the BOB3_COST_PER_TURN_PROXY environment variable.
+
+_DEFAULT_COST_PER_TURN_PROXY = 0.05
+
+
+def _normalize_cost(cost_usd: float | None, num_turns: int | None = None) -> tuple[float, str]:
+    """Normalize a possibly-missing cost into a budget-safe value.
+
+    Claude Max Pro often returns cost_usd=None. To keep budget enforcement
+    meaningful in that mode, fall back to a turn-count proxy: each turn
+    is approximated as $0.05 (configurable via BOB3_COST_PER_TURN_PROXY).
+
+    Returns (cost_to_record, source_label) where source_label is one of
+    'sdk', 'turn_proxy', or 'zero'.
+    """
+    if cost_usd is not None and cost_usd >= 0:
+        return float(cost_usd), "sdk"
+    if num_turns is not None and num_turns > 0:
+        try:
+            proxy_per_turn = float(
+                os.environ.get(
+                    "BOB3_COST_PER_TURN_PROXY",
+                    str(_DEFAULT_COST_PER_TURN_PROXY),
+                )
+            )
+        except (TypeError, ValueError):
+            proxy_per_turn = _DEFAULT_COST_PER_TURN_PROXY
+        return num_turns * proxy_per_turn, "turn_proxy"
+    return 0.0, "zero"
+
+
+# Per-feature de-duplication for proxy log lines (avoid spam during a run).
+#
+# This used to be an unbounded module-level ``set[str]`` that grew for every
+# feature ever logged across the lifetime of the process. In long-running
+# orchestrator processes (or test suites that share the module) it would
+# slowly leak memory. We now back it with a bounded FIFO so the membership
+# check is still O(1) but the population is capped — when we hit the cap,
+# the oldest entry is evicted, and that feature would simply re-log its
+# proxy line if it appears again.
+_PROXY_LOG_DEDUP_MAX_ENTRIES = 10000
+
+
+class _BoundedFeatureIdSet:
+    """A bounded ``set``-like container with FIFO eviction.
+
+    Supports ``.add``, ``.discard``, ``__contains__``, ``__len__``, and
+    ``clear``, which are all the operations the proxy-log dedup path and
+    its tests rely on. Insertion order is tracked via a ``deque`` so that
+    when capacity is exceeded the oldest entry is dropped from both the
+    deque and the membership set in O(1).
+    """
+
+    __slots__ = ("_set", "_order", "_max_entries")
+
+    def __init__(self, max_entries: int = _PROXY_LOG_DEDUP_MAX_ENTRIES) -> None:
+        self._set: set[str] = set()
+        self._order: collections.deque[str] = collections.deque()
+        self._max_entries = max_entries
+
+    def __contains__(self, item: object) -> bool:
+        return item in self._set
+
+    def __len__(self) -> int:
+        return len(self._set)
+
+    def __iter__(self):
+        return iter(self._set)
+
+    def add(self, feature_id: str) -> None:
+        if feature_id in self._set:
+            return
+        self._set.add(feature_id)
+        self._order.append(feature_id)
+        # Evict oldest entries until we are back within capacity.
+        while len(self._order) > self._max_entries:
+            oldest = self._order.popleft()
+            self._set.discard(oldest)
+
+    def discard(self, feature_id: str) -> None:
+        if feature_id not in self._set:
+            return
+        self._set.discard(feature_id)
+        # Lazy-remove from order: cheap because eviction tolerates misses.
+        try:
+            self._order.remove(feature_id)
+        except ValueError:
+            pass
+
+    def clear(self) -> None:
+        self._set.clear()
+        self._order.clear()
+
+
+_PROXY_LOGGED_FEATURE_IDS: _BoundedFeatureIdSet = _BoundedFeatureIdSet()
 
 
 def cascade_update_dependents(feature_id: str) -> list[str]:
@@ -324,14 +471,12 @@ _FAILURE_THRESHOLD_FOR_RESEARCH = 3
 
 
 def count_feature_failures(feature_id: str, project_id: str) -> int:
-    """Count the number of failed implementation agent runs for a feature.
-
-    Only counts runs with purpose='implement_feature' and status='failed'.
-    """
-    runs = db.query_agent_runs(project_id=project_id, purpose="implement_feature")
-    return sum(
-        1 for r in runs
-        if r.target_type == "feature" and r.target_id == feature_id and r.status == "failed"
+    """Count failed implementation attempts for a feature."""
+    return db.count_agent_runs(
+        project_id=project_id,
+        target_id=feature_id,
+        purpose="implement_feature",
+        status="failed",
     )
 
 
@@ -416,6 +561,28 @@ def handle_execution_result(
     result = spawn_result.execution_result
     agent_run_id = getattr(spawn_result.agent_run, "id", None)
 
+    # Normalize cost up front so budget tracking sees a real number even
+    # when the SDK returns None (typical on Claude Max Pro / OAuth subs).
+    normalized_cost, cost_source = _normalize_cost(
+        result.total_cost_usd, result.num_turns
+    )
+
+    # Log proxy / zero-cost diagnostics once per feature to avoid spam.
+    if cost_source == "turn_proxy" and feature.id not in _PROXY_LOGGED_FEATURE_IDS:
+        logger.warning(
+            "Using turn-count cost proxy for feature %s: $%.2f from %d turns",
+            feature.id,
+            normalized_cost,
+            result.num_turns or 0,
+        )
+        _PROXY_LOGGED_FEATURE_IDS.add(feature.id)
+    elif cost_source == "zero" and feature.id not in _PROXY_LOGGED_FEATURE_IDS:
+        logger.warning(
+            "Cost is zero for feature %s — budget enforcement disabled for this feature",
+            feature.id,
+        )
+        _PROXY_LOGGED_FEATURE_IDS.add(feature.id)
+
     # Success is only "true success" when execution succeeded AND verification
     # passed; a verification failure on a successful sub-agent run should NOT
     # be reported as success (callers rely on this to avoid cascading).
@@ -423,7 +590,8 @@ def handle_execution_result(
 
     outcome: dict[str, Any] = {
         "success": is_success,
-        "cost_usd": result.total_cost_usd,
+        "cost_usd": normalized_cost,
+        "cost_source": cost_source,
         "duration_ms": result.duration_ms,
         "error_message": result.error_message if result.is_error else (
             f"Verification failed: {verification_summary}"
@@ -445,11 +613,13 @@ def handle_execution_result(
         # downstream features from being unlocked on unverified work.
         db.update_feature(feature.id, status="needs_human")
     else:
-        db.update_feature(feature.id, status="completed")
-
-        # F123: Auto-update dependent features' readiness when dependencies complete
+        # F123 + atomicity fix: combine the status flip and the dependent
+        # cascade into a SINGLE DB transaction. Splitting them across two
+        # connections opened a window where a crash between them would
+        # leave the feature 'completed' but dependents stuck on 'pending'
+        # forever (the resume scan only handled 'executing'/'interrupted').
         try:
-            updated_features = db.update_dependent_features_readiness(feature.id)
+            updated_features = db.complete_feature_and_cascade(feature.id)
             if updated_features:
                 logger.info(
                     "Feature %s completion unlocked %d dependent feature(s): %s",
@@ -458,10 +628,21 @@ def handle_execution_result(
                     ", ".join([f[:8] for f in updated_features])
                 )
         except Exception:
-            logger.warning(
-                "Failed to auto-update dependent features for %s",
+            # The atomic complete+cascade rolled back, so the feature is
+            # NOT marked completed and dependents are still pending. The
+            # recovery scan in OrchestrationLoop._resume_interrupted_work
+            # will detect orphaned 'pending' features whose deps are all
+            # completed on the next run; meanwhile, surface this clearly
+            # in the outcome so the loop doesn't pretend success.
+            logger.error(
+                "Atomic complete+cascade failed for feature %s; "
+                "feature was NOT marked completed (transaction rolled back)",
                 feature.id,
                 exc_info=True,
+            )
+            outcome["success"] = False
+            outcome["error_message"] = (
+                "Atomic complete+cascade transaction rolled back"
             )
 
     # Step 3: Create evidence artifact
@@ -514,11 +695,15 @@ def handle_execution_result(
             exc_info=True,
         )
 
-    # Step 4: Update project cost tracking atomically (also enforces budget)
-    if result.total_cost_usd is not None:
+    # Step 4: Update project cost tracking atomically (also enforces budget).
+    # We always record the normalized cost — even when sourced from the
+    # turn-count proxy — so that runaway sub-agents on Max Pro still trip
+    # the budget guard. A normalized cost of 0.0 (no SDK cost AND no turns)
+    # is a no-op against the running total.
+    if normalized_cost > 0:
         db.update_project_cost(
             project_id=project_id,
-            cost_usd=result.total_cost_usd,
+            cost_usd=normalized_cost,
         )
 
     return outcome
@@ -528,7 +713,12 @@ class OrchestrationLoop:
     """Continuous orchestration loop for building a project.
 
     Picks the next ready feature, spawns a sub-agent to implement it,
-    updates status, and repeats until done.
+    awaits completion, updates status, and repeats until done.
+
+    Features are processed strictly one at a time (sequential execution);
+    see the module docstring for why. Sub-agents may internally spawn
+    their own sub-agents (recursive parallelism via the Claude Code SDK),
+    but this loop never has more than one top-level feature in flight.
     """
 
     def __init__(
@@ -538,35 +728,101 @@ class OrchestrationLoop:
         max_cost: float | None = None,
         workspace: str | None = None,
         fresh: bool = False,
+        target_feature_id: str | None = None,
     ) -> None:
         self.project_id = project_id
         self.max_cost = max_cost
         self.workspace = workspace or ""
         self.fresh = fresh
+        self.target_feature_id = target_feature_id
         self.total_cost: float = 0.0
         self.features_completed: int = 0
         self.features_failed: int = 0
         self.shutdown_requested: bool = False
         self._current_feature: Feature | None = None
+        # Set to True the first time we see a result with total_cost_usd=None.
+        # Indicates we're running against a Max Pro / OAuth subscription where
+        # the SDK does not report cost; budget enforcement falls back to the
+        # turn-count proxy.
+        self._cost_proxy_active: bool = False
+        self._cost_proxy_warning_emitted: bool = False
 
     def request_shutdown(self) -> None:
         """Request graceful shutdown of the loop."""
         self.shutdown_requested = True
         logger.info("Shutdown requested for orchestration loop")
 
+    def _maybe_warn_cost_proxy_active(self) -> None:
+        """Emit a one-time loop-level warning when the cost proxy is active.
+
+        Once we observe ANY result with total_cost_usd=None we know the SDK
+        is not reporting cost (typical on Claude Max Pro / OAuth subs). If
+        the user passed a max_cost, surface a clear warning explaining that
+        budget enforcement is using the turn-count proxy. Logged once per
+        loop instance so we don't spam the operator.
+        """
+        if not self._cost_proxy_active or self._cost_proxy_warning_emitted:
+            return
+        if self.max_cost is None:
+            # No budget specified — nothing to enforce, nothing to warn about.
+            self._cost_proxy_warning_emitted = True
+            return
+        try:
+            proxy = float(
+                os.environ.get(
+                    "BOB3_COST_PER_TURN_PROXY",
+                    str(_DEFAULT_COST_PER_TURN_PROXY),
+                )
+            )
+        except (TypeError, ValueError):
+            proxy = _DEFAULT_COST_PER_TURN_PROXY
+        logger.warning(
+            "Claude SDK is not reporting cost (likely Max Pro subscription). "
+            "Budget enforcement is using a turn-count proxy at $%.2f/turn.",
+            proxy,
+        )
+        self._cost_proxy_warning_emitted = True
+
     def budget_exceeded(self) -> bool:
         """Check if the budget has been exceeded.
 
-        Checks both the loop-level max_cost and the project's max_cost_usd.
-        """
-        # Check loop-level budget
-        if self.max_cost is not None and self.total_cost >= self.max_cost:
-            return True
+        Reads the canonical project total (``project.total_cost_usd``) from
+        the DB and compares it to BOTH the loop-level ``self.max_cost`` and
+        the project-level ``project.max_cost_usd``. Cost is tracked
+        atomically via ``db.update_project_cost`` (called from
+        ``handle_execution_result``) so the DB total is the single source of
+        truth — we no longer keep a separate in-memory accumulator that
+        could drift from it.
 
-        # Check project-level budget
+        Defensively coerces a missing/None project total to 0.0 — if cost
+        normalization is bypassed somewhere and None lands in the DB, the
+        budget check should not silently treat it as "infinite room". As a
+        belt-and-suspenders fallback, if ``self.total_cost`` has been set
+        (e.g. by tests that bypass the DB), it is OR'd into the loop-level
+        check.
+        """
         project = db.get_project(self.project_id)
+        project_total = 0.0
         if project is not None:
-            if project.max_cost_usd and project.total_cost_usd >= project.max_cost_usd:
+            project_total = project.total_cost_usd
+            if project_total is None:
+                logger.warning(
+                    "Project %s has total_cost_usd=None; treating as 0.0 for budget check",
+                    self.project_id,
+                )
+                project_total = 0.0
+
+        # Check loop-level budget against the DB-tracked project total.
+        # Tests may set self.total_cost directly (bypassing the DB write),
+        # so we also honour that for backwards compatibility.
+        if self.max_cost is not None:
+            running = max(project_total, self.total_cost)
+            if running >= self.max_cost:
+                return True
+
+        # Check project-level budget against the project's own max.
+        if project is not None and project.max_cost_usd:
+            if project_total >= project.max_cost_usd:
                 return True
 
         return False
@@ -641,13 +897,31 @@ class OrchestrationLoop:
             target_id=feature.id,
         )
 
-        # Track research cost
+        # Track research cost (normalize so Max Pro / OAuth subscriptions,
+        # which return None, still consume budget via the turn-count proxy).
         research_exec = research_result.execution_result
-        if research_exec.total_cost_usd is not None:
-            self.total_cost += research_exec.total_cost_usd
+        research_cost, research_cost_source = _normalize_cost(
+            research_exec.total_cost_usd, research_exec.num_turns
+        )
+        if research_cost_source == "turn_proxy":
+            logger.warning(
+                "Using turn-count cost proxy for research on feature %s: $%.2f from %d turns",
+                feature.id,
+                research_cost,
+                research_exec.num_turns or 0,
+            )
+            self._cost_proxy_active = True
+        elif research_cost_source == "sdk" and research_exec.total_cost_usd is None:
+            # Defensive — should never happen but keep flag detection consistent.
+            self._cost_proxy_active = True
+        if research_exec.total_cost_usd is None:
+            # Even when num_turns==0 (zero source), surface that cost data is absent.
+            self._cost_proxy_active = True
+        if research_cost > 0:
+            self.total_cost += research_cost
             db.update_project_cost(
                 project_id=self.project_id,
-                cost_usd=research_exec.total_cost_usd,
+                cost_usd=research_cost,
             )
 
         # Store research results in DB (even if research failed, record the attempt)
@@ -851,6 +1125,10 @@ class OrchestrationLoop:
         verification_passed: bool = True
         verification_summary: str | None = None
         verification_result: dict | None = None
+        # Set if a git hook rejected the post-verification commit. When True,
+        # the feature is reverted to 'needs_human' and dependent features must
+        # NOT be cascaded as if the feature had completed successfully.
+        git_hook_failed: bool = False
 
         if not result.is_error and self.workspace:
             try:
@@ -875,15 +1153,26 @@ class OrchestrationLoop:
                         "Feature %s will be marked needs_human due to failed verification",
                         feature.id,
                     )
-            except Exception:
-                logger.debug(
-                    "Verification checklist failed for feature %s",
+            except Exception as exc:
+                logger.error(
+                    "Verification crashed for feature %s; treating as failure (severity: needs human review)",
                     feature.id,
                     exc_info=True,
                 )
-                # If verification itself errors out, treat as pass so we
-                # don't block features on internal verification bugs.
-                verification_passed = True
+                # A crash in the verification harness must NOT silently
+                # promote the feature to completed — that would let buggy
+                # implementations through any time pytest crashes / OOMs /
+                # times out / fails to import. Treat as a hard failure and
+                # surface it for human review via 'needs_human'.
+                verification_passed = False
+                verification_summary = (
+                    f"Verification crashed: {type(exc).__name__}"
+                )
+                verification_result = {
+                    "passed": False,
+                    "summary": verification_summary,
+                    "checks": [],
+                }
 
         # F070: Handle execution result (status, evidence, cost).
         # When verification_passed=False and the sub-agent succeeded,
@@ -966,18 +1255,137 @@ class OrchestrationLoop:
                         workspace=self.workspace,
                         stage_all=True,
                     )
-                except Exception:
+                except GitHookFailedError as exc:
+                    # A pre-commit / commit-msg hook rejected our commit. The
+                    # implementation may be valid (verification passed!) but
+                    # something the hook checks for objects to it. Surface
+                    # this for human review rather than silently moving on
+                    # as if the feature were committed and complete.
+                    git_hook_failed = True
+                    hook_output = (exc.stderr or exc.stdout or str(exc)).strip()
                     logger.warning(
-                        "Git commit failed for feature %s", feature.id,
+                        "Git hook rejected commit for feature %s "
+                        "(rc=%s); marking needs_human. Hook output:\n%s",
+                        feature.id,
+                        exc.returncode,
+                        hook_output,
+                    )
+                    # Record evidence so the operator can see the hook output
+                    # alongside the feature.
+                    try:
+                        db.create_evidence(
+                            project_id=self.project_id,
+                            feature_id=feature.id,
+                            type="git_hook_failure",
+                            content=json.dumps({
+                                "feature_id": feature.id,
+                                "returncode": exc.returncode,
+                                "command": exc.command,
+                                "stderr": exc.stderr,
+                                "stdout": exc.stdout,
+                            }),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to record git_hook_failure evidence for "
+                            "feature %s",
+                            feature.id,
+                            exc_info=True,
+                        )
+                    # Override the 'completed' status that
+                    # handle_execution_result wrote earlier — verification
+                    # passed but we couldn't get the change committed, so
+                    # this needs human attention. Do NOT cascade dependents.
+                    db.update_feature(feature.id, status="needs_human")
+                    # handle_execution_result already ran the F123 cascade
+                    # which may have flipped dependents from 'pending' to
+                    # 'ready'. Roll those back so a hook-blocked feature
+                    # cannot unlock its downstream peers.
+                    try:
+                        dependents = db.get_feature_dependents(feature.id)
+                        for dep in dependents:
+                            dep_feature = db.get_feature(dep.feature_id)
+                            if dep_feature is not None and dep_feature.status == "ready":
+                                db.update_feature(dep.feature_id, status="pending")
+                    except Exception:
+                        logger.warning(
+                            "Failed to roll back dependent cascade for "
+                            "feature %s after git hook failure",
+                            feature.id,
+                            exc_info=True,
+                        )
+                except GitRepoError as exc:
+                    # Workspace isn't a git repo. Not a build failure — just
+                    # log cleanly and continue without committing.
+                    logger.info(
+                        "Skipping git commit for feature %s: workspace is "
+                        "not a git repository (%s)",
+                        feature.id,
+                        exc,
+                    )
+                except GitCommitError as exc:
+                    # Other git failure (e.g. git binary broken, IO error
+                    # during add). Not a hook rejection — surface it loudly
+                    # and record evidence, but don't unwind the 'completed'
+                    # status the way a hook rejection does.
+                    logger.error(
+                        "Unexpected git error committing feature %s "
+                        "(rc=%s): %s",
+                        feature.id,
+                        exc.returncode,
+                        (exc.stderr or exc.stdout or str(exc)).strip(),
+                    )
+                    try:
+                        db.create_evidence(
+                            project_id=self.project_id,
+                            feature_id=feature.id,
+                            type="git_commit_error",
+                            content=json.dumps({
+                                "feature_id": feature.id,
+                                "returncode": exc.returncode,
+                                "command": exc.command,
+                                "stderr": exc.stderr,
+                                "stdout": exc.stdout,
+                            }),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to record git_commit_error evidence "
+                            "for feature %s",
+                            feature.id,
+                            exc_info=True,
+                        )
+                except Exception:
+                    # Truly unexpected (non-GitCommitError) — keep prior
+                    # permissive behaviour so we don't crash the loop, but
+                    # log loudly with full traceback.
+                    logger.error(
+                        "Unexpected non-git exception during commit for "
+                        "feature %s",
+                        feature.id,
                         exc_info=True,
                     )
 
-            self.features_completed += 1
-            logger.info("Feature %s completed successfully", feature.id)
+            if git_hook_failed:
+                # Hook rejection means the feature isn't really done.
+                self.features_failed += 1
+                logger.error(
+                    "Feature %s blocked by git hook rejection; needs human review",
+                    feature.id,
+                )
+            else:
+                self.features_completed += 1
+                logger.info("Feature %s completed successfully", feature.id)
 
-        # Track loop-level cost (always — even on failure we paid for the tokens)
-        if result.total_cost_usd is not None:
-            self.total_cost += result.total_cost_usd
+        # Cost is tracked atomically via db.update_project_cost inside
+        # handle_execution_result; we do NOT increment self.total_cost here
+        # to avoid double-counting (handle_execution_result already wrote
+        # the same normalized cost to the DB). budget_exceeded() reads the
+        # canonical total back from the DB. We still flip the proxy flag so
+        # downstream consumers (CLI status, run() warning) can surface that
+        # the SDK is not reporting cost.
+        if result.total_cost_usd is None:
+            self._cost_proxy_active = True
 
         # F108: Update progress notes after each sub-agent session
         if self.workspace:
@@ -1014,10 +1422,11 @@ class OrchestrationLoop:
         self._current_feature = None
 
         # Cascade update dependents — only when the feature truly succeeded
-        # (sub-agent succeeded AND verification passed). This is the second
-        # cascade (F123 layer); note handle_execution_result already ran
+        # (sub-agent succeeded AND verification passed AND the post-success
+        # git commit wasn't rejected by a hook). This is the second cascade
+        # (F123 layer); note handle_execution_result already ran
         # update_dependent_features_readiness in the success path.
-        if not result.is_error and verification_passed:
+        if not result.is_error and verification_passed and not git_hook_failed:
             cascade_update_dependents(feature.id)
 
         return spawn_result
@@ -1137,6 +1546,9 @@ class OrchestrationLoop:
         1. Features with status='executing' (crashed mid-execution)
         2. Features with status='interrupted' (gracefully stopped)
         3. Resumable checkpoints (can_resume=TRUE)
+        4. Orphaned 'pending' features whose dependencies are ALL completed
+           (left over from a crash mid-cascade-update — see
+           ``db.complete_feature_and_cascade``)
 
         For each interrupted/executing feature:
         - If a resumable checkpoint exists, resume from it (restoring state)
@@ -1144,6 +1556,10 @@ class OrchestrationLoop:
 
         In fresh mode, all interrupted/executing features are simply reset to 'ready'
         without consuming any checkpoints.
+
+        Orphaned-pending recovery always runs (independent of fresh mode) so
+        that a mid-cascade crash never permanently strands dependents on
+        'pending'.
         """
         # Find features stuck in 'executing' (process crashed)
         executing = db.list_features(project_id=self.project_id, status="executing")
@@ -1152,60 +1568,228 @@ class OrchestrationLoop:
 
         stale_features = executing + interrupted
 
-        if not stale_features:
-            return
+        if stale_features:
+            logger.info(
+                "Found %d interrupted/stale features to resume",
+                len(stale_features),
+            )
 
-        logger.info(
-            "Found %d interrupted/stale features to resume",
-            len(stale_features),
-        )
-
-        if self.fresh:
-            # Fresh mode: reset all to 'ready' without consuming checkpoints
-            for feat in stale_features:
-                db.update_feature(feat.id, status="ready")
-                logger.info(
-                    "Fresh mode: reset feature %s (%s) to 'ready'",
-                    feat.id,
-                    feat.name,
-                )
-            return
-
-        # Normal resume mode: try to resume from checkpoints
-        resumable = db.find_resumable_checkpoints(project_id=self.project_id)
-        # Build a map: feature_id -> most recent resumable checkpoint
-        checkpoint_by_feature: dict[str, Any] = {}
-        for cp in resumable:
-            if cp.feature_id not in checkpoint_by_feature:
-                checkpoint_by_feature[cp.feature_id] = cp
-
-        for feat in stale_features:
-            cp = checkpoint_by_feature.get(feat.id)
-            if cp is not None:
-                # Resume from checkpoint (restores feature state then sets to 'ready')
-                logger.info(
-                    "Resuming feature %s (%s) from checkpoint %s",
-                    feat.id,
-                    feat.name,
-                    cp.id,
-                )
-                db.resume_from_checkpoint(cp.id)
-                # After state is restored, set to 'ready' so the loop picks it up
-                db.update_feature(feat.id, status="ready")
+            if self.fresh:
+                # Fresh mode: reset all to 'ready' without consuming checkpoints
+                for feat in stale_features:
+                    db.update_feature(feat.id, status="ready")
+                    logger.info(
+                        "Fresh mode: reset feature %s (%s) to 'ready'",
+                        feat.id,
+                        feat.name,
+                    )
             else:
-                # No checkpoint: reset to 'ready'
-                logger.info(
-                    "No checkpoint for feature %s (%s), resetting to 'ready'",
-                    feat.id,
-                    feat.name,
+                # Normal resume mode: try to resume from checkpoints
+                resumable = db.find_resumable_checkpoints(project_id=self.project_id)
+                # Build a map: feature_id -> most recent resumable checkpoint
+                checkpoint_by_feature: dict[str, Any] = {}
+                for cp in resumable:
+                    if cp.feature_id not in checkpoint_by_feature:
+                        checkpoint_by_feature[cp.feature_id] = cp
+
+                for feat in stale_features:
+                    cp = checkpoint_by_feature.get(feat.id)
+                    if cp is not None:
+                        # Resume from checkpoint (restores feature state then sets to 'ready')
+                        logger.info(
+                            "Resuming feature %s (%s) from checkpoint %s",
+                            feat.id,
+                            feat.name,
+                            cp.id,
+                        )
+                        db.resume_from_checkpoint(cp.id)
+                        # After state is restored, set to 'ready' so the loop picks it up
+                        db.update_feature(feat.id, status="ready")
+                    else:
+                        # No checkpoint: reset to 'ready'
+                        logger.info(
+                            "No checkpoint for feature %s (%s), resetting to 'ready'",
+                            feat.id,
+                            feat.name,
+                        )
+                        db.update_feature(feat.id, status="ready")
+
+        # Orphaned-pending recovery (atomicity safety-net):
+        # Scan for 'pending' features whose dependencies are ALL completed.
+        # These are the tell-tale sign of a crash between the feature
+        # status update and the dependent cascade in a previous version
+        # of this code (or any future regression). Promote them to
+        # 'ready' so the loop can pick them up. Runs independently of
+        # the 'executing'/'interrupted' branch because the orphan state
+        # has nothing to do with checkpoints.
+        self._recover_orphaned_pending_features()
+
+    def _recover_orphaned_pending_features(self) -> None:
+        """Promote pending features whose deps are all completed to 'ready'.
+
+        A crash between ``update_feature(..., status='completed')`` and
+        ``update_dependent_features_readiness(...)`` would leave dependents
+        in 'pending' with all dependencies satisfied — a state the loop
+        would otherwise never escape. We scan for that case on every
+        startup and repair it. Logs each promotion at INFO so the operator
+        can see the recovery happen.
+        """
+        pending = db.list_features(project_id=self.project_id, status="pending")
+        if not pending:
+            return
+
+        promoted: list[str] = []
+        for feat in pending:
+            deps = db.get_feature_dependencies(feat.id)
+            if not deps:
+                # No declared deps; 'pending' here means it never met
+                # readiness threshold — leave it alone.
+                continue
+            all_completed = True
+            for dep in deps:
+                dep_feature = db.get_feature(dep.depends_on_feature_id)
+                if dep_feature is None or dep_feature.status != "completed":
+                    all_completed = False
+                    break
+            if not all_completed:
+                continue
+            # All deps satisfied — this is an orphaned pending feature.
+            db.update_feature(feat.id, status="ready")
+            promoted.append(feat.id)
+            logger.info(
+                "Recovery: promoted orphaned pending feature %s (%s) to 'ready' "
+                "(all %d dependencies completed; likely stranded by a "
+                "mid-cascade crash)",
+                feat.id,
+                feat.name,
+                len(deps),
+            )
+
+        if promoted:
+            logger.info(
+                "Mid-cascade crash recovery: promoted %d orphaned pending "
+                "feature(s) to 'ready': %s",
+                len(promoted),
+                ", ".join(p[:8] for p in promoted),
+            )
+
+    async def _run_single_feature(self) -> LoopTermination:
+        """Run only the target feature (one iteration) then exit.
+
+        Used when ``target_feature_id`` is set on the loop. Skips
+        ``find_next_ready_feature`` so we never run unrelated features.
+
+        Returns:
+            ALL_COMPLETED if the feature was executed (success or failure),
+            ALL_BLOCKED if the feature is not runnable.
+        """
+        feature = db.get_feature(self.target_feature_id)
+        if feature is None:
+            logger.error(
+                "Target feature %s not found; aborting single-feature run",
+                self.target_feature_id,
+            )
+            return LoopTermination.ALL_BLOCKED
+
+        if feature.project_id != self.project_id:
+            logger.error(
+                "Target feature %s belongs to a different project (%s); aborting",
+                self.target_feature_id,
+                feature.project_id,
+            )
+            return LoopTermination.ALL_BLOCKED
+
+        # Validate that the feature is runnable. find_next_ready_feature uses
+        # the features_ready view, which requires status='ready' AND that
+        # readiness_score >= the risk-category threshold AND that all
+        # dependencies are completed. Match that here by looking up the
+        # feature in the same view.
+        ready = {f.id: f for f in db.get_ready_features(self.project_id)}
+        runnable = feature.id in ready
+
+        # 'ready' / 'pending' may still need a real dependency check — a
+        # 'pending' feature whose dependencies are NOT all completed must
+        # not run, even though its status is in the allow-set. Anything
+        # outside {ready, pending} is unconditionally blocked.
+        if not runnable and feature.status not in {"ready", "pending"}:
+            logger.info(
+                "Target feature %s is not runnable (status=%s); exiting cleanly",
+                feature.id,
+                feature.status,
+            )
+            return LoopTermination.ALL_BLOCKED
+
+        # Bug 5: Tighten the 'pending' allowance. If any declared dependency
+        # is not yet 'completed', the feature is genuinely blocked — runnable
+        # would be False here (it isn't in the features_ready view) so we
+        # already know readiness/threshold may be low, but the dep gate is
+        # the load-bearing one. Check it explicitly so a pending feature with
+        # unmet deps never sneaks through.
+        if not runnable:
+            try:
+                deps = db.get_feature_dependencies(feature.id)
+            except Exception:
+                logger.warning(
+                    "Could not read dependencies for target feature %s; "
+                    "treating as blocked",
+                    feature.id,
+                    exc_info=True,
                 )
-                db.update_feature(feat.id, status="ready")
+                return LoopTermination.ALL_BLOCKED
+            for dep in deps:
+                dep_feature = db.get_feature(dep.depends_on_feature_id)
+                if dep_feature is None or dep_feature.status != "completed":
+                    logger.info(
+                        "Target feature %s has unmet dependency %s "
+                        "(status=%s); exiting cleanly",
+                        feature.id,
+                        dep.depends_on_feature_id,
+                        dep_feature.status if dep_feature else "missing",
+                    )
+                    return LoopTermination.ALL_BLOCKED
+
+        # Assess confidence if not yet assessed (mirrors main loop behaviour).
+        if feature.readiness_score == 0.0:
+            logger.info(
+                "Assessing confidence for target feature %s (%s)",
+                feature.id[:8],
+                feature.name,
+            )
+            confidence = db.assess_feature_confidence(feature.id)
+            db.update_feature(feature.id, **confidence)
+            feature = db.get_feature(feature.id)
+            if feature is None:
+                logger.error("Target feature disappeared after confidence assessment")
+                return LoopTermination.ALL_BLOCKED
+
+        # Bug 3: Honour --max-cost / project budget even in single-feature
+        # mode. The main run() loop checks this every iteration, but the
+        # single-feature path used to skip the check entirely.
+        if self.budget_exceeded():
+            logger.warning(
+                "Budget exceeded for project %s; cannot run feature %s",
+                self.project_id,
+                feature.id,
+            )
+            return LoopTermination.BUDGET_EXCEEDED
+
+        # Execute exactly one feature, then exit regardless of outcome.
+        await self.execute_feature(feature)
+        self._maybe_warn_cost_proxy_active()
+        return LoopTermination.ALL_COMPLETED
 
     async def run(self) -> LoopTermination:
         """Run the continuous orchestration loop.
 
-        Processes features one at a time until a termination condition is met.
-        On startup, automatically detects and resumes interrupted work (F116).
+        Processes features strictly one at a time (sequential, not
+        concurrent) until a termination condition is met. Each iteration
+        picks the highest-priority ready feature, awaits its sub-agent
+        to completion, then loops; there is no fan-out across sibling
+        features. On startup, automatically detects and resumes
+        interrupted work (F116).
+
+        When ``target_feature_id`` is set, runs only that single feature and
+        exits after one iteration regardless of outcome.
 
         Returns:
             The reason the loop terminated.
@@ -1215,6 +1799,10 @@ class OrchestrationLoop:
 
         # F116: Auto-resume interrupted work
         self._resume_interrupted_work()
+
+        # Single-feature mode: run only the target feature and exit.
+        if self.target_feature_id is not None:
+            return await self._run_single_feature()
 
         while True:
             # Check shutdown
@@ -1280,3 +1868,4 @@ class OrchestrationLoop:
 
             # Execute the feature
             await self.execute_feature(feature)
+            self._maybe_warn_cost_proxy_active()

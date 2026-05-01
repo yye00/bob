@@ -4,7 +4,9 @@ Command-line interface using Click for managing Bob3 projects,
 planning features, running builds, and checking status.
 """
 
+import json
 import logging
+import os
 import pathlib
 import re
 import sqlite3
@@ -243,6 +245,7 @@ def _run_orchestration_loop(
     project_id: str,
     max_cost: float | None = None,
     fresh: bool = False,
+    target_feature_id: str | None = None,
 ) -> "LoopTermination":
     """Run the orchestration loop synchronously.
 
@@ -252,6 +255,8 @@ def _run_orchestration_loop(
         project_id: The project to build.
         max_cost: Optional maximum cost in USD.
         fresh: If True, skip resume and reset all interrupted features.
+        target_feature_id: If set, the loop runs only this single feature
+            and exits after one iteration regardless of outcome.
 
     Returns:
         The LoopTermination reason.
@@ -274,6 +279,7 @@ def _run_orchestration_loop(
         max_cost=max_cost,
         workspace=workspace,
         fresh=fresh,
+        target_feature_id=target_feature_id,
     )
 
     return asyncio.run(loop.run())
@@ -307,9 +313,14 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
     Starts the bob3-memory MCP server before any operations (unless --no-mcp).
     Automatically resumes interrupted work unless --fresh is specified.
 
-    Note: --feature currently scopes the run to that feature's project but
-    the orchestration loop still picks any ready feature in that project.
-    Single-feature scoping is coming soon.
+    --feature ID  runs ONLY that single feature and exits after one iteration,
+                  regardless of outcome. Other ready features in the same
+                  project are NOT touched. The feature must be runnable
+                  (status='ready' or 'pending' with all dependencies
+                  completed); otherwise the run terminates with ALL_BLOCKED.
+    --all         runs the continuous orchestration loop, picking the
+                  highest-priority ready feature each iteration until all
+                  features are completed/blocked or the budget is exceeded.
     """
     logger.info("Starting build run")
     console = Console()
@@ -329,41 +340,44 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
         click.echo(f"Max cost: ${max_cost:.2f}")
 
     if feature:
-        # NOTE: --feature currently scopes to the feature's project; the
-        # orchestration loop still picks any ready feature in that project.
-        # Single-feature scoping is tracked as follow-up work.
+        # --feature runs ONLY the target feature and exits after one
+        # iteration. The orchestration loop is scoped via target_feature_id;
+        # no other ready features in the project are processed.
         logger.info(
-            "Running in project containing feature %s (loop picks ready features)",
+            "Running single feature %s (single-feature scope)",
             feature,
         )
         click.echo(
-            f"Running in project containing feature {feature} "
-            "(note: all ready features in this project may run)"
+            f"Running single feature {feature} (only this feature will run)"
         )
 
         # Get the project and feature
         db_path = get_database_path()
         conn = get_connection(db_path=db_path)
         try:
-            project_row = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()
-            if project_row is None:
-                console.print("[yellow]No project found. Run 'bob3 init' first.[/yellow]")
-                raise SystemExit(1)
-
-            project_id = project_row[0]
-
-            # Verify feature exists
-            feature_row = conn.execute("SELECT status FROM features WHERE id = ?", (feature,)).fetchone()
+            # Look up the feature's project explicitly so --feature scopes
+            # to that feature's project, not whichever happens to be first.
+            feature_row = conn.execute(
+                "SELECT project_id, status FROM features WHERE id = ?",
+                (feature,),
+            ).fetchone()
             if feature_row is None:
                 console.print(f"[red]Feature {feature} not found.[/red]")
                 raise SystemExit(1)
+
+            project_id = feature_row[0]
         finally:
             conn.close()
 
-        # Run the orchestration loop
+        # Run the orchestration loop scoped to a single feature.
         from bob3.orchestrator.run_loop import LoopTermination
 
-        termination = _run_orchestration_loop(project_id, max_cost=max_cost, fresh=fresh)
+        termination = _run_orchestration_loop(
+            project_id,
+            max_cost=max_cost,
+            fresh=fresh,
+            target_feature_id=feature,
+        )
 
         _TERMINATION_MESSAGES = {
             LoopTermination.ALL_COMPLETED: "[green]Feature completed![/green]",
@@ -472,6 +486,51 @@ def _styled_status(status_text):
     return Text(status_text, style=color)
 
 
+def _detect_cost_proxy_status(conn, project_id: str) -> str | None:
+    """Detect whether cost tracking is using the turn-count proxy.
+
+    Returns a human-readable note for the status table, or None if the
+    proxy doesn't appear to be in use.
+
+    Signals:
+    1. BOB3_COST_PER_TURN_PROXY env var set explicitly.
+    2. Recent execution evidence shows cost_usd=null with num_turns > 0
+       (indicates the SDK returned None for at least one run).
+    """
+    env_proxy = os.environ.get("BOB3_COST_PER_TURN_PROXY")
+    proxy_rate = env_proxy if env_proxy is not None else "0.05"
+
+    # Scan recent execution evidence for cost_usd=null markers.
+    proxy_used = False
+    try:
+        rows = conn.execute(
+            "SELECT content FROM evidence_artifacts "
+            "WHERE project_id = ? AND type IN ('execution_output', 'execution_error') "
+            "ORDER BY created_at DESC LIMIT 20",
+            (project_id,),
+        ).fetchall()
+        for r in rows:
+            try:
+                payload = json.loads(r["content"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if payload.get("cost_usd") is None and (payload.get("num_turns") or 0) > 0:
+                proxy_used = True
+                break
+    except sqlite3.Error:
+        # Schema mismatch or DB issue — silently skip; it's an info row.
+        pass
+
+    if proxy_used:
+        return (
+            f"[yellow]turn-count proxy active (${proxy_rate}/turn) — "
+            f"SDK is not reporting cost (likely Max Pro)[/yellow]"
+        )
+    if env_proxy is not None:
+        return f"[dim]turn-count proxy configured (${proxy_rate}/turn)[/dim]"
+    return None
+
+
 def _show_project_status(console, conn, verbose):
     """Display overall project status with feature counts, progress bar, and cost warnings."""
     row = conn.execute("SELECT * FROM projects LIMIT 1").fetchone()
@@ -498,6 +557,13 @@ def _show_project_status(console, conn, verbose):
     info_table.add_column("Value")
     info_table.add_row("Status", project_status)
     info_table.add_row("Cost", cost_display)
+
+    # Cost-tracking mode: surface when the turn-count proxy is in use
+    # (Claude Max Pro / OAuth subscriptions return total_cost_usd=None).
+    proxy_note = _detect_cost_proxy_status(conn, row["id"])
+    if proxy_note is not None:
+        info_table.add_row("Cost tracking", proxy_note)
+
     console.print(info_table)
 
     # Feature counts by status

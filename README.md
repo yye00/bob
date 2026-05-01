@@ -16,7 +16,7 @@ Bob3 reads a spec describing the project you want built, decomposes it into feat
 ## Requirements
 
 - Python >= 3.11
-- An active Claude Code Max Pro subscription (or `ANTHROPIC_API_KEY`)
+- A Claude Code OAuth subscription (e.g. Max Pro) **or** `ANTHROPIC_API_KEY` set in your environment — either works, you do not need both.
 
 Bob3 Memory is fully local and in-process: it uses [FastEmbed](https://github.com/qdrant/fastembed) (ONNX, CPU) for text embeddings and [Qdrant](https://qdrant.tech/) on-disk for the vector store. The default embedding model (`BAAI/bge-small-en-v1.5`, ~90 MB) downloads automatically on first use. No external embedding API, no background daemon, no `OPENAI_API_KEY` required.
 
@@ -42,7 +42,7 @@ bob3 --help
 | `BOB3_EMBEDDER_MODEL` | No | Override the FastEmbed model (default: `BAAI/bge-small-en-v1.5`) |
 | `BOB3_MEMORY_DIR` | No | Override the on-disk path where Qdrant stores the bob3 memory collection (default: `~/.local/share/bob3`) |
 | `PERPLEXITY_API_KEY` | No | Enables the Perplexity research MCP |
-| `ANTHROPIC_API_KEY` | No | Only needed if not using Claude Code Max Pro |
+| `ANTHROPIC_API_KEY` | Conditional | Required only if you do not have a Claude Code OAuth subscription. With an OAuth subscription (e.g. Max Pro), the SDK uses your existing credentials and this variable is unused. `CLAUDE_API_KEY` is also accepted as an alias. |
 
 Add to your shell profile if needed:
 
@@ -151,7 +151,7 @@ version: "0.1.0"
 description: |
   What you want built.
 
-workspace: /tmp/my-project
+workspace: ~/projects/my-project   # absolute path to where bob3 should work
 
 features:
   F001:

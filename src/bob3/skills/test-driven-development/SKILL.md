@@ -1,13 +1,21 @@
 ---
 name: test-driven-development
-description: Use when implementing any feature or bug fix, before writing production code. Write the test first, verify it fails for the right reason, then implement until it passes. Bob3's verification layer rewards TDD; the AST stub detector punishes shortcuts.
+description: Use when implementing any feature or bug fix, before writing production code. Write the test first, verify it fails for the right reason, then implement until it passes. Bob3's verification layer rewards TDD; the AST stub detector punishes shortcuts; and bob3's verifier runs your tests for real, so writing tests is genuinely required.
 ---
 
 # Test-driven development for bob3 sub-agents
 
 Write the test first. Verify it fails. Then write the minimum code to make it pass.
 
-This is not a stylistic preference — bob3 specifically runs verification checks that reward TDD: `test_files_exist`, `code_changes_made`, `no_stubs_in_source`, and `acceptance_criteria_met`. Tests written after the fact tend to pattern-match on the implementation instead of encoding the requirement.
+This is not a stylistic preference — bob3 specifically runs verification checks that reward TDD: `test_files_exist`, `code_changes_made`, `no_stubs_in_source`, `tests_pass`, and `acceptance_criteria_met`. Tests written after the fact tend to pattern-match on the implementation instead of encoding the requirement.
+
+**Bob3's verifier auto-runs pytest.** When your feature is marked complete, bob3 invokes `python -m pytest tests/ --tb=line -q --maxfail=20` in the workspace as part of `run_verification_checklist`. The `tests_pass` check is a hard failure (severity=error) for any Python project with a `tests/` directory:
+
+- A workspace with no `tests/` directory is a warning, not an error — but for any feature with acceptance criteria, the absence of tests will fail other checks.
+- A workspace with `tests/` but no test files (or where pytest collects 0 tests) is a hard failure. Writing zero real tests does not slip through.
+- Tests must actually pass. A test that always passes is fine on its own, but if it's the *only* thing you wrote, the AST stub detector and the acceptance-criteria checks will still bite. Combined, these gates make "fake tests" caught by either the static or the dynamic check.
+
+So writing tests is not optional. Skip them and the verifier will mark the feature `needs_human`.
 
 ## The loop
 

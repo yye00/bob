@@ -1,14 +1,16 @@
 """Bob3 in-process memory client.
 
-Provides an async-compatible API over bob3.memory.BobMemory, mirroring the
-shape of the old TitansMemoryClient (which went through a Claude sub-agent
-to call MCP tools). This client calls BobMemory directly — no sub-agent
-round-trip — because bob3 itself runs in the same process as the memory
-backend. Sub-agents spawned by bob3 still use the MCP server (bob3.memory_mcp)
-to access the same underlying store.
+Provides an async-compatible API over bob3.memory.BobMemory. This client
+calls BobMemory directly — no sub-agent round-trip — because bob3 itself
+runs in the same process as the memory backend. Sub-agents spawned by bob3
+still use the MCP server (bob3.memory_mcp) to access the same underlying
+store.
 
-The async signatures are preserved for compatibility with the previous
-TitansMemoryClient; the underlying calls are synchronous.
+The async method signatures and the class shape mirror the
+TitansMemoryClient API (now deprecated; that earlier client went through
+a Claude sub-agent to call MCP tools). They are preserved for backwards
+compatibility with callers built against that older API; the underlying
+calls are synchronous.
 """
 
 from __future__ import annotations

@@ -324,3 +324,60 @@ class TestOrientationIncludesNotes:
             workspace="/tmp/test-workspace",
         )
         assert "claude-progress" in result
+
+
+# ============================================================
+# Regression: rstrip("---") corrupts content ending with dashes
+#
+# Bug: ``new_entry.rstrip(ENTRY_SEPARATOR)`` treats the argument as a
+# SET of chars to strip, not the literal string. So content ending in
+# ``--verbose`` or ``something-`` gets silently truncated. The fix uses
+# ``removesuffix`` (Python 3.9+) which strips the literal suffix.
+# ============================================================
+
+
+class TestProgressNotesPreservesTrailingDashes:
+    """update_progress_notes must not truncate trailing '-' chars in content."""
+
+    def test_notes_ending_with_double_dash_flag_preserved(self, tmp_path):
+        update_progress_notes(
+            workspace=str(tmp_path),
+            feature_id="F999",
+            feature_name="Trailing dash bug",
+            outcome="completed",
+            notes="Used flag --verbose to debug",
+        )
+
+        content = (tmp_path / "claude-progress.txt").read_text()
+        # The full notes value must round-trip without losing characters.
+        assert "Used flag --verbose to debug" in content, (
+            "Content ending in '--verbose' was truncated by rstrip('---'). "
+            "rstrip treats its arg as a SET of chars, not a literal suffix."
+        )
+
+    def test_notes_ending_with_single_trailing_dash_preserved(self, tmp_path):
+        update_progress_notes(
+            workspace=str(tmp_path),
+            feature_id="F999",
+            feature_name="Trailing dash bug",
+            outcome="completed",
+            notes="some-marker-something-",
+        )
+
+        content = (tmp_path / "claude-progress.txt").read_text()
+        assert "some-marker-something-" in content, (
+            "Trailing '-' was stripped because rstrip('---') treats the "
+            "arg as a char set. Use removesuffix instead."
+        )
+
+    def test_blockers_ending_with_dashes_preserved(self, tmp_path):
+        update_progress_notes(
+            workspace=str(tmp_path),
+            feature_id="F999",
+            feature_name="Trailing dash bug",
+            outcome="failed",
+            blockers="Need flag ---triple-dash",
+        )
+
+        content = (tmp_path / "claude-progress.txt").read_text()
+        assert "Need flag ---triple-dash" in content

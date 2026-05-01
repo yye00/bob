@@ -11,6 +11,7 @@ server over stdio.
 """
 
 import logging
+import uuid
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -28,6 +29,31 @@ def _mem() -> BobMemory:
     if _memory is None:
         _memory = BobMemory()
     return _memory
+
+
+def _validate_memory_id(memory_id: str) -> str | None:
+    """Validate that ``memory_id`` is a UUID string.
+
+    Returns the canonical (lowercase, hyphenated) UUID string if valid,
+    or ``None`` for empty / non-string / malformed input. Qdrant uses
+    UUIDs as point IDs, so any other shape is a programming error or
+    untrusted input that should never be forwarded to the storage layer.
+    """
+    if not isinstance(memory_id, str):
+        return None
+    candidate = memory_id.strip()
+    if not candidate:
+        return None
+    try:
+        return str(uuid.UUID(candidate))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+_INVALID_MEMORY_ID_ERROR: dict[str, Any] = {
+    "success": False,
+    "error": "invalid memory_id: must be a UUID",
+}
 
 
 app = FastMCP("bob3-memory")
@@ -64,32 +90,47 @@ def memory_search(
 @app.tool()
 def memory_get(memory_id: str) -> dict | None:
     """Retrieve a single memory by id."""
-    return _mem().get(memory_id)
+    valid_id = _validate_memory_id(memory_id)
+    if valid_id is None:
+        return dict(_INVALID_MEMORY_ID_ERROR)
+    return _mem().get(valid_id)
 
 
 @app.tool()
 def memory_record_feedback(memory_id: str, success: bool) -> dict:
     """Record feedback on a memory (True=helpful, False=not)."""
-    ok = _mem().record_feedback(memory_id, success)
+    valid_id = _validate_memory_id(memory_id)
+    if valid_id is None:
+        return dict(_INVALID_MEMORY_ID_ERROR)
+    ok = _mem().record_feedback(valid_id, success)
     return {"success": ok}
 
 
 @app.tool()
 def memory_archive(memory_id: str) -> dict:
     """Archive a memory so it no longer appears in searches."""
-    return {"success": _mem().archive(memory_id)}
+    valid_id = _validate_memory_id(memory_id)
+    if valid_id is None:
+        return dict(_INVALID_MEMORY_ID_ERROR)
+    return {"success": _mem().archive(valid_id)}
 
 
 @app.tool()
 def memory_demote(memory_id: str) -> dict:
     """Demote a memory (lowers its visibility)."""
-    return {"success": _mem().demote(memory_id)}
+    valid_id = _validate_memory_id(memory_id)
+    if valid_id is None:
+        return dict(_INVALID_MEMORY_ID_ERROR)
+    return {"success": _mem().demote(valid_id)}
 
 
 @app.tool()
 def memory_delete(memory_id: str) -> dict:
     """Permanently delete a memory."""
-    return {"success": _mem().delete(memory_id)}
+    valid_id = _validate_memory_id(memory_id)
+    if valid_id is None:
+        return dict(_INVALID_MEMORY_ID_ERROR)
+    return {"success": _mem().delete(valid_id)}
 
 
 @app.tool()

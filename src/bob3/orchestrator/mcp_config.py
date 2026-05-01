@@ -14,9 +14,12 @@ MCP Servers:
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -140,13 +143,47 @@ def get_puppeteer_tools() -> list[str]:
     return list(_PUPPETEER_TOOLS)
 
 
+def validate_perplexity_available() -> tuple[bool, str]:
+    """Check whether the Perplexity MCP is usable in the current environment.
+
+    Returns a (ok, message) tuple. ``ok`` is True iff PERPLEXITY_API_KEY is
+    set to a non-empty value. The ``message`` describes the reason when
+    ``ok`` is False, or is empty otherwise.
+
+    Callers (e.g. anything about to spawn a research sub-agent) should
+    consult this helper before invoking the agent so they can short-circuit
+    with a useful error rather than letting the sub-agent burn turns
+    hitting auth errors at runtime.
+    """
+    api_key = os.environ.get("PERPLEXITY_API_KEY", "")
+    if not api_key:
+        return False, (
+            "PERPLEXITY_API_KEY is not set; the Perplexity MCP server will "
+            "start but every call will fail with an auth error at runtime."
+        )
+    return True, ""
+
+
 def build_perplexity_mcp_dict() -> dict[str, Any]:
     """Build an mcp_servers dict entry for the Perplexity MCP plugin.
 
     Returns a dict suitable for passing to ClaudeCodeOptions.mcp_servers.
     The Perplexity MCP uses npx to run the @anthropic/perplexity-mcp server.
+
+    Note on PERPLEXITY_API_KEY:
+        If ``PERPLEXITY_API_KEY`` is unset or empty, this function still
+        returns a usable mcp_servers dict (with an empty key) so that the
+        MCP subprocess can start, but a warning is logged and every
+        Perplexity call will fail with an auth error at runtime. Callers
+        that want to fail fast should invoke :func:`validate_perplexity_available`
+        before spawning the research agent (the ``spawn_research_agent``
+        call site in ``claude_executor.py`` is the primary intended user).
     """
     api_key = os.environ.get("PERPLEXITY_API_KEY", "")
+    if not api_key:
+        logger.warning(
+            "PERPLEXITY_API_KEY not set; Perplexity MCP will fail at runtime"
+        )
     return {
         PERPLEXITY_MCP.name: {
             "type": "stdio",

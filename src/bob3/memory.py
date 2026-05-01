@@ -273,13 +273,19 @@ class BobMemory:
 
         Updates times_applied, times_successful, and usefulness_score.
         Read-then-write; not atomic across concurrent writers.
+
+        Reads counters directly from the Qdrant payload via
+        ``_read_payload`` rather than ``self.get()``. mem0's ``.get()``
+        does not reliably round-trip arbitrary payload fields like
+        ``times_applied`` / ``times_successful`` / ``usefulness_score``,
+        so reading through it would always return zero counters and reset
+        the running totals on every feedback call (regression bug fix).
         """
-        existing = self.get(memory_id)
-        if not existing:
+        payload = self._read_payload(memory_id)
+        if payload is None:
             return False
-        meta = existing["metadata"]
-        applied = int(meta.get("times_applied", 0)) + 1
-        successful = int(meta.get("times_successful", 0)) + (1 if success else 0)
+        applied = int(payload.get("times_applied", 0)) + 1
+        successful = int(payload.get("times_successful", 0)) + (1 if success else 0)
         usefulness = (successful / applied) if applied > 0 else 0.0
         return self.update_metadata(
             memory_id,

@@ -293,9 +293,16 @@ class TestTitansMemoryExclusion:
         )
 
     def test_schema_has_titans_memory_comments(self):
-        """Schema should have comments about TITANS Memory handling these."""
+        """Schema should have comments about bob3-memory handling project memory and lessons.
+
+        Originally checked for "TITANS Memory MCP" wording; bob3 now uses
+        bob3-memory (the legacy column name `titans_memory_id` is intentionally
+        retained for backwards compatibility).
+        """
         content = SCHEMA_PATH.read_text()
-        assert "TITANS" in content, "Schema should mention TITANS Memory MCP"
+        assert "bob3-memory" in content, (
+            "Schema should mention bob3-memory (the external memory backend)"
+        )
 
 
 class TestKeyTableColumns:

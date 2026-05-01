@@ -541,3 +541,98 @@ class TestCostAndTokenTracking:
         assert retrieved is not None
         mcp_list = json.loads(retrieved.mcp_enabled)
         assert "perplexity" in mcp_list
+
+
+# ============================================================
+# count_agent_runs() perf test
+# ============================================================
+
+
+class TestCountAgentRuns:
+    """Tests for count_agent_runs() - SQL COUNT(*) for fast filtering."""
+
+    def test_count_matches_python_count_and_is_fast(self, project):
+        """Count via SQL matches Python-side count and runs in < 100ms."""
+        import time
+
+        # Create ~100 agent runs across multiple feature_ids and statuses.
+        feature_ids = ["F100", "F101", "F102", "F103"]
+        statuses = ["running", "completed", "failed"]
+        purposes = ["implement_feature", "rca_analyst"]
+
+        created: list[tuple[str, str, str, str]] = []  # (id, target_id, purpose, status)
+        i = 0
+        for f_idx, fid in enumerate(feature_ids):
+            for s_idx, st in enumerate(statuses):
+                for p_idx, pp in enumerate(purposes):
+                    # Repeat a few times so we land near 100 rows.
+                    for _ in range(4 + (i % 3)):
+                        run = db.create_agent_run(
+                            project_id=project.id,
+                            purpose=pp,
+                            target_type="feature",
+                            target_id=fid,
+                        )
+                        # Move out of default 'running' when needed.
+                        if st != "running":
+                            db.update_agent_run(run.id, status=st)
+                        created.append((run.id, fid, pp, st))
+                        i += 1
+
+        assert len(created) >= 100, f"expected ~100 rows, got {len(created)}"
+
+        target_fid = "F101"
+        target_purpose = "implement_feature"
+        target_status = "failed"
+
+        # Python-side reference count using query_agent_runs.
+        all_runs = db.query_agent_runs(project_id=project.id, purpose=target_purpose)
+        expected = sum(
+            1
+            for r in all_runs
+            if r.target_id == target_fid and r.status == target_status
+        )
+
+        # Sanity: should be > 0 given how we constructed the dataset.
+        assert expected > 0
+
+        start = time.perf_counter()
+        actual = db.count_agent_runs(
+            project_id=project.id,
+            target_id=target_fid,
+            purpose=target_purpose,
+            status=target_status,
+        )
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+        assert actual == expected, f"count mismatch: sql={actual}, python={expected}"
+        assert elapsed_ms < 100.0, f"count_agent_runs too slow: {elapsed_ms:.1f}ms"
+
+    def test_count_no_filters_returns_all_for_project(self, project):
+        """With only project_id, count returns all runs for that project."""
+        for _ in range(5):
+            db.create_agent_run(project_id=project.id, purpose="implement_feature")
+
+        other = db.create_project(name="Other", workspace_path="/tmp/other-cnt")
+        db.create_agent_run(project_id=other.id, purpose="implement_feature")
+
+        assert db.count_agent_runs(project_id=project.id) == 5
+        assert db.count_agent_runs(project_id=other.id) == 1
+
+    def test_count_zero_when_no_match(self, project):
+        """Returns 0 when no rows match the filters."""
+        db.create_agent_run(
+            project_id=project.id,
+            purpose="implement_feature",
+            target_type="feature",
+            target_id="F001",
+        )
+        assert (
+            db.count_agent_runs(
+                project_id=project.id,
+                target_id="F999",
+                purpose="implement_feature",
+                status="failed",
+            )
+            == 0
+        )

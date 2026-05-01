@@ -21,6 +21,19 @@ SRC_DIR = pathlib.Path(__file__).resolve().parent.parent / "src"
 MODULE_PATH = SRC_DIR / "bob3" / "mcp_lifecycle.py"
 
 
+# Auto-clear the cross-instance process registry between tests so that
+# patched Popen mocks from one test don't make the next test's start()
+# silently attach to a stale entry. The registry is module-level and
+# persists across test cases.
+@pytest.fixture(autouse=True)
+def _clear_active_processes_registry():
+    from bob3 import mcp_lifecycle as _mod
+
+    _mod._active_processes.clear()
+    yield
+    _mod._active_processes.clear()
+
+
 # ===================================================================
 # Step 1: File exists
 # ===================================================================
@@ -171,6 +184,7 @@ class TestStopMCPServer:
         mock_process.pid = 12345
         mock_process.terminate = MagicMock()
         mock_process.wait = MagicMock()
+        mock_process.communicate = MagicMock(return_value=(b"", b""))
         mock_popen.return_value = mock_process
 
         manager = MCPLifecycleManager()
@@ -195,6 +209,7 @@ class TestStopMCPServer:
         mock_process.pid = 12345
         mock_process.terminate = MagicMock()
         mock_process.wait = MagicMock()
+        mock_process.communicate = MagicMock(return_value=(b"", b""))
         mock_popen.return_value = mock_process
 
         manager = MCPLifecycleManager()
@@ -211,8 +226,12 @@ class TestStopMCPServer:
         mock_process.poll.return_value = None
         mock_process.pid = 12345
         mock_process.terminate = MagicMock()
-        mock_process.wait = MagicMock(
-            side_effect=[subprocess.TimeoutExpired(cmd="test", timeout=5), None]
+        mock_process.wait = MagicMock()
+        # ``stop()`` uses ``communicate(timeout=...)`` so the OS pipe
+        # buffers are drained while waiting (avoids deadlock when the
+        # child writes a large traceback on SIGTERM).
+        mock_process.communicate = MagicMock(
+            side_effect=[subprocess.TimeoutExpired(cmd="test", timeout=5), (b"", b"")]
         )
         mock_process.kill = MagicMock()
         mock_popen.return_value = mock_process
@@ -334,6 +353,7 @@ class TestContextManager:
         mock_process.pid = 12345
         mock_process.terminate = MagicMock()
         mock_process.wait = MagicMock()
+        mock_process.communicate = MagicMock(return_value=(b"", b""))
         mock_popen.return_value = mock_process
 
         manager = MCPLifecycleManager()
@@ -352,6 +372,7 @@ class TestContextManager:
         mock_process.pid = 12345
         mock_process.terminate = MagicMock()
         mock_process.wait = MagicMock()
+        mock_process.communicate = MagicMock(return_value=(b"", b""))
         mock_popen.return_value = mock_process
 
         manager = MCPLifecycleManager()
@@ -417,3 +438,121 @@ class TestConfigIntegration:
         manager = MCPLifecycleManager()
         # Before start, no pid
         assert manager.pid is None
+
+
+# ===================================================================
+# Regression: stop() must not deadlock when child writes a large
+# stderr buffer between SIGTERM and exit.
+#
+# Bug: ``stop()`` previously called ``wait(timeout=...)``, which does
+# NOT drain the stdout/stderr pipes. With ``stderr=subprocess.PIPE``
+# and a child that dumps a stack trace on SIGTERM, the OS pipe buffer
+# (~64KB) fills, the child blocks in ``write()``, and ``wait()``
+# blocks until the timeout (twice — once after terminate(), once
+# after kill()).
+#
+# Fix: use ``communicate(timeout=...)`` which drains the pipes.
+# ===================================================================
+
+
+class TestSingletonInvariant:
+    """Two MCPLifecycleManager instances with the same config must not
+    spawn two subprocesses (singleton invariant across direct
+    construction, not just get_mcp_manager())."""
+
+    def test_two_managers_share_one_process(self):
+        from bob3.mcp_lifecycle import MCPLifecycleManager
+        from bob3.orchestrator import mcp_config as mcp_config_module
+        from bob3.orchestrator.mcp_config import MCPServerConfig
+
+        # Reset shared registry so this test is isolated from earlier ones.
+        from bob3 import mcp_lifecycle as mcp_lifecycle_module
+        mcp_lifecycle_module._active_processes.clear()
+
+        with patch("subprocess.Popen") as mock_popen:
+            mock_process = MagicMock()
+            mock_process.poll.return_value = None  # running
+            mock_process.pid = 99999
+            mock_popen.return_value = mock_process
+
+            cfg = MCPServerConfig(
+                name="singleton-test",
+                command=["python", "-m", "no_such_module"],
+                env_vars=[],
+            )
+
+            m1 = MCPLifecycleManager(config=cfg)
+            m2 = MCPLifecycleManager(config=cfg)
+
+            m1.start()
+            m2.start()
+
+            # Only ONE Popen call total -- m2 must have attached to the
+            # process spawned by m1, not double-spawned.
+            assert mock_popen.call_count == 1, (
+                f"Expected 1 Popen call, got {mock_popen.call_count} "
+                "-- second manager double-spawned"
+            )
+            # Both managers reference the same underlying process object.
+            assert m1._process is m2._process
+
+        # Cleanup
+        mcp_lifecycle_module._active_processes.clear()
+
+
+class TestStopDoesNotDeadlockOnLargeStderr:
+    """Real-subprocess test that ``stop()`` returns promptly when the
+    child writes a large stderr buffer before exiting."""
+
+    def test_stop_completes_quickly_with_large_stderr(self, tmp_path):
+        import sys
+        import time as _time
+        from bob3.mcp_lifecycle import MCPLifecycleManager
+        from bob3.orchestrator.mcp_config import MCPServerConfig
+
+        # Helper script: trap SIGTERM, write 100KB to stderr, then exit.
+        # Writes BEFORE we call stop() so the pipe buffer is already full.
+        # (Even simpler reproducer: the child fills the buffer up front.)
+        script = tmp_path / "noisy_child.py"
+        script.write_text(
+            "import sys, signal, time\n"
+            # Pre-fill stderr with ~100KB so the buffer is saturated.
+            "sys.stderr.write('X' * 100_000)\n"
+            "sys.stderr.flush()\n"
+            "def _handler(signum, frame):\n"
+            "    sys.stderr.write('TRACEBACK ' * 5000)\n"
+            "    sys.stderr.flush()\n"
+            "    sys.exit(0)\n"
+            "signal.signal(signal.SIGTERM, _handler)\n"
+            "while True:\n"
+            "    time.sleep(0.1)\n"
+        )
+
+        config = MCPServerConfig(
+            name="noisy-child-test",
+            command=[sys.executable, str(script)],
+            env_vars=[],
+        )
+        manager = MCPLifecycleManager(config=config)
+        # Bypass env validation + immediate-exit check by starting manually.
+        manager.start()
+
+        # Give the child time to fill its stderr buffer.
+        _time.sleep(0.3)
+        proc = manager._process
+        assert proc is not None and proc.poll() is None, "child should still be running"
+
+        start = _time.monotonic()
+        manager.stop()
+        elapsed = _time.monotonic() - start
+
+        # ``stop()`` should drain the pipe and return well before two
+        # 5-second timeouts (i.e. <10s combined). Allow generous slack
+        # for slow CI but assert it's not actually deadlocking.
+        assert elapsed < 6.0, (
+            f"stop() took {elapsed:.2f}s; suggests deadlock on stderr buffer. "
+            "Use communicate(timeout=...) instead of wait(timeout=...)."
+        )
+        # The child must actually be dead.
+        assert proc.poll() is not None, "child process is still alive after stop()"
+        assert manager._process is None

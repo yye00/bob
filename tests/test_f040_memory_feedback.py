@@ -562,3 +562,95 @@ class TestFullFeedbackLoop:
             )
 
         assert result.success is True
+
+
+# ===================================================================
+# Regression: BobMemory.record_feedback must accumulate counters
+#
+# Bug: ``record_feedback`` previously read counters via ``self.get()`` ->
+# ``mem0.get()``. mem0's ``get()`` does not reliably round-trip
+# arbitrary Qdrant payload fields like ``times_applied`` /
+# ``times_successful`` / ``usefulness_score``, so they always came back
+# as 0 and every feedback call overwrote the running totals with
+# ``applied=1``. The fix reads from Qdrant directly via
+# ``_read_payload``.
+# ===================================================================
+
+
+class _StalemMem0Get:
+    """Simulates mem0.get() losing custom payload fields.
+
+    Returns a memory that omits ``times_applied`` / ``times_successful`` /
+    ``usefulness_score`` from the metadata, even though those fields exist
+    in the underlying Qdrant payload. This is the exact scenario that made
+    the previous implementation reset counters on every feedback call.
+    """
+
+    def __init__(self):
+        self.payload: dict = {
+            "pool": "lessons",
+            "status": "active",
+            "times_applied": 0,
+            "times_successful": 0,
+            "usefulness_score": 0.0,
+        }
+
+    def get(self, memory_id):
+        # Mimic the bug: drop the custom counter fields on the way out.
+        meta = {k: v for k, v in self.payload.items()
+                if k not in {"times_applied", "times_successful", "usefulness_score"}}
+        return {"id": memory_id, "memory": "stub content", "metadata": meta}
+
+
+class TestRecordFeedbackCountersAccumulate:
+    """Counters must accumulate across calls (regression for stale-counter bug)."""
+
+    def _make_memory(self):
+        from bob3.memory import BobMemory
+
+        # Construct a BobMemory without invoking mem0/Qdrant init.
+        mem = BobMemory.__new__(BobMemory)
+        mem._user_id = "test"
+        mem._mem = _StalemMem0Get()
+        # _read_payload is monkeypatched to return the live payload dict.
+        mem._read_payload = lambda mid: dict(mem._mem.payload)  # type: ignore[attr-defined]
+        # update_metadata is monkeypatched to merge into the payload dict.
+        def _update(memory_id, updates):
+            mem._mem.payload.update(updates)
+            return True
+        mem.update_metadata = _update  # type: ignore[assignment]
+        return mem
+
+    def test_five_successes_then_one_failure(self):
+        mem = self._make_memory()
+        memory_id = "mem-regression-1"
+
+        # Five positive feedback calls.
+        for _ in range(5):
+            assert mem.record_feedback(memory_id, success=True) is True
+
+        payload = mem._mem.payload
+        assert payload["times_applied"] == 5, (
+            f"counters were not accumulated: times_applied={payload['times_applied']} "
+            "(expected 5). Bug: record_feedback reads via mem0.get(), which loses "
+            "custom Qdrant payload fields, resetting counters on every call."
+        )
+        assert payload["times_successful"] == 5
+        assert payload["usefulness_score"] == 1.0
+
+        # One negative feedback.
+        assert mem.record_feedback(memory_id, success=False) is True
+        assert payload["times_applied"] == 6
+        assert payload["times_successful"] == 5
+        assert payload["usefulness_score"] == pytest.approx(5 / 6, rel=1e-3)
+
+    def test_returns_false_when_payload_missing(self):
+        from bob3.memory import BobMemory
+
+        mem = BobMemory.__new__(BobMemory)
+        mem._user_id = "test"
+        mem._mem = _StalemMem0Get()
+        mem._read_payload = lambda mid: None  # type: ignore[attr-defined]
+        mem.update_metadata = lambda *a, **k: True  # type: ignore[assignment]
+
+        assert mem.record_feedback("missing-id", success=True) is False

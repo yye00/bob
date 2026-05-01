@@ -107,11 +107,31 @@ class TestSetModel:
         # When model is None, it should not be set (SDK picks default)
         assert opts.model is None
 
-    def test_invalid_model_raises_error(self):
-        from bob3.orchestrator.claude_executor import build_sub_agent_options
+    def test_invalid_model_falls_back_to_default(self, caplog):
+        """Robustness: an unknown model name must not crash the
+        orchestration. ``build_sub_agent_options`` falls back to
+        ``DEFAULT_SUB_AGENT_MODEL`` and logs a warning, rather than
+        propagating ValueError up to the run loop where it would leave
+        the feature stuck in 'executing'.
 
-        with pytest.raises(ValueError, match="Unknown model"):
-            build_sub_agent_options(model="gpt-4-turbo")
+        Note: ``resolve_model_name`` itself still raises; the fallback
+        is implemented at the ``build_sub_agent_options`` boundary.
+        """
+        import logging as _logging
+
+        from bob3.orchestrator.claude_executor import (
+            DEFAULT_SUB_AGENT_MODEL,
+            MODEL_ALIASES,
+            build_sub_agent_options,
+        )
+
+        with caplog.at_level(_logging.WARNING, logger="bob3.orchestrator.claude_executor"):
+            opts = build_sub_agent_options(model="gpt-4-turbo")
+
+        assert opts.model == MODEL_ALIASES[DEFAULT_SUB_AGENT_MODEL]
+        assert any(
+            "gpt-4-turbo" in rec.getMessage() for rec in caplog.records
+        )
 
     def test_model_alias_case_insensitive(self):
         from bob3.orchestrator.claude_executor import build_sub_agent_options

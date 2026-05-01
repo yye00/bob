@@ -447,9 +447,11 @@ class TestOrchestrationLoopStops:
             ):
                 termination = await loop.run()
 
-            # After 3 features ($60 total), loop budget of $50 is exceeded
+            # After 3 features ($60 total), loop budget of $50 is exceeded.
+            # Bug 1 (2026-04): the canonical accumulator is the DB project
+            # total, not loop.total_cost.
             assert termination == LoopTermination.BUDGET_EXCEEDED
-            assert loop.total_cost >= 50.0
+            assert get_project(project.id).total_cost_usd >= 50.0
 
     @pytest.mark.asyncio
     async def test_budget_exceeded_method_detects_project_limit(self, tmp_db):

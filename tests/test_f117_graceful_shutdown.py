@@ -599,3 +599,185 @@ class TestResumeAfterInterruption:
             assert "feature_status" in state
             assert state["feature_id"] == feature.id
             assert state["reason"] == "graceful_shutdown"
+
+
+# ============================================================
+# Step 10: Signal handler is async-signal-safe (no DB/subprocess I/O)
+# ============================================================
+
+
+class TestSignalHandlerIsAsyncSignalSafe:
+    """The signal handler itself must NOT do DB or subprocess I/O.
+
+    Per POSIX, signal handlers should be async-signal-safe. Performing
+    arbitrary I/O — especially database commits and subprocess control
+    — can deadlock when the signal interrupts code that already holds
+    a non-reentrant lock (e.g., ``conn.commit()`` on the main thread).
+
+    The contract is:
+      * ``_handle_signal`` only sets ``shutdown_requested`` and logs.
+      * The actual shutdown work happens in ``_perform_shutdown``,
+        which is called from regular (non-handler) code paths.
+    """
+
+    def test_handler_does_not_call_db_create_checkpoint(self):
+        """``_handle_signal`` must not invoke ``db.create_checkpoint``."""
+        from bob3.signal_handler import GracefulShutdownHandler
+
+        handler = GracefulShutdownHandler(
+            conn=MagicMock(name="sqlite_conn"),
+            project_id="proj-1",
+        )
+        handler.set_active_feature(
+            feature_id="feat-1",
+            feature_data={"name": "f1", "status": "executing"},
+            execution_start_ms=0,
+            cost_so_far=0.1,
+        )
+
+        with patch(
+            "bob3.signal_handler.GracefulShutdownHandler._perform_shutdown"
+        ) as perform, patch(
+            "bob3.db.create_checkpoint"
+        ) as create_cp, patch(
+            "bob3.db.update_feature"
+        ) as upd, patch(
+            "bob3.mcp_lifecycle.stop_mcp_server"
+        ) as stop_mcp:
+            handler._handle_signal(signal.SIGINT, None)
+
+            # The flag must be set...
+            assert handler.shutdown_requested is True
+            # ...but no I/O must have happened from the handler.
+            perform.assert_not_called()
+            create_cp.assert_not_called()
+            upd.assert_not_called()
+            stop_mcp.assert_not_called()
+
+    def test_handler_does_not_commit_connection(self):
+        """``_handle_signal`` must not call ``conn.commit()``.
+
+        The main deadlock scenario the spec calls out: SIGINT firing
+        while the main loop is inside ``conn.commit()`` would re-enter
+        the SQLite connection lock and deadlock the process. The
+        handler must not touch ``self._conn`` at all.
+        """
+        from bob3.signal_handler import GracefulShutdownHandler
+
+        mock_conn = MagicMock(name="sqlite_conn")
+        handler = GracefulShutdownHandler(conn=mock_conn, project_id="proj-1")
+        handler.set_active_feature(
+            feature_id="feat-1",
+            feature_data={"name": "f1", "status": "executing"},
+        )
+
+        handler._handle_signal(signal.SIGTERM, None)
+
+        assert handler.shutdown_requested is True
+        # No call whatsoever to the connection from handler context.
+        mock_conn.commit.assert_not_called()
+        mock_conn.execute.assert_not_called()
+        mock_conn.cursor.assert_not_called()
+
+    def test_main_loop_can_call_perform_shutdown_safely(self, tmp_db, project):
+        """``_perform_shutdown`` is callable from regular (non-handler) code.
+
+        The public API requires that callers (the main loop) invoke
+        ``_perform_shutdown`` themselves once they observe the flag at
+        a safe point. This verifies it actually does the work in that
+        context.
+        """
+        import sqlite3
+
+        from bob3.signal_handler import GracefulShutdownHandler
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            conn = sqlite3.connect(str(tmp_db))
+            conn.row_factory = sqlite3.Row
+            try:
+                feature = create_feature(
+                    project_id=project.id,
+                    name="safe-point feature",
+                    description="for shutdown test",
+                    status="executing",
+                    priority=1,
+                    risk_category="low",
+                )
+                handler = GracefulShutdownHandler(
+                    conn=conn, project_id=project.id
+                )
+                handler.set_active_feature(
+                    feature_id=feature.id,
+                    feature_data={
+                        "name": feature.name,
+                        "status": "executing",
+                    },
+                    cost_so_far=0.25,
+                )
+
+                # Simulate the main loop noticing the flag and calling
+                # the cleanup from a normal code path.
+                handler.shutdown_requested = True
+                with patch(
+                    "bob3.mcp_lifecycle.stop_mcp_server"
+                ) as stop_mcp:
+                    handler._perform_shutdown()
+
+                # Cleanup ran: feature is interrupted, MCP server stopped,
+                # shutdown_complete flag is set.
+                assert handler.shutdown_complete is True
+                stop_mcp.assert_called_once()
+
+                # And the feature was updated in the database (committed
+                # via the connection passed to the handler).
+                updated = get_feature(feature.id)
+                assert updated.status == "interrupted"
+            finally:
+                conn.close()
+
+    def test_double_signal_raises_systemexit(self):
+        """A second signal during shutdown raises :class:`SystemExit`.
+
+        Once ``shutdown_requested`` is already set, the next signal
+        forces immediate exit. ``SystemExit`` from a handler is allowed
+        (it unwinds via the regular exception path).
+        """
+        from bob3.signal_handler import GracefulShutdownHandler
+
+        handler = GracefulShutdownHandler(
+            conn=MagicMock(name="sqlite_conn"),
+            project_id="proj-1",
+        )
+
+        # First signal: set the flag, no SystemExit.
+        handler._handle_signal(signal.SIGINT, None)
+        assert handler.shutdown_requested is True
+
+        # Second signal: SystemExit with code 128 + signum.
+        with pytest.raises(SystemExit) as exc:
+            handler._handle_signal(signal.SIGINT, None)
+        assert exc.value.code == 128 + signal.SIGINT
+
+    def test_flag_visible_to_polling_caller(self):
+        """After the handler runs, a polling caller sees the flag.
+
+        This mirrors what the orchestration loop does: poll
+        ``shutdown_requested`` at a safe point between feature
+        executions, then call ``_perform_shutdown`` itself.
+        """
+        from bob3.signal_handler import GracefulShutdownHandler
+
+        handler = GracefulShutdownHandler(
+            conn=MagicMock(name="sqlite_conn"),
+            project_id="proj-1",
+        )
+
+        # Before the signal, the flag is False.
+        assert handler.shutdown_requested is False
+
+        # Simulate signal arrival.
+        handler._handle_signal(signal.SIGINT, None)
+
+        # The polling caller (main loop) sees the new value at the next
+        # safe point.
+        assert handler.shutdown_requested is True

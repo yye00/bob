@@ -12,7 +12,10 @@ Step 6: Complete feature, verify verification checklist runs
 
 import asyncio
 import json
+import os
 import pathlib
+import signal
+import subprocess
 import textwrap
 from unittest.mock import patch
 
@@ -87,7 +90,13 @@ def complex_feature(project):
 
 @pytest.fixture()
 def workspace_with_files(tmp_path):
-    """Create a workspace with src and test files for verification testing."""
+    """Create a workspace with src and test files for verification testing.
+
+    Tests in this workspace are self-contained -- they don't import from
+    the workspace's src/ tree (which wouldn't be on sys.path under the
+    bob3 verifier's pytest invocation anyway). This way the verifier's
+    auto-run of pytest succeeds.
+    """
     src_dir = tmp_path / "src" / "bob3"
     src_dir.mkdir(parents=True)
     tests_dir = tmp_path / "tests"
@@ -103,11 +112,19 @@ def workspace_with_files(tmp_path):
             return a * b
     """))
 
-    # Create a test file with real assertions
+    # Create a test file with real assertions. We use the unittest.mock
+    # import so the test still exercises the patterns the verifier expects
+    # in test files, but the assertions are self-contained so pytest can
+    # run them without configuring sys.path for the workspace.
     (tests_dir / "__init__.py").write_text("")
     (tests_dir / "test_example.py").write_text(textwrap.dedent("""\
-        from unittest.mock import patch
-        from bob3.example import add, multiply
+        from unittest.mock import patch  # noqa: F401
+
+        def add(a, b):
+            return a + b
+
+        def multiply(a, b):
+            return a * b
 
         def test_add():
             assert add(2, 3) == 5
@@ -796,6 +813,146 @@ class TestVerificationOnCompletion:
 
 
 # ===================================================================
+# Bug 2: A crash in run_verification_checklist must NOT silently
+# promote the feature to 'completed'
+# ===================================================================
+
+
+class TestVerificationCrashIsHardFailure:
+    """If run_verification_checklist raises, the feature must be marked
+    needs_human (not completed) and dependents must NOT cascade to ready.
+    """
+
+    @pytest.mark.asyncio
+    async def test_verification_exception_marks_feature_needs_human(
+        self, project, feature_with_criteria
+    ):
+        """Bug 2 regression: an exception in verification means hard fail.
+
+        Set up a sub-agent that succeeds, but make
+        run_verification_checklist raise. The feature must end up in
+        'needs_human', NOT 'completed'.
+        """
+        from bob3.orchestrator.run_loop import OrchestrationLoop
+        from claude_code_sdk import ResultMessage
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=1000,
+                duration_api_ms=900,
+                is_error=False,
+                num_turns=2,
+                session_id="verify-crash",
+                total_cost_usd=0.10,
+                usage=None,
+                result=None,
+            )
+
+        db.update_feature(
+            feature_with_criteria.id,
+            status="ready",
+            readiness_score=0.85,
+            conf_spec_understanding=0.85,
+            conf_impl_correctness=0.85,
+            conf_test_adequacy=0.85,
+        )
+
+        # Workspace must be set so that verification is attempted.
+        loop = OrchestrationLoop(
+            project_id=project.id,
+            workspace="/tmp/test-verify-crash",
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("simulated pytest crash")
+
+        with patch("bob3.orchestrator.claude_executor.query", mock_query):
+            with patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_boom,
+            ):
+                feature = db.get_feature(feature_with_criteria.id)
+                await loop.execute_feature(feature)
+
+        updated = db.get_feature(feature_with_criteria.id)
+        assert updated.status == "needs_human", (
+            f"Verification crash must NOT silently mark the feature "
+            f"completed; got status={updated.status}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_verification_exception_does_not_cascade_dependents(
+        self, project
+    ):
+        """Bug 2 regression: a verification crash must not unlock dependents.
+
+        Build A -> B (B depends on A). Verification crashes for A; A goes
+        to needs_human. B must remain pending (NOT promoted to ready).
+        """
+        from bob3.orchestrator.run_loop import OrchestrationLoop
+        from claude_code_sdk import ResultMessage
+
+        feat_a = db.create_feature(
+            project_id=project.id,
+            name="Feature A",
+            description="A — its verification will crash",
+            acceptance_criteria=json.dumps(["Step 1: do thing"]),
+        )
+        feat_b = db.create_feature(
+            project_id=project.id,
+            name="Feature B",
+            description="B — must NOT cascade to ready",
+        )
+        db.update_feature(
+            feat_a.id,
+            status="ready",
+            readiness_score=0.85,
+            conf_spec_understanding=0.85,
+            conf_impl_correctness=0.85,
+            conf_test_adequacy=0.85,
+        )
+        db.update_feature(feat_b.id, status="pending", readiness_score=0.85)
+        db.add_feature_dependency(
+            feature_id=feat_b.id, depends_on_feature_id=feat_a.id
+        )
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=1000,
+                duration_api_ms=900,
+                is_error=False,
+                num_turns=2,
+                session_id="cascade-test",
+                total_cost_usd=0.10,
+                usage=None,
+                result=None,
+            )
+
+        loop = OrchestrationLoop(
+            project_id=project.id,
+            workspace="/tmp/test-cascade-crash",
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("simulated verification crash")
+
+        with patch("bob3.orchestrator.claude_executor.query", mock_query):
+            with patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                side_effect=_boom,
+            ):
+                a_loaded = db.get_feature(feat_a.id)
+                await loop.execute_feature(a_loaded)
+
+        # A is needs_human (not completed).
+        assert db.get_feature(feat_a.id).status == "needs_human"
+        # B was not unlocked.
+        assert db.get_feature(feat_b.id).status == "pending"
+
+
+# ===================================================================
 # Build superpowers prompt combination tests
 # ===================================================================
 
@@ -855,6 +1012,419 @@ class TestBuildSuperpowersPrompt:
 
 
 # ===================================================================
+# Auto test-execution check (_check_tests_pass)
+# ===================================================================
+
+
+def _make_python_workspace(
+    root: pathlib.Path,
+    *,
+    test_body: str | None = None,
+    create_tests_dir: bool = True,
+) -> pathlib.Path:
+    """Build a minimal Python workspace under ``root`` for tests_pass tests.
+
+    By default writes one passing test (``assert 1 + 1 == 2``). Callers can
+    override the test body or skip the tests/ directory entirely.
+    """
+    src_dir = root / "src" / "demo"
+    src_dir.mkdir(parents=True)
+    (src_dir / "__init__.py").write_text("")
+    (src_dir / "core.py").write_text("def add(a, b):\n    return a + b\n")
+
+    if create_tests_dir:
+        tests_dir = root / "tests"
+        tests_dir.mkdir(parents=True)
+        (tests_dir / "__init__.py").write_text("")
+        if test_body is None:
+            test_body = (
+                "def test_passes():\n"
+                "    assert 1 + 1 == 2\n"
+            )
+        (tests_dir / "test_smoke.py").write_text(test_body)
+    return root
+
+
+class TestTestsPassCheck:
+    """Auto-discovery + execution check (`tests_pass`) inside the verifier."""
+
+    def test_passing_workspace_check_passes(self, tmp_path):
+        """Workspace with passing tests -> tests_pass check passes."""
+        from bob3.superpowers import run_verification_checklist
+
+        ws = _make_python_workspace(tmp_path)
+        result = run_verification_checklist(workspace=str(ws))
+
+        tests_check = next(
+            c for c in result["checks"] if c["name"] == "tests_pass"
+        )
+        assert tests_check["passed"] is True
+        assert tests_check.get("severity") != "warning"
+        assert "passed" in tests_check["details"].lower()
+
+    def test_failing_test_makes_check_fail_hard(self, tmp_path):
+        """One failing test -> tests_pass is a hard error, not a warning."""
+        from bob3.superpowers import run_verification_checklist
+
+        ws = _make_python_workspace(
+            tmp_path,
+            test_body=(
+                "def test_will_fail():\n"
+                "    assert 1 == 2\n"
+            ),
+        )
+        result = run_verification_checklist(workspace=str(ws))
+
+        tests_check = next(
+            c for c in result["checks"] if c["name"] == "tests_pass"
+        )
+        assert tests_check["passed"] is False
+        assert tests_check.get("severity") == "error"
+        # Failure count parsed from output
+        assert "failed" in tests_check["details"].lower()
+        # The overall verifier should fail because tests_pass is a hard error.
+        assert result["passed"] is False
+
+    def test_no_test_directory_is_warning(self, tmp_path):
+        """Workspace without a tests/ dir -> warning, not error."""
+        from bob3.superpowers import run_verification_checklist
+
+        ws = _make_python_workspace(tmp_path, create_tests_dir=False)
+        result = run_verification_checklist(workspace=str(ws))
+
+        tests_check = next(
+            c for c in result["checks"] if c["name"] == "tests_pass"
+        )
+        assert tests_check["passed"] is True
+        assert tests_check.get("severity") == "warning"
+        assert "no test directory" in tests_check["details"].lower()
+
+    def test_empty_tests_directory_is_hard_failure(self, tmp_path):
+        """tests/ dir exists but has no test files -> hard failure (no tests collected)."""
+        from bob3.superpowers import run_verification_checklist
+
+        # Build a Python workspace, then wipe the tests directory clean (keep
+        # the directory but remove all collected test files, including
+        # __init__.py to avoid pytest picking up nothing-but-init).
+        ws = _make_python_workspace(tmp_path)
+        tests_dir = ws / "tests"
+        for f in tests_dir.iterdir():
+            f.unlink()
+        # Sanity: directory still exists and is empty.
+        assert tests_dir.exists()
+        assert not list(tests_dir.iterdir())
+
+        result = run_verification_checklist(workspace=str(ws))
+        tests_check = next(
+            c for c in result["checks"] if c["name"] == "tests_pass"
+        )
+        # pytest exits with code 5 when no tests are collected; we treat
+        # that as a hard failure (an agent claiming "complete" with zero
+        # tests run is exactly what this check is meant to catch).
+        assert tests_check["passed"] is False
+        assert tests_check.get("severity") == "error"
+
+    def test_non_python_workspace_is_warning(self, tmp_path):
+        """Workspace without Python sources under src/ -> warning, not error."""
+        from bob3.superpowers import run_verification_checklist
+
+        # Build a CMake-style workspace -- no Python source files.
+        (tmp_path / "CMakeLists.txt").write_text("project(demo)\n")
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "main.cpp").write_text("int main() { return 0; }\n")
+        # Even with a tests/ dir, a non-Python project should be a warning.
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_main.cpp").write_text("int main() { return 0; }\n")
+
+        result = run_verification_checklist(workspace=str(tmp_path))
+        tests_check = next(
+            c for c in result["checks"] if c["name"] == "tests_pass"
+        )
+        assert tests_check["passed"] is True
+        assert tests_check.get("severity") == "warning"
+
+    def test_timeout_fails_without_hanging_runner(self, tmp_path, monkeypatch):
+        """A timed-out test must be killed (not orphaned) and verifier returns fast.
+
+        Beyond just returning a "timed out" result, this test also verifies
+        the spawned pytest process tree was actually killed -- we use an
+        uncommon sleep duration as a unique marker so we can ``pgrep`` for
+        leaked processes after the verifier returns. Without the
+        process-group kill behavior, the inner ``time.sleep(31419)`` would
+        survive the verifier returning.
+        """
+        import os as _os
+        import time as _time
+        from bob3.superpowers import run_verification_checklist
+
+        if _os.name != "posix":
+            pytest.skip("process-group kill / pgrep are POSIX-only")
+
+        # Uncommon sleep duration so pgrep below cannot false-positive on
+        # unrelated ``sleep N`` processes that happen to be running on the
+        # host. Distinct from the ``31419`` marker used by the
+        # ``TestGrandchildKillAndAnsiOutput`` test in this same file so the
+        # two tests can't false-positive each other when run sequentially
+        # if cleanup is racy.
+        sleep_marker = "27182"
+        ws = _make_python_workspace(
+            tmp_path,
+            test_body=(
+                f"import time\n"
+                f"def test_sleeps_forever():\n"
+                f"    time.sleep({sleep_marker})\n"
+            ),
+        )
+        # Override the configured timeout to 10s so the test runner doesn't
+        # actually wait 5 minutes for the default. This also exercises the
+        # BOB3_TEST_RUN_TIMEOUT env override path.
+        monkeypatch.setenv("BOB3_TEST_RUN_TIMEOUT", "10")
+
+        start = _time.monotonic()
+        result = run_verification_checklist(workspace=str(ws))
+        elapsed = _time.monotonic() - start
+
+        # The full verifier must return well before the marker sleep
+        # duration. Allow generous headroom for slow CI: 10s timeout +
+        # ~30s of overhead.
+        assert elapsed < 60, (
+            f"Verifier did not honor pytest timeout (took {elapsed:.1f}s)"
+        )
+        tests_check = next(
+            c for c in result["checks"] if c["name"] == "tests_pass"
+        )
+        assert tests_check["passed"] is False
+        assert tests_check.get("severity") == "error"
+        assert "timed out" in tests_check["details"].lower()
+
+        # Verify the pytest subprocess (and its sleeping grandchild test
+        # function) were actually killed -- not orphaned. If the
+        # process-group kill machinery regresses we'd find a leaked
+        # ``python ... -c`` running ``time.sleep(<marker>)`` here.
+        # Give the OS a beat to reap killed processes.
+        _time.sleep(0.5)
+        try:
+            check = subprocess.run(  # noqa: S603 - test-only
+                ["pgrep", "-f", sleep_marker],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            leaked = check.stdout.strip()
+            if leaked:
+                # Best-effort cleanup so we don't leave a long sleep
+                # running for hours on dev machines, then fail loudly.
+                for pid_str in leaked.splitlines():
+                    try:
+                        os.kill(int(pid_str), signal.SIGKILL)
+                    except (ProcessLookupError, ValueError, PermissionError):
+                        pass
+                pytest.fail(
+                    f"pytest subprocess sleeping for {sleep_marker}s was "
+                    f"orphaned, not killed: leaked pids={leaked!r}"
+                )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            # pgrep not available -- skip the leak check rather than fail.
+            pass
+
+    def test_check_returns_warning_when_workspace_missing(self, tmp_path):
+        """Pointing the verifier at a nonexistent path doesn't crash."""
+        from bob3.superpowers import _check_tests_pass
+
+        missing = tmp_path / "does_not_exist"
+        result = _check_tests_pass(missing, "src", "tests")
+        assert result["name"] == "tests_pass"
+        assert result["passed"] is True
+        assert result.get("severity") == "warning"
+
+
+# ===================================================================
+# Grandchild-kill + ANSI-output regression tests
+# ===================================================================
+
+
+class TestGrandchildKillAndAnsiOutput:
+    """Regressions for two long-standing verifier hang/parse bugs.
+
+    Bug 1: ``subprocess.run(..., timeout=...)`` only kills the direct child.
+    A test that does ``subprocess.Popen(["sleep", "30"])`` causes the
+    grandchild to inherit the stdout/stderr pipes -- the verifier's
+    ``communicate()`` then blocks forever waiting for EOF on those pipes
+    even after the timeout fires. We fix this by launching pytest in a new
+    process group and SIGKILLing the whole group on timeout.
+
+    Bug 2: ANSI color escapes (FORCE_COLOR=1, PY_COLORS=1, pytest-sugar,
+    etc.) emit codes like ``\\x1b[32m5 passed\\x1b[0m`` that break the
+    ``\\d+\\s+passed`` regex in ``_parse_pytest_counts``. We fix this by
+    forcing ``--color=no`` on every pytest invocation in the verifier.
+    """
+
+    def test_subprocess_grandchild_does_not_hang_verifier(
+        self, tmp_path, monkeypatch
+    ):
+        """A test that spawns a long-running grandchild does not hang the verifier.
+
+        Runs the verifier with a 3-second timeout against a workspace whose
+        single test passes immediately but spawns a ``sleep 30`` grandchild
+        before returning. Without the process-group kill fix, the verifier
+        would hang for the full 30 seconds because the grandchild keeps the
+        inherited stdout/stderr pipes open. With the fix it returns within a
+        handful of seconds.
+        """
+        import os as _os
+        import time as _time
+
+        if _os.name != "posix":
+            pytest.skip("process-group kill is POSIX-only")
+
+        # Use a unique sleep duration string so the leak check below can
+        # distinguish OUR grandchild from any unrelated ``sleep 30`` /
+        # ``sleep 60`` processes running on the host (e.g. shell watch
+        # loops).
+        sleep_marker = "31419"  # uncommon -- vanishingly unlikely to collide
+        ws = _make_python_workspace(
+            tmp_path,
+            test_body=(
+                f"import subprocess\n"
+                f"import time\n"
+                f"def test_spawns_grandchild_then_hangs():\n"
+                f"    # Spawn a long-running grandchild that INHERITS pytest's\n"
+                f"    # stdout/stderr (no pipe redirection). The grandchild keeps\n"
+                f"    # those pipe FDs open even after pytest exits, which is\n"
+                f"    # exactly what makes communicate() block forever in\n"
+                f"    # subprocess.run with timeout.\n"
+                f"    subprocess.Popen(['sleep', '{sleep_marker}'])\n"
+                f"    # Make pytest itself hang too so the timeout path fires.\n"
+                f"    # Without this, pytest exits in <1s and the grandchild's\n"
+                f"    # inherited FDs are the only thing keeping pipes open --\n"
+                f"    # we still want to exercise the timeout/kill code path.\n"
+                f"    time.sleep(120)\n"
+                f"    assert True\n"
+            ),
+        )
+        # 3-second pytest timeout. Grandchild sleeps 31419s, pytest sleeps 120s --
+        # without the pgroup-kill fix, communicate() hangs at least until the
+        # grandchild exits.
+        monkeypatch.setenv("BOB3_TEST_RUN_TIMEOUT", "3")
+
+        from bob3.superpowers import _check_tests_pass
+
+        start = _time.monotonic()
+        # Call the inner check directly so we measure only the pytest run,
+        # not unrelated AST work.
+        result = _check_tests_pass(ws, "src", "tests")
+        elapsed = _time.monotonic() - start
+
+        # With the pgroup-kill fix: ~3s timeout + ~5s drain = well under 20s.
+        # Without the fix: at least 30s (until the grandchild exits) and
+        # often 60s+ depending on plumbing.
+        assert elapsed < 20, (
+            f"verifier did not kill grandchild on timeout (took {elapsed:.1f}s)"
+        )
+        # We hit the timeout path: result should be a hard timeout failure.
+        assert result["name"] == "tests_pass"
+        assert result["passed"] is False
+        assert result.get("severity") == "error"
+        assert "timed out" in result["details"].lower()
+
+        # Verify the sleep grandchild was actually killed (no leaked
+        # processes). Give the OS a beat to reap, then check for our
+        # unique sleep marker. Using a uncommon duration avoids false
+        # positives from unrelated ``sleep N`` processes on the host.
+        _time.sleep(0.5)
+        try:
+            check = subprocess.run(  # noqa: S603 - test-only
+                ["pgrep", "-f", f"^sleep {sleep_marker}$"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            # pgrep returns 1 (no match) on success-of-leak-check. Any
+            # stdout content means our specific grandchild survived the
+            # process-group kill.
+            leaked = check.stdout.strip()
+            if leaked:
+                # Best-effort cleanup so we don't leave a 31419s sleep
+                # running for hours on dev machines, then fail loudly.
+                for pid_str in leaked.splitlines():
+                    try:
+                        os.kill(int(pid_str), signal.SIGKILL)
+                    except (ProcessLookupError, ValueError, PermissionError):
+                        pass
+                pytest.fail(
+                    f"sleep grandchild leaked after verifier returned: "
+                    f"pids={leaked!r}"
+                )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            # pgrep not available -- skip the leak check rather than fail.
+            pass
+
+    def test_force_color_does_not_break_pass_parsing(self, tmp_path, monkeypatch):
+        """FORCE_COLOR=1 in the env must not flip a passing run into a hard fail.
+
+        Before the fix, pytest emits ANSI escape codes like
+        ``\\x1b[32m5 passed\\x1b[0m``. The ``\\d+\\s+passed`` regex in
+        ``_parse_pytest_counts`` requires whitespace between the digit and
+        ``passed``, so the escape code in between makes the match fail and
+        the verifier reports "no tests collected" -- a hard error.
+
+        With ``--color=no`` forced on the pytest command, the output is
+        plain text regardless of the env, and the regex matches.
+        """
+        ws = _make_python_workspace(tmp_path)  # one passing test
+        monkeypatch.setenv("FORCE_COLOR", "1")
+        monkeypatch.setenv("PY_COLORS", "1")
+
+        from bob3.superpowers import _check_tests_pass
+
+        result = _check_tests_pass(ws, "src", "tests")
+
+        assert result["name"] == "tests_pass"
+        assert result["passed"] is True, (
+            f"FORCE_COLOR=1 broke pass parsing: details={result.get('details')!r}"
+        )
+        assert result.get("severity") != "warning"
+        assert "passed" in result["details"].lower()
+
+
+# ===================================================================
+# Recursion guard: workspace == bob3 itself
+# ===================================================================
+
+
+class TestSelfTestRecursionGuard:
+    """Bug 3: ``_check_tests_pass`` must skip when the workspace IS bob3."""
+
+    def test_workspace_equal_to_bob3_src_is_skipped(self):
+        """Running the verifier on bob3's own src tree returns a warning skip."""
+        import bob3
+        bob3_src_root = pathlib.Path(bob3.__file__).resolve().parents[1]
+
+        from bob3.superpowers import _check_tests_pass
+
+        result = _check_tests_pass(bob3_src_root, "bob3", "tests")
+        assert result["name"] == "tests_pass"
+        assert result["passed"] is True
+        assert result.get("severity") == "warning"
+        assert "recursion guard" in result["details"].lower()
+
+    def test_workspace_inside_bob3_src_is_skipped(self):
+        """A path inside bob3's src tree also triggers the guard."""
+        import bob3
+        bob3_pkg_dir = pathlib.Path(bob3.__file__).resolve().parent
+
+        from bob3.superpowers import _check_tests_pass
+
+        result = _check_tests_pass(bob3_pkg_dir, "src", "tests")
+        assert result["name"] == "tests_pass"
+        assert result["passed"] is True
+        assert result.get("severity") == "warning"
+        assert "recursion guard" in result["details"].lower()
+
+
+# ===================================================================
 # No forbidden patterns
 # ===================================================================
 
@@ -862,15 +1432,39 @@ class TestBuildSuperpowersPrompt:
 class TestNoForbiddenPatterns:
     """Ensure superpowers module follows Bob3 conventions."""
 
-    def test_no_subprocess_in_superpowers(self):
-        """No subprocess calls in superpowers.py."""
+    def test_subprocess_use_in_superpowers_is_scoped(self):
+        """Subprocess use in superpowers.py is scoped to the tests_pass check.
+
+        Verification is allowed to invoke pytest as part of running the
+        verification checklist (that's its job). The actual subprocess
+        invocation now lives in the shared ``_run_with_pgroup_timeout``
+        helper in ``enhanced_verification.py`` (which kills the entire
+        process group on timeout so grandchildren can't hang the verifier
+        via inherited stdout/stderr pipe FDs -- bpo-31935 / bpo-38207).
+        ``superpowers.py`` only imports that helper; it must not contain any
+        direct subprocess.run / Popen / os.system / shell=True calls of its
+        own.
+        """
         source_path = SRC_DIR / "bob3" / "superpowers.py"
         source = source_path.read_text()
-        forbidden = ["subprocess", "os.system(", "os.popen(", "Popen("]
+        # These patterns are forbidden in superpowers.py -- the only
+        # subprocess use must go through the shared helper.
+        forbidden = [
+            "os.system(",
+            "os.popen(",
+            "subprocess.Popen(",
+            "subprocess.run(",
+            "shell=True",
+        ]
         for pattern in forbidden:
             assert pattern not in source, (
                 f"Found forbidden '{pattern}' in superpowers.py"
             )
+        # The shared helper must be imported (single source of truth).
+        assert "_run_with_pgroup_timeout" in source, (
+            "superpowers.py must use the shared "
+            "_run_with_pgroup_timeout helper"
+        )
 
     def test_no_anthropic_import_in_superpowers(self):
         """No direct anthropic SDK import in superpowers.py."""

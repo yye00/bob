@@ -638,3 +638,91 @@ class TestClaudeExecutor:
         assert result.session_id == "mock-sess"
         assert result.num_turns == 2
         assert result.is_error is False
+
+
+# ===================================================================
+# Robustness: build_sub_agent_options with an unknown model name
+# ===================================================================
+
+
+class TestBuildSubAgentOptionsUnknownModel:
+    """Unknown model names should NOT crash the orchestration. Instead,
+    ``build_sub_agent_options`` falls back to ``DEFAULT_SUB_AGENT_MODEL``
+    and logs a warning. Otherwise a typo or stale alias would propagate
+    an unhandled ``ValueError`` and end the feature in 'executing'."""
+
+    def test_unknown_model_falls_back_to_default(self, caplog):
+        import logging as _logging
+
+        from bob3.orchestrator.claude_executor import (
+            DEFAULT_SUB_AGENT_MODEL,
+            MODEL_ALIASES,
+            build_sub_agent_options,
+        )
+
+        with caplog.at_level(_logging.WARNING, logger="bob3.orchestrator.claude_executor"):
+            opts = build_sub_agent_options(model="not-a-real-model")
+
+        # Did NOT raise; fell back to default model id.
+        expected = MODEL_ALIASES[DEFAULT_SUB_AGENT_MODEL]
+        assert opts.model == expected
+        # Warning was logged.
+        assert any(
+            "not-a-real-model" in rec.getMessage() for rec in caplog.records
+        ), "Expected a warning mentioning the unknown model"
+
+
+# ===================================================================
+# Robustness: ClaudeExecutor.execute strips parent-session env vars
+# ===================================================================
+
+
+class TestExecuteStripsParentSessionEnv:
+    """``ClaudeExecutor.execute`` must strip Claude Code parent-session
+    env vars for the duration of the SDK call. Otherwise calling
+    ``.execute()`` from inside a Claude Code session leaks
+    CLAUDECODE/CLAUDE_CODE_SESSION_ID into the spawned subprocess and
+    triggers a nested-session conflict."""
+
+    @pytest.mark.asyncio
+    async def test_execute_strips_parent_session_env(self, monkeypatch):
+        from bob3.orchestrator.claude_executor import ClaudeExecutor
+
+        # Simulate running inside a Claude Code parent session.
+        monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "parent-sess")
+        monkeypatch.setenv("CLAUDE_CODE_IDE_WEBSOCKET_URI", "ws://x")
+
+        seen_env: dict[str, str] = {}
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            # Snapshot os.environ at the point the SDK would build its
+            # subprocess env. The strip context manager must be active.
+            seen_env.update(os.environ)
+            from claude_code_sdk import ResultMessage
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=10,
+                duration_api_ms=8,
+                is_error=False,
+                num_turns=0,
+                session_id="s",
+                total_cost_usd=0.0,
+                usage=None,
+                result=None,
+            )
+
+        executor = ClaudeExecutor()
+        with patch("bob3.orchestrator.claude_executor.query", mock_query):
+            await executor.execute("hi")
+
+        # All three parent-session vars must have been stripped DURING
+        # the call.
+        assert "CLAUDECODE" not in seen_env
+        assert "CLAUDE_CODE_SESSION_ID" not in seen_env
+        assert "CLAUDE_CODE_IDE_WEBSOCKET_URI" not in seen_env
+
+        # And restored AFTER the call.
+        assert os.environ.get("CLAUDECODE") == "1"
+        assert os.environ.get("CLAUDE_CODE_SESSION_ID") == "parent-sess"
+        assert os.environ.get("CLAUDE_CODE_IDE_WEBSOCKET_URI") == "ws://x"

@@ -2,7 +2,7 @@
 -- Bob3 v2.1 Database Schema
 -- ============================================
 -- Includes both core Bob2 tables and Bob3-specific additions.
--- NOTE: project_memory and lessons_learned are handled by TITANS Memory MCP,
+-- NOTE: project_memory and lessons_learned are handled by bob3-memory (MCP),
 --       not stored in this local database.
 -- ============================================
 
@@ -238,13 +238,13 @@ CREATE TABLE IF NOT EXISTS feature_review_issues (
 );
 
 -- ============================================
--- NOTE: Project memory is handled by TITANS Memory MCP server.
--- No local project_memory table needed - use titans_add, titans_search, etc.
+-- NOTE: Project memory is handled by the bob3-memory MCP server.
+-- No local project_memory table needed - use memory_add, memory_search, etc.
 -- ============================================
 
 -- ============================================
--- NOTE: Lessons are stored in TITANS Memory MCP (lessons pool)
--- No local lessons_learned table - use titans_add, titans_search, etc.
+-- NOTE: Lessons are stored in bob3-memory (lessons pool)
+-- No local lessons_learned table - use memory_add, memory_search, etc.
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS bug_ledger (
@@ -269,8 +269,8 @@ CREATE TABLE IF NOT EXISTS bug_ledger (
     resolved BOOLEAN DEFAULT FALSE,
     resolution_attempts INTEGER DEFAULT 1,
 
-    -- Link to TITANS Memory lesson (if created)
-    titans_memory_id TEXT,  -- ID from titans_add response
+    -- Link to bob3-memory lesson (if created)
+    titans_memory_id TEXT,  -- legacy column name; ID from memory_add response
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     resolved_at TIMESTAMP
@@ -356,7 +356,7 @@ CREATE TABLE IF NOT EXISTS rollback_events (
     rollback_commit TEXT,              -- Commit SHA of rollback
 
     artifacts_preserved TEXT,          -- JSON array of preserved artifact IDs
-    titans_memory_id TEXT,             -- Lesson ID from TITANS Memory MCP
+    titans_memory_id TEXT,             -- legacy column name; Lesson ID from bob3-memory
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -505,7 +505,7 @@ CREATE TABLE IF NOT EXISTS scope_changes (
 );
 
 -- ============================================
--- TITANS FORGETTING AUDIT
+-- MEMORY FORGETTING AUDIT (bob3-memory)
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS forgetting_events (
@@ -586,7 +586,7 @@ CREATE INDEX IF NOT EXISTS idx_review_history_timeout ON review_history(review_r
 CREATE INDEX IF NOT EXISTS idx_review_issues_feature ON feature_review_issues(feature_id);
 CREATE INDEX IF NOT EXISTS idx_review_issues_resolved ON feature_review_issues(resolved);
 
--- NOTE: Lessons indexes removed - lessons stored in TITANS Memory MCP
+-- NOTE: Lessons indexes removed - lessons stored in bob3-memory (MCP)
 
 -- Calibration indexes
 CREATE INDEX IF NOT EXISTS idx_calibration_class ON calibration_data(task_class);
@@ -613,6 +613,8 @@ CREATE INDEX IF NOT EXISTS idx_flaky_runs_task ON flaky_test_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_project ON sub_agent_runs(project_id);
 CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_purpose ON sub_agent_runs(purpose);
 CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_parent ON sub_agent_runs(parent_run_id);
+CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_lookup
+ON sub_agent_runs(project_id, target_id, purpose, status);
 
 -- Readiness history indexes
 CREATE INDEX IF NOT EXISTS idx_readiness_history_feature ON readiness_history(feature_id);
@@ -797,8 +799,8 @@ FROM features f
 WHERE f.original_task_count > 0
 AND (SELECT COUNT(*) FROM tasks WHERE feature_id = f.id) > f.original_task_count * 2;
 
--- NOTE: Memory/lesson conflicts handled by TITANS Memory MCP
--- Use titans_search for retrieval, titans_get_candidates for maintenance
+-- NOTE: Memory/lesson conflicts handled by bob3-memory (MCP)
+-- Use memory_search for retrieval, memory_get_candidates for maintenance
 
 -- Gaming detection
 CREATE VIEW IF NOT EXISTS potential_gaming AS
@@ -831,9 +833,9 @@ SELECT p.id, p.name,
        (SELECT COUNT(*) FROM features WHERE project_id = p.id) as features_total
 FROM projects p;
 
--- NOTE: All lesson views removed - lessons stored in TITANS Memory MCP
--- Use titans_search for lesson retrieval
--- Use titans_get_candidates for demotion/archival candidates
+-- NOTE: All lesson views removed - lessons stored in bob3-memory (MCP)
+-- Use memory_search for lesson retrieval
+-- Use memory_get_candidates for demotion/archival candidates
 
 -- Active bugs
 CREATE VIEW IF NOT EXISTS active_bugs AS

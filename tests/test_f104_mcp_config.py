@@ -7,8 +7,11 @@ Validates that the MCP configuration module:
 - Configures PUPPETEER_MCP with managed_by_bob3=False
 - Provides get_mcp_config() helper
 - Provides get_bob3_managed_servers() helper
+- build_perplexity_mcp_dict warns when PERPLEXITY_API_KEY is missing/empty
+- validate_perplexity_available reports missing/empty PERPLEXITY_API_KEY
 """
 
+import logging
 import pathlib
 from dataclasses import fields as dataclass_fields
 
@@ -355,3 +358,89 @@ class TestMCPConfigIntegration:
             "memory_list_pools",
         }
         assert expected.issubset(set(result))
+
+
+# ===================================================================
+# Perplexity API key validation
+# ===================================================================
+
+
+class TestPerplexityApiKeyValidation:
+    """build_perplexity_mcp_dict / validate_perplexity_available behavior
+    when PERPLEXITY_API_KEY is missing or empty.
+
+    The MCP subprocess will start regardless, but every call would fail
+    with an auth error at runtime. We need a clear warning so operators
+    don't burn turns and budget on silent auth failures.
+    """
+
+    def test_warns_when_perplexity_api_key_missing(self, monkeypatch, caplog):
+        from bob3.orchestrator.mcp_config import build_perplexity_mcp_dict
+
+        monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="bob3.orchestrator.mcp_config"):
+            result = build_perplexity_mcp_dict()
+
+        assert any(
+            "PERPLEXITY_API_KEY" in record.getMessage()
+            and record.levelno >= logging.WARNING
+            for record in caplog.records
+        ), f"Expected warning about PERPLEXITY_API_KEY in {caplog.records!r}"
+        assert isinstance(result, dict)
+
+    def test_warns_when_perplexity_api_key_empty(self, monkeypatch, caplog):
+        from bob3.orchestrator.mcp_config import build_perplexity_mcp_dict
+
+        monkeypatch.setenv("PERPLEXITY_API_KEY", "")
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="bob3.orchestrator.mcp_config"):
+            build_perplexity_mcp_dict()
+
+        assert any(
+            "PERPLEXITY_API_KEY" in record.getMessage()
+            and record.levelno >= logging.WARNING
+            for record in caplog.records
+        )
+
+    def test_does_not_warn_when_perplexity_api_key_set(self, monkeypatch, caplog):
+        from bob3.orchestrator.mcp_config import build_perplexity_mcp_dict
+
+        monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-test-key")
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="bob3.orchestrator.mcp_config"):
+            result = build_perplexity_mcp_dict()
+
+        assert not any(
+            "PERPLEXITY_API_KEY" in record.getMessage()
+            and record.levelno >= logging.WARNING
+            for record in caplog.records
+        )
+        # API key should be propagated into the MCP env block.
+        from bob3.orchestrator.mcp_config import PERPLEXITY_MCP
+
+        assert result[PERPLEXITY_MCP.name]["env"]["PERPLEXITY_API_KEY"] == "pplx-test-key"
+
+    def test_validate_perplexity_available_missing(self, monkeypatch):
+        from bob3.orchestrator.mcp_config import validate_perplexity_available
+
+        monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
+        ok, message = validate_perplexity_available()
+        assert ok is False
+        assert "PERPLEXITY_API_KEY" in message
+
+    def test_validate_perplexity_available_empty(self, monkeypatch):
+        from bob3.orchestrator.mcp_config import validate_perplexity_available
+
+        monkeypatch.setenv("PERPLEXITY_API_KEY", "")
+        ok, message = validate_perplexity_available()
+        assert ok is False
+        assert "PERPLEXITY_API_KEY" in message
+
+    def test_validate_perplexity_available_set(self, monkeypatch):
+        from bob3.orchestrator.mcp_config import validate_perplexity_available
+
+        monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-test-key")
+        ok, message = validate_perplexity_available()
+        assert ok is True
+        assert message == ""

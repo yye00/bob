@@ -698,8 +698,17 @@ class TestContinueToImplementation:
             ):
                 await loop.execute_feature(feature)
 
-            # Both research and implementation costs are tracked
-            assert loop.total_cost == pytest.approx(0.60)
+            # Both research and implementation costs are tracked.
+            # Bug 1 (2026-04): execute_feature's implementation cost is
+            # written ONLY to the DB (no longer to loop.total_cost). The
+            # research path still bumps loop.total_cost so that the proxy
+            # warning logic and tests like this one keep functioning. The
+            # canonical total of $0.60 lives in the DB.
+            updated_project = db.get_project(project.id)
+            assert updated_project.total_cost_usd == pytest.approx(0.60)
+            # loop.total_cost reflects research (still bumped) but not the
+            # impl path (now tracked only via update_project_cost).
+            assert loop.total_cost == pytest.approx(0.10)
 
     @pytest.mark.asyncio
     async def test_rca_needs_research_triggers_research(self, tmp_db, project):

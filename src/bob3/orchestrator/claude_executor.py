@@ -180,7 +180,19 @@ def build_sub_agent_options(
         except Exception as exc:
             logger.debug("Skill installation skipped: %s", exc)
 
-    resolved_model = resolve_model_name(model)
+    try:
+        resolved_model = resolve_model_name(model)
+    except ValueError as exc:
+        # Unknown model: fall back to the default rather than crashing the
+        # entire orchestration. The caller may have supplied a stale or
+        # typo'd alias; log a warning and continue with the safe default.
+        logger.warning(
+            "Unknown model %r (%s); falling back to default %r",
+            model,
+            exc,
+            DEFAULT_SUB_AGENT_MODEL,
+        )
+        resolved_model = resolve_model_name(DEFAULT_SUB_AGENT_MODEL)
     if resolved_model is not None:
         kwargs["model"] = resolved_model
 
@@ -428,8 +440,15 @@ class ClaudeExecutor:
         if on_message is not None:
             handler.on_any_message = on_message
 
-        stream = stream_query(prompt, options=opts)
-        return await handler.consume(stream)
+        # Strip parent-session env vars so they don't leak into the
+        # SDK-spawned subprocess. Mirrors the guard around
+        # ``spawn_sub_agent`` -- without this, calling ``.execute()``
+        # directly (e.g. from a new feature or integration test) would
+        # propagate CLAUDE_CODE_SESSION_ID and trigger a nested-session
+        # conflict.
+        with _stripped_parent_session_env():
+            stream = stream_query(prompt, options=opts)
+            return await handler.consume(stream)
 
 
 # ---------------------------------------------------------------------------

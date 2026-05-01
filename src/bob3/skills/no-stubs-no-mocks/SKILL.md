@@ -57,6 +57,6 @@ You are building real software. Bob3 runs an AST-based stub detector on your sou
 
 Bob3 spends real money (Claude tokens) running sub-agents. A stub that passes test assertions but doesn't do the work wastes that investment: the calling code later breaks in a hard-to-diagnose way, bob3's regression detection flags it weeks later, and a human has to untangle it.
 
-Worse, stubs corrupt the TITANS-style memory: future agents search lessons and find the pattern "Feature X was completed" when it wasn't, reinforcing bad behavior.
+Worse, stubs corrupt bob3-memory: future agents search lessons and find the pattern "Feature X was completed" when it wasn't, reinforcing bad behavior.
 
 **If you don't know how to implement something, say so. Use `memory_search` to check for prior lessons. Use the Perplexity MCP (`mcp__plugin_perplexity_perplexity__perplexity_research`) to research. But do not fake it.**

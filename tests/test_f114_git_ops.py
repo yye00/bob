@@ -2,6 +2,7 @@
 
 import os
 import pathlib
+import stat
 import subprocess
 
 import pytest
@@ -515,3 +516,154 @@ class TestRollbackFeatureCreatesRevert:
 
         # Verify the file is gone after revert
         assert not (git_repo / "bad_module.py").exists()
+
+
+# ============================================================
+# Step 10: Structured error reporting
+# ============================================================
+
+
+def _install_pre_commit_hook(repo: pathlib.Path, body: str) -> pathlib.Path:
+    """Drop a pre-commit hook into the repo and make it executable."""
+    hooks_dir = repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook = hooks_dir / "pre-commit"
+    hook.write_text(body)
+    # chmod +x
+    hook.chmod(hook.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return hook
+
+
+class TestCommitFeatureErrorHandling:
+    """commit_feature distinguishes nothing-to-commit / hook / repo errors."""
+
+    def test_returns_none_when_nothing_to_commit_no_exception(self, git_repo):
+        from bob3.git_ops import commit_feature
+
+        sha = commit_feature(
+            feature_id="F001",
+            message="empty commit",
+            workspace=str(git_repo),
+        )
+        assert sha is None
+
+    def test_raises_git_repo_error_outside_repo(self, tmp_path):
+        from bob3.git_ops import GitRepoError, commit_feature
+
+        not_a_repo = tmp_path / "plain_dir"
+        not_a_repo.mkdir()
+        (not_a_repo / "file.txt").write_text("hello\n")
+
+        with pytest.raises(GitRepoError) as exc_info:
+            commit_feature(
+                feature_id="F001",
+                message="should fail",
+                workspace=str(not_a_repo),
+                stage_all=True,
+            )
+        # Exception attributes
+        err = exc_info.value
+        assert err.returncode != 0
+        assert isinstance(err.command, list)
+
+    def test_raises_git_repo_error_for_missing_workspace(self, tmp_path):
+        from bob3.git_ops import GitRepoError, commit_feature
+
+        nonexistent = tmp_path / "does_not_exist"
+
+        with pytest.raises(GitRepoError):
+            commit_feature(
+                feature_id="F001",
+                message="should fail",
+                workspace=str(nonexistent),
+            )
+
+    def test_raises_hook_failed_error_when_pre_commit_rejects(self, git_repo):
+        from bob3.git_ops import GitHookFailedError, commit_feature
+
+        # Install a hook that always rejects with a clear message.
+        _install_pre_commit_hook(
+            git_repo,
+            "#!/usr/bin/env bash\n"
+            "echo 'pre-commit hook failed: forbidden token detected' >&2\n"
+            "exit 1\n",
+        )
+
+        # Stage some real changes so the diff check passes and we hit `git commit`.
+        (git_repo / "feature.py").write_text("# new feature\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(git_repo), capture_output=True, check=True
+        )
+
+        with pytest.raises(GitHookFailedError) as exc_info:
+            commit_feature(
+                feature_id="F042",
+                message="should be rejected",
+                workspace=str(git_repo),
+            )
+
+        err = exc_info.value
+        assert err.returncode != 0
+        # Hook output captured in either stderr or stdout
+        combined = (err.stderr or "") + (err.stdout or "")
+        assert "pre-commit hook failed" in combined
+        assert "forbidden token detected" in combined
+        # Command should reference git commit
+        assert err.command[:2] == ["git", "commit"]
+
+    def test_hook_failed_error_is_subclass_of_git_commit_error(self):
+        from bob3.git_ops import GitCommitError, GitHookFailedError, GitRepoError
+
+        assert issubclass(GitHookFailedError, GitCommitError)
+        assert issubclass(GitRepoError, GitCommitError)
+
+    def test_hook_failure_does_not_create_commit(self, git_repo):
+        """After a hook rejection, HEAD should be unchanged."""
+        from bob3.git_ops import GitHookFailedError, commit_feature
+
+        # Capture HEAD before the failed commit
+        before = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(git_repo), capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        _install_pre_commit_hook(
+            git_repo,
+            "#!/usr/bin/env bash\necho 'pre-commit hook says no' >&2\nexit 1\n",
+        )
+
+        (git_repo / "rejected.py").write_text("# nope\n")
+        subprocess.run(
+            ["git", "add", "."], cwd=str(git_repo), capture_output=True, check=True
+        )
+
+        with pytest.raises(GitHookFailedError):
+            commit_feature(
+                feature_id="F999",
+                message="rejected",
+                workspace=str(git_repo),
+            )
+
+        # HEAD must not have moved
+        after = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(git_repo), capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        assert before == after
+
+    def test_commit_succeeds_when_hook_passes(self, git_repo):
+        """Sanity check: a hook that exits 0 does not block the commit."""
+        from bob3.git_ops import commit_feature
+
+        _install_pre_commit_hook(
+            git_repo, "#!/usr/bin/env bash\nexit 0\n",
+        )
+        (git_repo / "ok.py").write_text("# ok\n")
+        sha = commit_feature(
+            feature_id="F100",
+            message="hooks pass",
+            workspace=str(git_repo),
+            stage_all=True,
+        )
+        assert sha is not None
+        assert len(sha) == 40

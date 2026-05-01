@@ -12,13 +12,474 @@ Key improvements over basic verification:
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
+import os
 import pathlib
 import re
+import signal
+import subprocess
+import sys
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Allowlist enforcement for ``python:`` acceptance criteria
+# ---------------------------------------------------------------------------
+#
+# The ``python: <expression>`` criterion form runs ``python -c <expression>``
+# in the workspace. Even though specs come from a (notionally) trusted
+# project author, the execution path used to be wide open: a spec could
+# import ``os`` and delete files, exfiltrate secrets via ``urllib`` /
+# ``http`` / ``socket``, or shell out via ``subprocess``. The trust
+# boundary should be explicit and enforced.
+#
+# This is NOT a sandbox — Python sandboxing is fundamentally hard. The goal
+# is to raise the bar from "trivially exploitable in one line" to "requires
+# real effort". We do a simple AST scan of the expression before running it
+# and refuse anything that imports a banned top-level module or names a
+# banned function/attribute. Specs that need unrestricted access should use
+# the ``pytest:`` form, which is itself sandboxed by the test framework
+# (collection-time errors, isolated test process, etc.).
+
+# Top-level imports (and ``from <module> import ...`` source modules) that
+# are categorically banned from ``python:`` criteria. Submodules (e.g.
+# ``urllib.request``) are caught via the prefix check below.
+_PYTHON_CRITERION_BANNED_MODULES: frozenset[str] = frozenset(
+    {
+        "subprocess",
+        "socket",
+        "urllib",
+        "http",
+        "requests",
+        "ftplib",
+        "telnetlib",
+        "smtplib",
+        "shutil",
+        "ctypes",
+        "multiprocessing",
+        "pty",
+        "pickle",
+        "marshal",
+    }
+)
+
+# Bare callable names that, regardless of how they were obtained, are
+# refused. We catch ``eval(...)``, ``exec(...)``, ``__import__("os")``,
+# ``compile(...)`` etc. by AST name and by attribute access (``foo.eval``,
+# ``builtins.exec``). We also catch ``open(..., "w")`` style writes via a
+# specialised check on ``open``.
+_PYTHON_CRITERION_BANNED_CALL_NAMES: frozenset[str] = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+    }
+)
+
+# Attribute accesses that are banned outright regardless of which object
+# they hang off (``os.system``, ``shutil.rmtree``, ``os.environ``, etc.).
+# Matching is on the trailing attribute name only — that catches both
+# ``os.system(...)`` and ``import os as _o; _o.system(...)``.
+_PYTHON_CRITERION_BANNED_ATTRIBUTES: frozenset[str] = frozenset(
+    {
+        "system",
+        "popen",
+        "spawnl",
+        "spawnle",
+        "spawnv",
+        "spawnve",
+        "execv",
+        "execve",
+        "execvp",
+        "execvpe",
+        "remove",
+        "unlink",
+        "rmdir",
+        "removedirs",
+        "rmtree",
+        "environ",
+        "putenv",
+        "chmod",
+        "chown",
+        "kill",
+        "killpg",
+        "fork",
+        "forkpty",
+    }
+)
+
+# File modes that, when passed as the second positional arg to ``open()``,
+# enable writes. We refuse these on ``open(...)`` calls so a criterion
+# can read a sentinel file but cannot rewrite arbitrary files on disk.
+_OPEN_WRITE_MODE_CHARS: frozenset[str] = frozenset({"w", "a", "x", "+"})
+
+
+def _expression_uses_banned_operation(expression: str) -> str | None:
+    """AST-scan ``expression`` for banned operations.
+
+    Returns the name of the first banned operation encountered (e.g.
+    ``"subprocess"``, ``"os.system"``, ``"open(<write-mode>)"``) or
+    ``None`` if the expression looks clean.
+
+    This is intentionally minimal — it catches the obvious paths
+    (``import os; os.system(...)``, ``__import__("subprocess")``,
+    ``open("/etc/passwd", "w")``) but does NOT prevent every possible
+    abuse (e.g. ``getattr(__builtins__, "ev"+"al")(...)``). It raises
+    the bar enough that a spec can't trivially shell out.
+    """
+    try:
+        tree = ast.parse(expression, mode="exec")
+    except SyntaxError:
+        # Let the runtime failure path report the syntax error rather than
+        # masking it with a "banned operation" message.
+        return None
+
+    def _banned_module(name: str) -> str | None:
+        if not name:
+            return None
+        head = name.split(".", 1)[0]
+        if head in _PYTHON_CRITERION_BANNED_MODULES:
+            return head
+        return None
+
+    for node in ast.walk(tree):
+        # ``import foo`` / ``import foo.bar``
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bad = _banned_module(alias.name)
+                if bad is not None:
+                    return f"import {bad}"
+
+        # ``from foo import ...`` / ``from foo.bar import ...``
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            bad = _banned_module(module)
+            if bad is not None:
+                return f"from {bad} import ..."
+
+        # Plain-name calls: ``eval(...)``, ``exec(...)``, ``__import__(...)``.
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name):
+                if func.id in _PYTHON_CRITERION_BANNED_CALL_NAMES:
+                    return func.id
+                if func.id == "open":
+                    # Refuse write modes on ``open(<path>, <mode>)``.
+                    mode_str: str | None = None
+                    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                        val = node.args[1].value
+                        if isinstance(val, str):
+                            mode_str = val
+                    for kw in node.keywords:
+                        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
+                            v = kw.value.value
+                            if isinstance(v, str):
+                                mode_str = v
+                    if mode_str and any(
+                        ch in _OPEN_WRITE_MODE_CHARS for ch in mode_str
+                    ):
+                        return f"open(..., {mode_str!r})"
+            # Attribute calls: ``os.system(...)``, ``shutil.rmtree(...)``.
+            if isinstance(func, ast.Attribute):
+                if func.attr in _PYTHON_CRITERION_BANNED_ATTRIBUTES:
+                    return f".{func.attr}(...)"
+
+        # Bare attribute access (no call): ``os.environ`` is dangerous even
+        # without a call because it's a mutable mapping the expression can
+        # mutate. ``Call`` was already handled above; here we catch reads.
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _PYTHON_CRITERION_BANNED_ATTRIBUTES:
+                return f".{node.attr}"
+
+        # Bare name reference to a banned builtin (e.g. ``f = eval``).
+        elif isinstance(node, ast.Name):
+            if node.id in _PYTHON_CRITERION_BANNED_CALL_NAMES:
+                return node.id
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Shared subprocess helper: timeout-with-process-group-kill
+# ---------------------------------------------------------------------------
+#
+# ``subprocess.run(..., timeout=...)`` only sends SIGKILL to the direct child.
+# Any grandchildren that inherited the stdout/stderr pipe FDs (e.g. a test
+# that does ``subprocess.Popen(["sleep", "9999"])``) hold them open, and
+# ``run``'s implicit pipe-drain will block forever waiting for EOF. See
+# bpo-31935 / bpo-38207.
+#
+# The fix here launches the child in its own process group
+# (``start_new_session=True`` on POSIX) and, on timeout, SIGKILLs the whole
+# group via ``os.killpg`` before draining the pipes with a short secondary
+# timeout. This is shared by ``_check_tests_pass`` (in ``superpowers``),
+# ``_run_pytest_criterion``, and ``_run_python_criterion`` so the verifier
+# never hangs on a runaway grandchild process.
+
+
+def _run_with_pgroup_timeout(
+    cmd: list[str],
+    cwd: str | pathlib.Path,
+    timeout_s: int,
+    *,
+    env: dict[str, str] | None = None,
+) -> tuple[str, str, int, bool]:
+    """Run ``cmd`` with a timeout that kills the entire process group.
+
+    Returns ``(stdout, stderr, returncode, timed_out)``. On timeout,
+    ``returncode`` is ``-1`` and ``timed_out`` is ``True``; stdout/stderr
+    contain whatever was buffered before the kill (often empty if the kill
+    happened before pytest could flush its summary line).
+    """
+    popen_kwargs: dict = {
+        "cwd": str(cwd),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+    }
+    if env is not None:
+        popen_kwargs["env"] = env
+    # ``start_new_session`` is POSIX-only and creates a new process group so
+    # we can SIGKILL the whole tree on timeout.
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+
+    proc = subprocess.Popen(cmd, **popen_kwargs)  # nosec B603 - controlled args list, no shell.
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+        return stdout or "", stderr or "", proc.returncode, False
+    except subprocess.TimeoutExpired:
+        # Kill the entire process group so grandchildren don't keep the
+        # stdout/stderr pipes open.
+        if os.name == "posix":
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                # Already gone or unable to signal; fall back to direct kill.
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        else:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        # Drain pipes with a short secondary timeout. If the kill didn't
+        # release the FDs we still need to return -- so swallow a second
+        # TimeoutExpired and return empty buffers.
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            stdout, stderr = "", ""
+        return stdout or "", stderr or "", -1, True
+
+
+# ---------------------------------------------------------------------------
+# Executable acceptance-criterion helpers
+# ---------------------------------------------------------------------------
+#
+# These are the only sanctioned uses of ``subprocess`` in
+# ``enhanced_verification``: they implement the ``pytest:`` and ``python:``
+# criterion forms that let specs declare a real test invocation as their
+# acceptance criterion. Everything else in this module is static analysis.
+#
+# Both helpers return ``(passed: bool, details: str)``. They never raise — a
+# misbehaving criterion or workspace must degrade to ``(False, <reason>)``
+# instead of crashing the verification pipeline.
+
+
+def _run_pytest_criterion(
+    workspace: pathlib.Path,
+    expression: str,
+    timeout: int = 60,
+) -> tuple[bool, str]:
+    """Run ``python -m pytest <expression>`` inside ``workspace``.
+
+    ``expression`` is the substring after the ``pytest:`` prefix, typically a
+    pytest node id like ``tests/test_foo.py::test_bar``.
+
+    A criterion is considered passed only when pytest exits 0 *and* its
+    stdout reports at least one passed test. This rejects the common
+    "no tests collected" silent-success case (pytest can exit 5 when nothing
+    is collected, but some configs/plugins make that exit 0; double-check
+    the stdout summary either way).
+
+    All exceptional outcomes — timeout, missing python, missing workspace,
+    or arbitrary errors — return ``(False, <human-readable reason>)``.
+    """
+    if not workspace.exists():
+        return False, "workspace not found"
+
+    if not expression:
+        return False, "pytest criterion is empty"
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        expression,
+        "--tb=no",
+        "-q",
+        # Force plain output. Without this, FORCE_COLOR=1 / PY_COLORS=1 or
+        # third-party plugins (pytest-sugar, anyio, ...) emit ANSI escape
+        # codes between the digit and ``passed`` token, which breaks the
+        # ``"passed" in stdout`` check below in some pytest builds and
+        # confuses the summary regex in superpowers._parse_pytest_counts.
+        "--color=no",
+    ]
+    try:
+        stdout, stderr, exit_code, timed_out = _run_with_pgroup_timeout(
+            cmd,
+            cwd=workspace,
+            timeout_s=timeout,
+        )
+    except FileNotFoundError as e:
+        return False, f"pytest criterion failed to launch python: {e}"
+    except Exception as e:  # pragma: no cover - defensive
+        return False, f"pytest criterion errored: {e}"
+
+    if timed_out:
+        return (
+            False,
+            f"pytest criterion timed out after {timeout}s: {expression!r}",
+        )
+
+    passed = exit_code == 0 and "passed" in stdout.lower()
+    if passed:
+        return True, ""
+
+    tail = (stdout + stderr)[-600:]
+    return (
+        False,
+        f"pytest criterion failed (exit={exit_code}) for {expression!r}: {tail.strip()}",
+    )
+
+
+def _run_python_criterion(
+    workspace: pathlib.Path,
+    expression: str,
+    timeout: int = 60,
+) -> tuple[bool, str]:
+    """Run ``python -c "<expression>"`` inside ``workspace``.
+
+    The expression is the substring after the ``python:`` prefix. Typical
+    use is a quick assertion such as ``from mod import f; assert f() == 42``.
+
+    Before executing, the expression is AST-scanned against an allowlist:
+    imports of dangerous modules (``subprocess``, ``socket``, ``urllib``,
+    ``http``, ``shutil``, ...) and calls to dangerous builtins/attributes
+    (``eval``, ``exec``, ``__import__``, ``os.system``, ``os.environ``,
+    ``os.remove``, ``os.unlink``, ``shutil.rmtree``, ``open(..., "w")``)
+    are refused with ``(False, "Refused: ...")``. This is not a sandbox —
+    it raises the bar from "trivially exploitable" to "requires real
+    effort". Specs needing unrestricted access should use the ``pytest:``
+    form, which is naturally sandboxed by the test framework.
+
+    Returns ``(True, "")`` when the inline expression exits 0; otherwise
+    ``(False, <stderr or summary>)``. Same defensive error handling as
+    :func:`_run_pytest_criterion`.
+    """
+    if not workspace.exists():
+        return False, "workspace not found"
+
+    if not expression:
+        return False, "python criterion is empty"
+
+    banned = _expression_uses_banned_operation(expression)
+    if banned is not None:
+        return (
+            False,
+            f"Refused: criterion uses banned operation {banned!r}",
+        )
+
+    try:
+        stdout, stderr, returncode, timed_out = _run_with_pgroup_timeout(
+            [sys.executable, "-c", expression],
+            cwd=workspace,
+            timeout_s=timeout,
+        )
+    except FileNotFoundError as e:
+        return False, f"python criterion failed to launch python: {e}"
+    except Exception as e:  # pragma: no cover - defensive
+        return False, f"python criterion errored: {e}"
+
+    if timed_out:
+        return (
+            False,
+            f"python criterion timed out after {timeout}s: {expression!r}",
+        )
+
+    if returncode == 0:
+        return True, ""
+
+    stderr = (stderr or "").strip()
+    stdout = (stdout or "").strip()
+    tail = (stderr or stdout)[-600:]
+    return (
+        False,
+        f"python criterion failed (exit={returncode}): {tail}",
+    )
+
+
+def _criterion_exec_timeout() -> int:
+    """Resolve the per-criterion executable timeout from the environment.
+
+    Falls back to 60s when ``BOB3_CRITERION_EXEC_TIMEOUT`` is unset or not a
+    positive integer.
+    """
+    raw = os.environ.get("BOB3_CRITERION_EXEC_TIMEOUT")
+    if not raw:
+        return 60
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 60
+    return value if value > 0 else 60
+
+
+def _check_criterion_with_details(
+    *,
+    criterion: str,
+    workspace: pathlib.Path,
+    is_python_project: bool,
+    is_cmake_project: bool,
+    is_opm_project: bool,
+) -> tuple[bool, str]:
+    """Check a single criterion and return ``(passed, details)``.
+
+    Routes ``pytest:`` and ``python:`` forms to their executable helpers and
+    delegates everything else to the legacy keyword-pattern :func:`_check_criterion`
+    static checker, returning empty details for the legacy path.
+    """
+    stripped = criterion.strip() if isinstance(criterion, str) else ""
+    timeout = _criterion_exec_timeout()
+
+    if stripped.lower().startswith("pytest:"):
+        expression = stripped[len("pytest:"):].strip()
+        return _run_pytest_criterion(workspace, expression, timeout=timeout)
+
+    if stripped.lower().startswith("python:"):
+        expression = stripped[len("python:"):].strip()
+        return _run_python_criterion(workspace, expression, timeout=timeout)
+
+    result = _check_criterion(
+        criterion=criterion,
+        workspace=workspace,
+        is_python_project=is_python_project,
+        is_cmake_project=is_cmake_project,
+        is_opm_project=is_opm_project,
+    )
+    return bool(result), ""
 
 
 def validate_acceptance_criteria(
@@ -63,25 +524,34 @@ def validate_acceptance_criteria(
 
         # Validate each criterion
         validated = 0
-        failed = []
+        failed: list[tuple[str, str]] = []
 
         for criterion in criteria_list:
-            if _check_criterion(
+            passed, details = _check_criterion_with_details(
                 criterion=criterion,
                 workspace=workspace,
                 is_python_project=is_python_project,
                 is_cmake_project=is_cmake_project,
                 is_opm_project=is_opm_project,
-            ):
+            )
+            if passed:
                 validated += 1
             else:
-                failed.append(criterion)
+                failed.append((criterion, details))
 
         total = len(criteria_list)
         if validated == total:
             return True, f"All {total} acceptance criteria validated"
         else:
-            failed_str = "; ".join(failed[:3])  # Show first 3 failures
+            # Surface per-criterion details for executable forms so debug info
+            # (failing pytest tail, python stderr) is visible to the caller.
+            parts = []
+            for criterion, details in failed[:3]:
+                if details:
+                    parts.append(f"{criterion} -> {details}")
+                else:
+                    parts.append(criterion)
+            failed_str = "; ".join(parts)
             if len(failed) > 3:
                 failed_str += f" (and {len(failed) - 3} more)"
             return False, f"Failed {len(failed)}/{total} criteria: {failed_str}"
@@ -120,6 +590,20 @@ def _check_criterion(
         True if criterion is met, False otherwise.
     """
     criterion_lower = criterion.lower()
+
+    # Executable forms (pytest:/python:) — delegate to the detailed helper so
+    # that any direct caller of ``_check_criterion`` still benefits from the
+    # real test invocation. Detail strings are dropped for the bool-only API.
+    stripped_lower = criterion_lower.strip()
+    if stripped_lower.startswith("pytest:") or stripped_lower.startswith("python:"):
+        passed, _ = _check_criterion_with_details(
+            criterion=criterion,
+            workspace=workspace,
+            is_python_project=is_python_project,
+            is_cmake_project=is_cmake_project,
+            is_opm_project=is_opm_project,
+        )
+        return passed
 
     # Pattern 1: "File exists: path/to/file"
     if "file exists:" in criterion_lower or "file exist:" in criterion_lower:

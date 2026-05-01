@@ -1,13 +1,26 @@
 """
 Graceful shutdown handler for Bob3 (F117).
 
-Catches SIGINT and SIGTERM to:
-1. Set a graceful_shutdown flag
-2. Wait for the current sub-agent to reach a safe point (or timeout 30s)
-3. Create a checkpoint of current state
-4. Mark the current feature as 'interrupted'
-5. Stop the MCP server cleanly
-6. Exit with a message about resume capability
+Catches SIGINT and SIGTERM to set a flag. The actual shutdown work
+(database I/O, subprocess shutdown) is performed by the main loop at
+safe points — NOT inside the signal handler. Per POSIX, signal handlers
+should be async-signal-safe; doing arbitrary I/O can deadlock if the
+signal interrupts code that holds a non-reentrant lock (the most common
+case: SIGINT firing during ``conn.commit()`` deadlocks against the
+SQLite connection lock when the handler tries to commit again).
+
+The handler's responsibilities are split:
+
+* :meth:`GracefulShutdownHandler._handle_signal` — runs in signal
+  context. Only sets ``shutdown_requested = True`` and logs a brief
+  message. On a second signal, raises :class:`SystemExit` (allowed in
+  handler context). Does NOT touch the database, subprocesses, or any
+  other non-reentrant resources.
+
+* :meth:`GracefulShutdownHandler._perform_shutdown` — runs in normal
+  code context (called by the main loop). Performs all the actual
+  shutdown actions: checkpoint, mark feature interrupted, stop MCP
+  server.
 
 Usage::
 
@@ -18,7 +31,10 @@ Usage::
 
     # ... run sub-agent ...
     # handler.set_active_feature(feature_id, feature_data)
-    # ... if handler.shutdown_requested: break ...
+    # In the main loop, between safe points:
+    #     if handler.shutdown_requested:
+    #         handler._perform_shutdown()
+    #         break
 
     handler.uninstall()
 """
@@ -26,6 +42,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import logging
 import signal
 import threading
 import time
@@ -33,9 +50,7 @@ from datetime import datetime, timezone
 from types import FrameType
 from typing import Any
 
-from bob3.logging_config import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # Timeout for waiting for sub-agent to reach safe point
 _SAFE_POINT_TIMEOUT_SECONDS = 30
@@ -142,36 +157,68 @@ class GracefulShutdownHandler:
     def _handle_signal(self, signum: int, frame: FrameType | None) -> None:
         """Signal handler callback for SIGINT/SIGTERM.
 
-        On the first signal, sets shutdown_requested and performs graceful
-        shutdown. On a second signal, immediately exits.
+        This runs in signal context. It MUST be async-signal-safe, so it
+        only sets the ``shutdown_requested`` flag and logs a brief
+        message. The main loop is responsible for noticing the flag at a
+        safe point and calling :meth:`_perform_shutdown` from regular
+        (non-handler) code.
+
+        Doing database I/O, subprocess control, or anything else that
+        may take a non-reentrant lock here can deadlock the process if
+        the signal interrupted code that already holds that lock (e.g.,
+        ``conn.commit()`` on the main thread).
+
+        On a second signal, raises :class:`SystemExit` to force
+        immediate exit. Raising ``SystemExit`` from a handler is
+        permitted (the interpreter handles it as a regular exception).
         """
         sig_name = signal.Signals(signum).name
 
         if self.shutdown_requested:
+            # Second signal: user wants out NOW. SystemExit unwinds the
+            # main thread; this is safe to raise from a handler.
             logger.warning(
                 "Received %s again during shutdown — forcing immediate exit",
                 sig_name,
             )
             raise SystemExit(128 + signum)
 
-        logger.info("Received %s — initiating graceful shutdown", sig_name)
+        # First signal: set the flag and return. The main loop polls
+        # ``shutdown_requested`` at safe points and will call
+        # ``_perform_shutdown`` from there. Do NOT perform shutdown
+        # work here — see module docstring for why.
+        logger.warning(
+            "Received %s — graceful shutdown requested; finishing current step",
+            sig_name,
+        )
         self.shutdown_requested = True
-
-        self._perform_shutdown()
 
     def _perform_shutdown(self) -> None:
         """Execute the graceful shutdown sequence.
 
+        This MUST be called from regular code paths only, NOT from a
+        signal handler. It performs database I/O (checkpoint creation,
+        feature status update, ``conn.commit()``) and subprocess I/O
+        (stopping the MCP server) — all of which can deadlock if invoked
+        while the interrupted code holds a non-reentrant lock.
+
+        The intended caller is the main orchestration loop, which polls
+        :attr:`shutdown_requested` between feature executions and calls
+        this method from the resulting normal control flow.
+
         Steps:
-        1. Wait for sub-agent to reach safe point (up to 30s timeout)
-        2. Create checkpoint with current state
-        3. Mark feature as 'interrupted'
-        4. Stop MCP server
-        5. Log resume message
+
+        1. Create checkpoint with current state
+        2. Mark feature as 'interrupted'
+        3. Stop MCP server
+        4. Log resume message
+
+        Idempotent: calling this more than once is harmless (it sets
+        ``shutdown_complete = True`` and subsequent calls re-run the
+        sequence; in practice the main loop calls it exactly once).
         """
         from bob3.db import create_checkpoint, update_feature
         from bob3.mcp_lifecycle import stop_mcp_server
-        from bob3.models import CheckpointType, FeatureStatus
 
         logger.info("Graceful shutdown: starting checkpoint sequence")
 
@@ -197,14 +244,12 @@ class GracefulShutdownHandler:
                     duration_ms = int(time.time() * 1000) - self._execution_start_ms
 
                 checkpoint = create_checkpoint(
-                    self._conn,
                     project_id=self._project_id,
                     feature_id=feature_id,
-                    checkpoint_type=CheckpointType.manual,
+                    checkpoint_type="manual",
                     state_snapshot=state_snapshot,
                     cost_at_checkpoint=self._cost_so_far,
                     duration_at_checkpoint_ms=duration_ms,
-                    can_resume=True,
                 )
                 logger.info(
                     "Checkpoint created: %s for feature '%s'",
@@ -220,9 +265,7 @@ class GracefulShutdownHandler:
 
             # Step 2: Mark feature as interrupted
             try:
-                update_feature(
-                    self._conn, feature_id, status=FeatureStatus.interrupted
-                )
+                update_feature(feature_id, status="interrupted")
                 logger.info("Feature '%s' marked as 'interrupted'", feature_id)
             except Exception as exc:
                 logger.error(
@@ -231,11 +274,17 @@ class GracefulShutdownHandler:
                     exc,
                 )
 
-            # Commit the checkpoint and status update
-            try:
-                self._conn.commit()
-            except Exception as exc:
-                logger.error("Failed to commit shutdown state: %s", exc)
+            # Commit any outstanding state on the caller's connection.
+            # ``db.create_checkpoint`` and ``db.update_feature`` open
+            # their own connections and commit there, but if the caller
+            # holds an additional connection (e.g. for read-only views)
+            # we still flush it here so the resume path sees a
+            # consistent snapshot.
+            if self._conn is not None:
+                try:
+                    self._conn.commit()
+                except Exception as exc:
+                    logger.error("Failed to commit shutdown state: %s", exc)
         else:
             logger.info(
                 "Graceful shutdown: no active feature to checkpoint"

@@ -24,6 +24,7 @@ from bob3.db import (
     create_feature,
     create_project,
     get_feature,
+    get_project,
     get_ready_features,
     init_database,
     list_features,
@@ -425,8 +426,9 @@ class TestE2ERunOrchestration:
                 evidence = query_evidence(feature_id=f.id)
                 assert len(evidence) >= 1
 
-            # Total cost should be accumulated
-            assert loop.total_cost == pytest.approx(1.50)
+            # Total cost should be accumulated. Bug 1 (2026-04): cost is
+            # tracked in the DB project total, not on the loop instance.
+            assert get_project(project.id).total_cost_usd == pytest.approx(1.50)
 
 
 class TestE2ECLIIntegration:
@@ -733,9 +735,9 @@ class TestE2ECostTracking:
             ):
                 await loop.run()
 
-            # Loop-level cost tracking
-            assert loop.total_cost == pytest.approx(2.50)
-
-            # Project-level cost should be updated
+            # Bug 1 (2026-04): loop.total_cost is no longer the canonical
+            # accumulator; the DB project total is. The in-memory total
+            # must NOT exceed the DB total (no double-counting).
             updated_project = get_project(project.id)
             assert updated_project.total_cost_usd == pytest.approx(2.50)
+            assert loop.total_cost <= updated_project.total_cost_usd + 1e-9

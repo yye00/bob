@@ -501,10 +501,11 @@ class TestE2ECostTracking:
 
             # 3 features at $1.00 each = $3.00 total
             assert call_count == 3
-            assert loop.total_cost == pytest.approx(3.00)
-
             updated_project = get_project(project.id)
             assert updated_project.total_cost_usd == pytest.approx(3.00)
+            # Bug 1 (2026-04): the canonical total is the DB project total;
+            # loop.total_cost must not drift above it.
+            assert loop.total_cost <= updated_project.total_cost_usd + 1e-9
 
 
 class TestE2EEvidenceCreation:

@@ -17,15 +17,252 @@ This module provides:
 from __future__ import annotations
 
 import logging
+import os
 import pathlib
+import re
+import sys
 
 from bob3.ast_checks import verify_no_stubs_or_mocks
 from bob3.enhanced_verification import (
+    _run_with_pgroup_timeout,
     validate_acceptance_criteria,
     validate_integration,
 )
 
 logger = logging.getLogger(__name__)
+
+
+DEFAULT_TEST_RUN_TIMEOUT_S = 300
+
+
+def _test_run_timeout() -> int:
+    """Return the per-run pytest timeout in seconds (BOB3_TEST_RUN_TIMEOUT)."""
+    raw = os.environ.get("BOB3_TEST_RUN_TIMEOUT")
+    if not raw:
+        return DEFAULT_TEST_RUN_TIMEOUT_S
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return DEFAULT_TEST_RUN_TIMEOUT_S
+
+
+def _tail(text: str, limit: int = 800) -> str:
+    """Return the last ``limit`` characters of ``text`` (or all of it if shorter)."""
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return "..." + text[-limit:]
+
+
+def _parse_pytest_counts(stdout: str) -> tuple[int, int]:
+    """Parse ``N passed`` / ``N failed`` counts from pytest stdout.
+
+    Returns a tuple ``(passed, failed)``. Missing values default to 0.
+    """
+    passed = 0
+    failed = 0
+    if not stdout:
+        return passed, failed
+    # pytest prints summary lines like ``=== 5 passed in 0.12s ===`` or
+    # ``=== 1 failed, 4 passed in 0.12s ===``. Use regex per-token.
+    passed_match = re.search(r"(\d+)\s+passed", stdout)
+    if passed_match:
+        try:
+            passed = int(passed_match.group(1))
+        except ValueError:
+            passed = 0
+    failed_match = re.search(r"(\d+)\s+failed", stdout)
+    if failed_match:
+        try:
+            failed = int(failed_match.group(1))
+        except ValueError:
+            failed = 0
+    return passed, failed
+
+
+def _check_tests_pass(workspace: pathlib.Path, src_dir: str, test_dir: str) -> dict:
+    """Run pytest in the workspace and return a verification check entry.
+
+    Pass criteria:
+        * exit code == 0
+        * at least one test reported as passed in stdout
+
+    Behavior:
+        * Workspace doesn't exist -> warning (not failure).
+        * No Python sources in src/ -> warning (non-Python project).
+        * No test directory found -> warning ("no test directory found").
+        * Test directory present but no test files collected by pytest ->
+          treated as a hard failure (unless pytest itself isn't installed).
+        * Python or pytest unavailable -> warning.
+        * Timeout -> hard failure.
+        * Failures parsed from output -> hard failure with tail of output.
+    """
+    check_name = "tests_pass"
+
+    # Workspace existence check (non-fatal)
+    if not workspace.exists() or not workspace.is_dir():
+        return {
+            "name": check_name,
+            "passed": True,
+            "severity": "warning",
+            "details": f"workspace does not exist: {workspace}",
+        }
+
+    # Recursion guard: if the workspace resolves to bob3's own source tree
+    # (during self-development), running pytest there would re-enter bob3's
+    # own test suite and may re-initialize memory backends or contaminate
+    # parent state. Skip with a warning instead.
+    try:
+        import bob3  # local import to avoid circulars during module load.
+        bob3_root = pathlib.Path(bob3.__file__).resolve().parents[1]  # src/
+        workspace_resolved = pathlib.Path(workspace).resolve()
+        if workspace_resolved == bob3_root or bob3_root in workspace_resolved.parents:
+            return {
+                "name": check_name,
+                "passed": True,
+                "severity": "warning",
+                "details": "Skipped: workspace is bob3 itself (self-test recursion guard)",
+            }
+    except Exception:
+        # Defensive: if anything goes wrong in the guard we don't want to
+        # block normal verification.
+        logger.debug("self-test recursion guard check skipped", exc_info=True)
+
+    # Skip for non-Python projects: no .py files under src/ means we shouldn't
+    # gate the verification on pytest. Return a warning instead of failing.
+    src_path = workspace / src_dir
+    has_python_sources = False
+    if src_path.exists() and src_path.is_dir():
+        for f in src_path.rglob("*.py"):
+            if "__pycache__" in str(f):
+                continue
+            has_python_sources = True
+            break
+    if not has_python_sources:
+        return {
+            "name": check_name,
+            "passed": True,
+            "severity": "warning",
+            "details": "no Python source files found under src/; pytest run skipped",
+        }
+
+    # Locate test directory: prefer the configured ``test_dir`` if it exists,
+    # then fall back to ``tests``. If neither is present, return a warning.
+    candidate_dirs: list[pathlib.Path] = []
+    primary = workspace / test_dir
+    candidate_dirs.append(primary)
+    if test_dir != "tests":
+        candidate_dirs.append(workspace / "tests")
+    target_dir: pathlib.Path | None = None
+    for c in candidate_dirs:
+        if c.exists() and c.is_dir():
+            target_dir = c
+            break
+    if target_dir is None:
+        return {
+            "name": check_name,
+            "passed": True,
+            "severity": "warning",
+            "details": "no test directory found",
+        }
+
+    # Run pytest as a subprocess (one of the legitimate subprocess uses in bob3).
+    timeout_s = _test_run_timeout()
+    target_rel = target_dir.relative_to(workspace).as_posix()
+    cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        target_rel,
+        "--tb=line",
+        "-q",
+        "--maxfail=20",
+        # Force plain output. Without this, FORCE_COLOR=1 / PY_COLORS=1 or
+        # third-party plugins (pytest-sugar, anyio, ...) emit ANSI escape
+        # codes between the digit and ``passed`` token, breaking the
+        # ``\d+\s+passed`` summary regex below.
+        "--color=no",
+    ]
+    try:
+        stdout, stderr, returncode, timed_out = _run_with_pgroup_timeout(
+            cmd,
+            cwd=str(workspace),
+            timeout_s=timeout_s,
+        )
+    except FileNotFoundError as e:
+        # Python interpreter not on PATH (extremely unlikely but defensive).
+        return {
+            "name": check_name,
+            "passed": True,
+            "severity": "warning",
+            "details": f"python interpreter not available: {e}",
+        }
+    except (OSError, ValueError) as e:
+        return {
+            "name": check_name,
+            "passed": True,
+            "severity": "warning",
+            "details": f"pytest invocation failed ({type(e).__name__}): {e}",
+        }
+
+    if timed_out:
+        details = (
+            f"pytest timed out after {timeout_s}s; "
+            f"stdout_tail={_tail(stdout, 400)} "
+            f"stderr_tail={_tail(stderr, 400)}"
+        )
+        return {
+            "name": check_name,
+            "passed": False,
+            "severity": "error",
+            "details": details,
+        }
+
+    # Detect "pytest not installed". When ``python -m pytest`` is run without
+    # pytest installed, Python prints something like
+    # ``No module named pytest`` to stderr and exits with a non-zero code.
+    if "No module named pytest" in stderr or "No module named 'pytest'" in stderr:
+        return {
+            "name": check_name,
+            "passed": True,
+            "severity": "warning",
+            "details": "pytest is not installed; tests_pass check skipped",
+        }
+
+    passed_count, failed_count = _parse_pytest_counts(stdout)
+
+    # Pytest exit codes: 0 = ok, 1 = failures, 2 = interrupted, 3 = internal,
+    # 4 = usage, 5 = no tests collected.
+    if returncode == 0 and passed_count > 0:
+        return {
+            "name": check_name,
+            "passed": True,
+            "details": f"pytest passed: {passed_count} test(s) in {target_rel}",
+        }
+
+    # Hard failure: capture the tail of stdout/stderr for diagnostics.
+    if returncode == 5 or (returncode == 0 and passed_count == 0):
+        reason = "no tests collected (0 passed)"
+    elif failed_count > 0:
+        reason = f"{failed_count} failed, {passed_count} passed"
+    else:
+        reason = f"pytest exit={returncode}"
+
+    details = (
+        f"pytest failed in {target_rel}: {reason}; "
+        f"stdout_tail={_tail(stdout, 400)} "
+        f"stderr_tail={_tail(stderr, 400)}"
+    )
+    return {
+        "name": check_name,
+        "passed": False,
+        "severity": "error",
+        "details": details,
+    }
 
 
 # ============================================================
@@ -318,6 +555,15 @@ def run_verification_checklist(
             "passed": True,
             "details": "Mock detection skipped (non-Python project)",
         })
+
+    # Check 4b: Run the test suite. This is the always-on default that
+    # actually executes pytest in the workspace, so a sub-agent that only
+    # writes always-passing tests still gets caught when the suite reports
+    # zero meaningful results or fails. Placed after the static
+    # no_stubs_in_source/no_mocks_in_source checks and before the acceptance
+    # criteria checks (per F113 design).
+    tests_pass_check = _check_tests_pass(ws, src_dir, test_dir)
+    checks.append(tests_pass_check)
 
     # Check 5: Recent code changes (verify work was actually done)
     # Look for files modified in the last hour (feature execution time)

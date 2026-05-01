@@ -655,6 +655,91 @@ def update_dependent_features_readiness(completed_feature_id: str) -> list[str]:
     return updated_features
 
 
+def complete_feature_and_cascade(feature_id: str) -> list[str]:
+    """Atomically mark a feature 'completed' and cascade dependents to 'ready'.
+
+    Both the feature status update and the dependent-readiness cascade run
+    inside a SINGLE ``connect()`` transaction so a process crash mid-way
+    cannot leave the project in an inconsistent state where the feature is
+    'completed' but its dependents stay 'pending' forever.
+
+    The cascade logic mirrors ``update_dependent_features_readiness``: for
+    each feature that depends on ``feature_id``, if all of ITS dependencies
+    are now 'completed', it is transitioned from 'pending' to 'ready'.
+    Confidence scores are intentionally NOT auto-set; they are assessed
+    later from the feature's content.
+
+    Args:
+        feature_id: The ID of the feature that just succeeded.
+
+    Returns:
+        List of feature IDs that were transitioned to 'ready' as a result
+        of the cascade. Same return shape as
+        ``update_dependent_features_readiness``.
+    """
+    updated_features: list[str] = []
+    now_iso = datetime.now().isoformat()
+
+    with connect() as conn:
+        # 1. Mark the feature itself as completed.
+        cursor = conn.execute(
+            "UPDATE features SET status = ?, updated_at = ? WHERE id = ?",
+            ("completed", now_iso, feature_id),
+        )
+        if cursor.rowcount == 0:
+            # Feature does not exist; nothing to cascade against.
+            return updated_features
+
+        # 2. Cascade: find features that depend on this one and check if
+        # all THEIR dependencies are now completed. If so, flip from
+        # 'pending' to 'ready'. Doing this on the same connection means
+        # the whole thing rolls back together on any exception.
+        dep_cursor = conn.execute(
+            """
+            SELECT feature_id, depends_on_feature_id
+            FROM feature_dependencies
+            WHERE depends_on_feature_id = ?
+            """,
+            (feature_id,),
+        )
+        dependents = dep_cursor.fetchall()
+
+        for dep_row in dependents:
+            dependent_feature_id = dep_row[0]
+
+            all_deps_cursor = conn.execute(
+                """
+                SELECT fd.depends_on_feature_id, f.status
+                FROM feature_dependencies fd
+                JOIN features f ON fd.depends_on_feature_id = f.id
+                WHERE fd.feature_id = ?
+                """,
+                (dependent_feature_id,),
+            )
+            dep_rows = all_deps_cursor.fetchall()
+            if not dep_rows:
+                continue
+
+            all_completed = all(
+                dep_status == "completed" for _, dep_status in dep_rows
+            )
+            if not all_completed:
+                continue
+
+            update_cursor = conn.execute(
+                """
+                UPDATE features
+                SET status = 'ready', updated_at = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (now_iso, dependent_feature_id),
+            )
+            if update_cursor.rowcount == 1:
+                updated_features.append(dependent_feature_id)
+
+    return updated_features
+
+
 def assess_feature_confidence(feature_id: str) -> dict[str, float]:
     """Assess confidence scores for a feature based on its description and criteria.
 
@@ -2588,7 +2673,8 @@ def create_bug_from_rca(
         feature_id: Optional feature ID.
         task_id: Optional task ID.
         error_context: Optional additional error context.
-        titans_memory_id: Optional TITANS Memory ID if a lesson was created.
+        titans_memory_id: Optional bob3-memory ID if a lesson was created.
+            (Column name is legacy; backend is now bob3-memory.)
 
     Returns:
         The created BugLedger record.
@@ -3249,6 +3335,35 @@ def query_agent_runs(
         cursor = conn.execute(select, params)
         rows = cursor.fetchall()
     return [_row_to_agent_run(row) for row in rows]
+
+
+def count_agent_runs(
+    *,
+    project_id: str,
+    target_id: str | None = None,
+    purpose: str | None = None,
+    status: str | None = None,
+) -> int:
+    """Count agent runs matching the given filters via SQL COUNT(*).
+
+    Faster than fetching all rows and counting in Python; used by the
+    orchestration loop's needs_research check on every feature evaluation.
+    """
+    where = ["project_id = ?"]
+    params: list = [project_id]
+    if target_id is not None:
+        where.append("target_id = ?")
+        params.append(target_id)
+    if purpose is not None:
+        where.append("purpose = ?")
+        params.append(purpose)
+    if status is not None:
+        where.append("status = ?")
+        params.append(status)
+    sql = "SELECT COUNT(*) FROM sub_agent_runs WHERE " + " AND ".join(where)
+    with connect() as conn:
+        row = conn.execute(sql, params).fetchone()
+    return int(row[0]) if row else 0
 
 
 def get_agent_hierarchy(run_id: str) -> list[SubAgentRun] | None:
@@ -3933,7 +4048,8 @@ def create_rollback_event(
         regression_event_id: Optional ID of the linked regression event.
         rollback_commit: Optional git commit SHA of the rollback itself.
         artifacts_preserved: Optional JSON array of preserved artifact IDs.
-        titans_memory_id: Optional TITANS Memory lesson ID.
+        titans_memory_id: Optional bob3-memory lesson ID.
+            (Column name is legacy; backend is now bob3-memory.)
 
     Returns:
         The created RollbackEvent model.
@@ -4569,11 +4685,11 @@ def record_forgetting_event(
     approved_by: str | None = None,
     can_restore: bool = True,
 ) -> ForgettingEvent:
-    """Record a forgetting event for TITANS Memory audit trail.
+    """Record a forgetting event for the bob3-memory audit trail.
 
     Args:
         target_type: Type of target (lesson or memory).
-        target_id: ID of the TITANS memory being acted upon.
+        target_id: ID of the bob3-memory entry being acted upon.
         action: Action taken (demote, archive, purge, or restore).
         reason: Human-readable reason for the action.
         project_id: Optional project context.
@@ -4713,7 +4829,7 @@ def restore_from_forgetting(event_id: str) -> dict | None:
     and has not already been restored, then:
     1. Creates a new "restore" forgetting event referencing the same target.
     2. Marks the original event with restored_at timestamp.
-    3. Returns the backup_content for the caller to re-add to TITANS Memory.
+    3. Returns the backup_content for the caller to re-add to bob3-memory.
 
     Args:
         event_id: The ID of the forgetting event to restore from.
