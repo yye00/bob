@@ -586,3 +586,258 @@ class TestSpawnIntegration:
         mcp_list = json.loads(run.mcp_enabled)
         assert "perplexity" in mcp_list
         assert "bob3-memory" in mcp_list
+
+
+# ===================================================================
+# R9-001: spawn_sub_agent must finalize the agent_run row even on
+# CancelledError. Previously the row was left at status='running' forever
+# whenever the caller's asyncio.wait_for fired its timeout.
+# ===================================================================
+
+
+class TestSpawnCancellationFinalizesAgentRun:
+    """R9-001: a CancelledError mid-stream must update the agent_run row
+    to status='interrupted', not leave it stuck at 'running'.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancellation_marks_run_interrupted(self, project):
+        """A CancelledError raised mid-stream must end with the
+        sub_agent_runs row at status='interrupted' (not 'running').
+        """
+        from bob3.orchestrator.claude_executor import spawn_sub_agent
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            # Raise CancelledError to simulate asyncio.wait_for firing
+            # its timeout while the SDK stream is being read.
+            raise asyncio.CancelledError()
+            yield  # pragma: no cover — make this an async generator
+
+        with patch("bob3.orchestrator.claude_executor.query", mock_query):
+            with pytest.raises(asyncio.CancelledError):
+                await spawn_sub_agent(
+                    project_id=project.id,
+                    purpose="implement_feature",
+                    prompt="Will be cancelled",
+                )
+
+        # Find the row and assert it was finalized to 'interrupted'.
+        runs = db.query_agent_runs(project_id=project.id)
+        assert len(runs) == 1
+        run = runs[0]
+        assert run.status == "interrupted", (
+            f"expected status='interrupted' on cancellation, got {run.status!r}; "
+            "the agent_run row must not be left at 'running' when the "
+            "coroutine is cancelled mid-stream"
+        )
+        assert run.completed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_cancellation_via_wait_for_timeout(self, project):
+        """The integration scenario: a wait_for timeout cancels the
+        spawn coroutine. The row must still end at 'interrupted'.
+        """
+        from bob3.orchestrator.claude_executor import spawn_sub_agent
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            # Block long enough that wait_for will fire its timeout.
+            await asyncio.sleep(10)
+            yield  # pragma: no cover
+
+        with patch("bob3.orchestrator.claude_executor.query", mock_query):
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    spawn_sub_agent(
+                        project_id=project.id,
+                        purpose="implement_feature",
+                        prompt="Will time out",
+                    ),
+                    timeout=0.05,
+                )
+
+        runs = db.query_agent_runs(project_id=project.id)
+        assert len(runs) == 1
+        assert runs[0].status == "interrupted"
+        assert runs[0].completed_at is not None
+
+
+# ===================================================================
+# R9-007: Research and decomposer sub-agents must run
+# verify_skills_integrity on their workspace before spawning, so a
+# poisoned skill from a previous sub-agent cannot leak into them.
+# ===================================================================
+
+
+class TestResearchAgentVerifiesSkillIntegrity:
+    """spawn_research_agent must invoke verify_skills_integrity on the
+    workspace before spawning. Without this, a malicious sub-agent that
+    previously ran in the same workspace (with bypassPermissions) could
+    have replaced a bob3 skill symlink with a poisoned directory; the
+    next research agent would then load that poisoned skill.
+
+    Regression test for R9-007.
+    """
+
+    @pytest.mark.asyncio
+    async def test_verify_skills_integrity_called_for_research(
+        self, project, tmp_path
+    ):
+        """Spawning a research agent with workspace= triggers
+        install_skills_to_workspace and verify_skills_integrity on that
+        workspace before the SDK is invoked."""
+        from bob3.orchestrator.claude_executor import spawn_research_agent
+        from claude_code_sdk import ResultMessage
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=10,
+                duration_api_ms=8,
+                is_error=False,
+                num_turns=1,
+                session_id="s1",
+                total_cost_usd=0.01,
+                usage=None,
+                result=None,
+            )
+
+        # Patch the skills_installer functions imported at call-time
+        # inside build_sub_agent_options.
+        with patch(
+            "bob3.skills_installer.install_skills_to_workspace"
+        ) as mock_install, patch(
+            "bob3.skills_installer.verify_skills_integrity"
+        ) as mock_verify, patch(
+            "bob3.orchestrator.claude_executor.query", mock_query
+        ):
+            await spawn_research_agent(
+                project_id=project.id,
+                query="What is the airspeed velocity of an unladen swallow?",
+                workspace=str(tmp_path),
+            )
+
+        # The defense-in-depth contract: verify_skills_integrity ran with
+        # the given workspace before the SDK call.
+        assert mock_install.called, (
+            "install_skills_to_workspace must be called when workspace= "
+            "is supplied to spawn_research_agent (R9-007)"
+        )
+        assert mock_verify.called, (
+            "verify_skills_integrity must be called when workspace= "
+            "is supplied to spawn_research_agent (R9-007)"
+        )
+
+        # And specifically with the workspace path we passed in.
+        verify_arg = mock_verify.call_args[0][0]
+        assert str(verify_arg) == str(tmp_path), (
+            f"verify_skills_integrity must be called with the workspace "
+            f"path; got {verify_arg!r} expected {tmp_path!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_verify_skills_integrity_skipped_when_no_workspace(
+        self, project
+    ):
+        """Without workspace=, the integrity check is skipped (caller
+        opts out, e.g. tests that don't set up a workspace). This is the
+        legacy behavior — R9-007 only requires the call WHEN a workspace
+        is provided."""
+        from bob3.orchestrator.claude_executor import spawn_research_agent
+        from claude_code_sdk import ResultMessage
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=10,
+                duration_api_ms=8,
+                is_error=False,
+                num_turns=1,
+                session_id="s1",
+                total_cost_usd=0.01,
+                usage=None,
+                result=None,
+            )
+
+        with patch(
+            "bob3.skills_installer.verify_skills_integrity"
+        ) as mock_verify, patch(
+            "bob3.orchestrator.claude_executor.query", mock_query
+        ):
+            await spawn_research_agent(
+                project_id=project.id,
+                query="Anything",
+            )
+
+        assert not mock_verify.called, (
+            "verify_skills_integrity should not run when workspace is "
+            "omitted (the caller chose not to scope the agent to an FS "
+            "directory)"
+        )
+
+
+class TestDecomposerVerifiesSkillIntegrity:
+    """handle_decomposition (the decomposer agent path) must propagate
+    the workspace down to build_sub_agent_options so the integrity
+    check runs there too. Regression test for R9-007 on the decomposer
+    branch.
+    """
+
+    @pytest.mark.asyncio
+    async def test_verify_skills_integrity_called_for_decomposer(
+        self, project, tmp_path
+    ):
+        from bob3.orchestrator.run_loop import handle_decomposition
+        from bob3.models import Feature
+        from claude_code_sdk import ResultMessage
+
+        # Build a synthetic Feature object that the decomposer will see.
+        # Only the fields the decomposer actually reads are populated.
+        feat = Feature(
+            id="dummy-feature",
+            project_id=project.id,
+            name="Big feature",
+            description="Too big",
+            acceptance_criteria=None,
+            status="ready",
+            priority=10,
+            risk_category="medium",
+            exceeds_size_limits=True,
+            size_limit_justification="too many lines",
+        )
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=10,
+                duration_api_ms=8,
+                is_error=False,
+                num_turns=1,
+                session_id="s1",
+                total_cost_usd=0.01,
+                usage=None,
+                result=None,
+            )
+
+        with patch(
+            "bob3.skills_installer.install_skills_to_workspace"
+        ) as mock_install, patch(
+            "bob3.skills_installer.verify_skills_integrity"
+        ) as mock_verify, patch(
+            "bob3.orchestrator.claude_executor.query", mock_query
+        ):
+            await handle_decomposition(
+                project_id=project.id,
+                feature=feat,
+                workspace=str(tmp_path),
+            )
+
+        assert mock_install.called, (
+            "install_skills_to_workspace must be called when "
+            "handle_decomposition receives a workspace (R9-007)"
+        )
+        assert mock_verify.called, (
+            "verify_skills_integrity must be called when "
+            "handle_decomposition receives a workspace (R9-007)"
+        )
+        verify_arg = mock_verify.call_args[0][0]
+        assert str(verify_arg) == str(tmp_path)

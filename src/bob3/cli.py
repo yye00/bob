@@ -82,10 +82,28 @@ def init(project_path, name):
     project_path.mkdir(parents=True, exist_ok=True)
     logger.debug("Created workspace directory: %s", project_path)
 
-    # Step 2: Initialize SQLite database with schema
-    db_path = project_path / "bob3.db"
+    # Step 2: Initialize SQLite database with schema.
+    #
+    # R9-008: honor BOB3_DATABASE_PATH when set so subsequent ``bob3 plan``
+    # / ``bob3 run`` / ``bob3 status`` commands (which all route through
+    # ``get_database_path()`` and respect that env var) can find the
+    # project. Without this, a hardened deployment that places the DB
+    # outside the workspace via BOB3_DATABASE_PATH would still create a
+    # second, orphan ``bob3.db`` inside the workspace at init time, and
+    # every later command would report "No project found" because the
+    # env-var path is empty. See README "Security considerations".
+    env_db_path = os.environ.get("BOB3_DATABASE_PATH", "").strip()
+    if env_db_path:
+        db_path = pathlib.Path(env_db_path).expanduser()
+        # Ensure the parent dir exists (the operator may have set the env
+        # var to e.g. /var/lib/bob3/bob3.db without pre-creating
+        # /var/lib/bob3). Idempotent.
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        db_path = project_path / "bob3.db"
     init_database(db_path=db_path)
     logger.debug("Database initialized: %s", db_path)
+    click.echo(f"Database initialized at {db_path}")
 
     # Step 3: Insert project record
     project_id = str(uuid.uuid4())

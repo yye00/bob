@@ -817,20 +817,36 @@ def rollback_feature_cascade(
         # 2. Find every dependent currently in 'ready' and flip it back to
         # 'pending'. The WHERE-status guard makes this idempotent and safe
         # against dependents that have already advanced past 'ready'.
+        #
+        # R9-010: split into SELECT-then-UPDATE rather than using SQL's
+        # ``RETURNING`` clause. ``RETURNING`` requires SQLite >= 3.35.0
+        # (March 2021); Python 3.11 on Ubuntu 20.04 ships with SQLite
+        # 3.31.1, where ``RETURNING`` produces ``OperationalError: near
+        # "RETURNING": syntax error``. Doing the SELECT first inside the
+        # same ``with connect()`` block keeps the read-modify-write atomic
+        # (the surrounding transaction commits on context-manager exit and
+        # rolls back on exception) without depending on a newer SQLite.
         cursor = conn.execute(
             """
-            UPDATE features
-            SET status = 'pending', updated_at = ?
+            SELECT id FROM features
             WHERE status = 'ready'
               AND id IN (
                   SELECT feature_id FROM feature_dependencies
                   WHERE depends_on_feature_id = ?
               )
-            RETURNING id
             """,
-            (now_iso, feature_id),
+            (feature_id,),
         )
         reverted = [row[0] for row in cursor.fetchall()]
+
+        if reverted:
+            placeholders = ",".join("?" * len(reverted))
+            conn.execute(
+                f"UPDATE features "
+                f"SET status = 'pending', updated_at = ? "
+                f"WHERE id IN ({placeholders})",
+                [now_iso, *reverted],
+            )
 
     return reverted
 

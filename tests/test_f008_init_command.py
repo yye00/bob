@@ -341,3 +341,136 @@ class TestProjectRecordVerification:
         # Second init may fail or succeed depending on implementation,
         # but should not crash
         assert result2.exit_code == 0 or "already" in result2.output.lower() or "exists" in result2.output.lower()
+
+
+# ============================================================
+# R9-008: bob3 init must honor BOB3_DATABASE_PATH
+# ============================================================
+
+
+class TestInitRespectsBob3DatabasePath:
+    """Regression test for R9-008.
+
+    When BOB3_DATABASE_PATH is set (the recommended hardened-deployment
+    pattern: DB outside the workspace so sub-agents can't tamper with
+    budget data), ``bob3 init <project>`` must create the database at
+    that path — NOT at ``<project>/bob3.db``. Otherwise subsequent
+    ``bob3 plan`` / ``bob3 run`` / ``bob3 status`` commands (which all
+    route through ``get_database_path()`` and DO honor the env var) will
+    report "No project found".
+    """
+
+    def test_init_uses_env_path_when_set(self, tmp_path, monkeypatch):
+        """With BOB3_DATABASE_PATH set, the DB lands at the env path,
+        not inside the workspace."""
+        from bob3.cli import main
+
+        secure_dir = tmp_path / "secure"
+        env_db_path = secure_dir / "bob3.db"
+        # Important: do NOT pre-create secure_dir. The init command must
+        # create the parent directory itself when the env var points
+        # somewhere that doesn't exist yet (operators often set this on
+        # first run before any path exists).
+        monkeypatch.setenv("BOB3_DATABASE_PATH", str(env_db_path))
+
+        project_path = tmp_path / "test-project"
+        runner = CliRunner()
+        result = runner.invoke(main, ["init", str(project_path), "--name", "test"])
+        assert result.exit_code == 0, f"init failed: {result.output}"
+
+        # The DB landed at the env-var path.
+        assert env_db_path.exists(), (
+            f"Database must be created at BOB3_DATABASE_PATH={env_db_path}, "
+            f"got: {result.output}"
+        )
+
+        # The DB did NOT land inside the workspace.
+        workspace_db = project_path / "bob3.db"
+        assert not workspace_db.exists(), (
+            f"Database must NOT be created at workspace path "
+            f"{workspace_db} when BOB3_DATABASE_PATH is set"
+        )
+
+    def test_init_falls_back_to_workspace_when_env_unset(
+        self, tmp_path, monkeypatch
+    ):
+        """Without BOB3_DATABASE_PATH, init keeps the legacy behavior:
+        the DB lives inside the workspace at <project>/bob3.db."""
+        from bob3.cli import main
+
+        # Make sure it's NOT set (some test runners may leak env vars)
+        monkeypatch.delenv("BOB3_DATABASE_PATH", raising=False)
+
+        project_path = tmp_path / "legacy-project"
+        runner = CliRunner()
+        result = runner.invoke(main, ["init", str(project_path)])
+        assert result.exit_code == 0, f"init failed: {result.output}"
+
+        workspace_db = project_path / "bob3.db"
+        assert workspace_db.exists(), (
+            "Without BOB3_DATABASE_PATH, init must create "
+            "<project>/bob3.db (legacy behavior)"
+        )
+
+    def test_init_announces_db_path(self, tmp_path, monkeypatch):
+        """The init output mentions where the database was created so
+        operators can confirm the env-var path was honored."""
+        from bob3.cli import main
+
+        secure_dir = tmp_path / "secure"
+        env_db_path = secure_dir / "bob3.db"
+        monkeypatch.setenv("BOB3_DATABASE_PATH", str(env_db_path))
+
+        project_path = tmp_path / "announce-test"
+        runner = CliRunner()
+        result = runner.invoke(main, ["init", str(project_path)])
+        assert result.exit_code == 0, f"init failed: {result.output}"
+
+        # Output should mention the DB path so the operator can verify
+        # it landed where they wanted.
+        assert str(env_db_path) in result.output, (
+            f"init output must announce the database path; got: "
+            f"{result.output!r}"
+        )
+
+    def test_subsequent_status_finds_project_via_env_path(
+        self, tmp_path, monkeypatch
+    ):
+        """End-to-end sanity: after init with BOB3_DATABASE_PATH set,
+        running ``bob3 status`` (which goes through get_database_path
+        and respects the env var) finds the project. This is the bug
+        R9-008 was fixing — without the fix, status reports
+        'No project found.'"""
+        from bob3.cli import main
+
+        secure_dir = tmp_path / "secure"
+        env_db_path = secure_dir / "bob3.db"
+        monkeypatch.setenv("BOB3_DATABASE_PATH", str(env_db_path))
+
+        project_path = tmp_path / "e2e-project"
+        runner = CliRunner()
+        init_result = runner.invoke(
+            main, ["init", str(project_path), "--name", "e2e-project"]
+        )
+        assert init_result.exit_code == 0, (
+            f"init failed: {init_result.output}"
+        )
+
+        # Now invoke status from a different cwd (the ``runner.invoke``
+        # default doesn't change cwd, but the env var is what matters).
+        status_result = runner.invoke(main, ["status"])
+        assert status_result.exit_code == 0, (
+            f"status failed: {status_result.output}"
+        )
+
+        # The project must be found — the legacy bug surfaced as
+        # "No project found.". Check both that we DON'T see that and
+        # that we DO see the project name.
+        assert "no project found" not in status_result.output.lower(), (
+            f"status reported 'No project found' — R9-008 regression: "
+            f"{status_result.output}"
+        )
+        assert "e2e-project" in status_result.output, (
+            f"status output should mention the project name 'e2e-project'; "
+            f"got: {status_result.output}"
+        )

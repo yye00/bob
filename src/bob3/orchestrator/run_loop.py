@@ -895,6 +895,7 @@ async def handle_decomposition(
     *,
     project_id: str,
     feature: Feature,
+    workspace: str | None = None,
 ) -> dict:
     """Decompose an oversized feature into smaller child features.
 
@@ -905,6 +906,20 @@ async def handle_decomposition(
     Args:
         project_id: The project ID.
         feature: The oversized feature to decompose.
+        workspace: Optional path to the project workspace. When supplied,
+            ``build_sub_agent_options`` runs ``install_skills_to_workspace``
+            and ``verify_skills_integrity`` against this directory before
+            spawning the decomposer. This closes the R9-007 skill-poisoning
+            window for the decomposer path.
+
+            SECURITY TRADE-OFF: passing ``cwd`` also gives the decomposer
+            sub-agent filesystem access to ``workspace`` (with the default
+            ``bypassPermissions`` mode it can read/write any file under
+            it). The decomposer is purely a planning agent — its prompt
+            asks for a JSON output, not file edits — so the practical
+            blast radius is small. The integrity check is what closes
+            the chained-attack window where a prior malicious agent
+            replaced a skill symlink in ``.claude/skills``.
 
     Returns:
         Dict with keys: success, children_created, cost_usd, error_message.
@@ -922,6 +937,7 @@ async def handle_decomposition(
     )
 
     options = build_sub_agent_options(
+        cwd=workspace or None,
         model="sonnet",
         max_turns=10,
         system_prompt=DECOMPOSER_SYSTEM_PROMPT,
@@ -1180,6 +1196,41 @@ def handle_execution_result(
                     len(updated_features),
                     ", ".join([f[:8] for f in updated_features])
                 )
+
+            # R9-006: When this feature is a child of a decomposed parent,
+            # check whether its completion finishes the parent. The parent
+            # was previously left at ``pending_decomposition`` forever
+            # because nothing in the orchestration loop called
+            # ``check_parent_completion`` — even though that helper exists
+            # in db.py specifically for this purpose. If the parent
+            # transitions to completed, we ALSO need to cascade ITS
+            # dependents (siblings-of-the-parent that were waiting on it),
+            # and walk further up in case of multi-level decomposition.
+            child_id_for_parent_check = feature.id
+            parent_id = feature.parent_feature_id
+            while parent_id:
+                if not db.check_parent_completion(child_id_for_parent_check):
+                    break
+                # Parent was just transitioned to 'completed' by
+                # check_parent_completion; cascade ITS dependents and
+                # continue walking up. We re-fetch from the DB so the
+                # ``parent_feature_id`` field reflects the latest state.
+                parent_feat = db.get_feature(parent_id)
+                if parent_feat is None:
+                    break
+                parent_updates = db.complete_feature_and_cascade(parent_id)
+                if parent_updates:
+                    logger.info(
+                        "Parent feature %s auto-completion unlocked %d "
+                        "dependent feature(s): %s",
+                        parent_id[:8],
+                        len(parent_updates),
+                        ", ".join([f[:8] for f in parent_updates]),
+                    )
+                # Walk up: the just-completed parent now plays the role
+                # of "child" for the grandparent check.
+                child_id_for_parent_check = parent_feat.id
+                parent_id = parent_feat.parent_feature_id
         except Exception:
             # The atomic complete+cascade rolled back, so the feature is
             # NOT marked completed and dependents are still pending. The
@@ -1550,6 +1601,7 @@ class OrchestrationLoop:
             purpose="feature_research",
             target_type="feature",
             target_id=feature.id,
+            workspace=self.workspace or None,
         )
 
         # Track research cost (normalize so Max Pro / OAuth subscriptions,
@@ -1690,6 +1742,7 @@ class OrchestrationLoop:
             decomp_result = await handle_decomposition(
                 project_id=self.project_id,
                 feature=feature,
+                workspace=self.workspace or None,
             )
 
             # R4-002 fix: route decomposition cost to the canonical project
@@ -2449,11 +2502,15 @@ class OrchestrationLoop:
         # previous version of this method always recorded
         # total_cost_at_interrupt=0.0 — useless for resume forensics.
         # Use the cached, refreshed-from-DB project total instead.
-        # ``handle_execution_result`` (the caller's caller) has already
-        # written ``result.total_cost_usd`` into the DB and refreshed the
-        # cache; the +result.total_cost_usd term below is a defensive
-        # belt-and-suspenders for paths where the refresh has not yet
-        # happened.
+        # R9-002: ``handle_execution_result`` (called from execute_feature
+        # before this method) has already written
+        # ``result.total_cost_usd`` into the DB via
+        # ``db.update_project_cost``, AND execute_feature has called
+        # ``_increment_expected_total_cost`` +
+        # ``_refresh_project_cost_cache`` before invoking this helper, so
+        # ``self._project_total_cost`` already includes the just-finished
+        # feature's cost. Adding ``result.total_cost_usd`` again here
+        # would double-count.
         project_total = float(self._project_total_cost or 0.0)
         state = {
             "feature_id": feature.id,
@@ -2470,7 +2527,7 @@ class OrchestrationLoop:
                 feature_id=feature.id,
                 checkpoint_type="interruption",
                 state_snapshot=json.dumps(state),
-                cost_at_checkpoint=project_total + (result.total_cost_usd or 0.0),
+                cost_at_checkpoint=project_total,
                 duration_at_checkpoint_ms=result.duration_ms,
             )
             logger.info(
