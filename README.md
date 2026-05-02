@@ -78,7 +78,14 @@ hardened deployments:
   reachable. Set `BOB3_DATABASE_PATH=/secure/path/bob3.db` (e.g. under
   your home directory) so sub-agents cannot reach the DB at all. With
   this in place, the cost-tampering detection is a defense-in-depth
-  backstop, not the primary defense.
+  backstop, not the primary defense. **`bob3 init` honors
+  `BOB3_DATABASE_PATH`:** when the env var is set, `bob3 init <project>`
+  creates the database at that path (the parent directory is created
+  if it doesn't exist) instead of inside the workspace. This keeps
+  later `bob3 plan` / `bob3 run` / `bob3 status` commands consistent
+  — they all route through the same `BOB3_DATABASE_PATH` lookup, so
+  there is no way for `init` to drop a `bob3.db` inside the workspace
+  that subsequent commands then can't find.
 - **Run sub-agents under a confined user / container.** The trust model
   assumes the workspace is yours; if it isn't, run bob3 under a
   dedicated user account (or a container) so workspace writes can't

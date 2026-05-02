@@ -604,6 +604,16 @@ async def spawn_sub_agent(
     # also emit a SECURITY warning so the operator knows to inspect.
     result = ExecutionResult()
     stream: AsyncIterator[Message] | None = None
+    # R9-001: Track whether we obtained a clean result so the finally
+    # block can pick the right terminal status. Without this flag, a
+    # CancelledError (timeout / Ctrl-C) would leave the agent_runs row
+    # at status='running' forever — the previous code only updated the
+    # row AFTER the try/except/finally block, which CancelledError
+    # skipped on its way out of the coroutine. The flag flips True only
+    # when ``handler.consume`` returned without raising.
+    consume_completed = False
+    cancelled = False
+    updated_run = None
     try:
         handler = MessageStreamHandler()
         if on_message is not None:
@@ -613,6 +623,7 @@ async def spawn_sub_agent(
             stream = stream_query(prompt, options=options)
             try:
                 result = await handler.consume(stream)
+                consume_completed = True
             except asyncio.CancelledError:
                 logger.warning(
                     "SECURITY: Sub-agent (purpose=%s, target=%s/%s, run_id=%s) "
@@ -626,10 +637,12 @@ async def spawn_sub_agent(
                     target_id,
                     getattr(agent_run, "id", None),
                 )
+                cancelled = True
                 raise
     except asyncio.CancelledError:
         # Ensure the finally below still runs to close the stream, then
         # re-raise so the caller (asyncio.wait_for) sees the timeout.
+        cancelled = True
         raise
     except Exception as exc:
         result.is_error = True
@@ -646,7 +659,7 @@ async def spawn_sub_agent(
                 except asyncio.CancelledError:
                     # aclose itself can raise CancelledError; we're already
                     # in the cancellation path so just continue.
-                    pass
+                    cancelled = True
                 except Exception:
                     logger.warning(
                         "SECURITY: Failed to cleanly close the claude SDK "
@@ -656,18 +669,39 @@ async def spawn_sub_agent(
                         exc_info=True,
                     )
 
-    # Step 3: Determine final status
-    final_status = "failed" if result.is_error else "completed"
+        # R9-001: Always update the agent_run row before unwinding, even
+        # when the coroutine was cancelled. Previously this update lived
+        # AFTER the try/except/finally block and CancelledError skipped
+        # it entirely, leaving every timed-out sub-agent at
+        # status='running' forever — polluting audit queries and cost
+        # reporting. ``BaseException`` is caught defensively because
+        # this finally must not mask the in-flight cancellation if the
+        # DB write itself misbehaves.
+        if cancelled:
+            final_status = "interrupted"
+        elif consume_completed and not result.is_error:
+            final_status = "completed"
+        else:
+            final_status = "failed"
 
-    # Step 4: Update the agent run record with results
-    now = datetime.now()
-    updated_run = db.update_agent_run(
-        agent_run.id,
-        status=final_status,
-        cost_usd=result.total_cost_usd,
-        duration_ms=result.duration_ms,
-        completed_at=now.isoformat(),
-    )
+        try:
+            now = datetime.now()
+            updated_run = db.update_agent_run(
+                agent_run.id,
+                status=final_status,
+                cost_usd=result.total_cost_usd,
+                duration_ms=result.duration_ms,
+                completed_at=now.isoformat(),
+            )
+        except BaseException:  # noqa: BLE001 — last-ditch cleanup
+            logger.warning(
+                "Failed to finalize sub_agent_runs row %s to status=%s; "
+                "row may remain at 'running'. This is best-effort "
+                "cleanup so the in-flight exception is not masked.",
+                getattr(agent_run, "id", None),
+                final_status,
+                exc_info=True,
+            )
 
     return SpawnResult(
         execution_result=result,
@@ -694,6 +728,7 @@ async def spawn_research_agent(
     target_id: str | None = None,
     parent_run_id: str | None = None,
     max_turns: int = 10,
+    workspace: str | Path | None = None,
     on_message: MessageCallback | None = None,
 ) -> SpawnResult:
     """Spawn a research sub-agent with Perplexity MCP enabled.
@@ -715,6 +750,25 @@ async def spawn_research_agent(
         target_id: Optional target ID (e.g. feature or task ID).
         parent_run_id: Optional parent agent run ID for hierarchy.
         max_turns: Maximum turns for the research agent (default: 10).
+        workspace: Optional path to the project workspace. When supplied,
+            ``build_sub_agent_options`` runs ``install_skills_to_workspace``
+            and ``verify_skills_integrity`` against this directory before
+            the research agent spawns. This is the defense-in-depth path
+            for R9-007 (skill poisoning) — without ``workspace`` the
+            integrity check is skipped, re-exposing R4-012.
+
+            SECURITY TRADE-OFF: setting ``cwd`` on the sub-agent options
+            also means the research agent inherits filesystem access to
+            ``workspace`` (combined with the default
+            ``permission_mode='bypassPermissions'`` it can read/write any
+            file under that directory). For research workloads this is
+            acceptable because (a) the agent's only useful tools are the
+            Perplexity MCP, which doesn't need FS access; and (b) the
+            same sub-agent could already touch the workspace via any
+            implementation agent that previously ran there. The
+            ``verify_skills_integrity`` step is what closes the
+            chained-attack window where a prior malicious agent
+            replaced a skill symlink.
         on_message: Optional callback invoked for each message received.
 
     Returns:
@@ -726,6 +780,7 @@ async def spawn_research_agent(
     mcp_servers = build_perplexity_mcp_dict()
 
     options = build_sub_agent_options(
+        cwd=workspace,
         model=DEFAULT_SUB_AGENT_MODEL,
         max_turns=max_turns,
         system_prompt=RESEARCH_SYSTEM_PROMPT,

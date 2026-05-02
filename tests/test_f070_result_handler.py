@@ -1645,3 +1645,242 @@ class TestRollbackFeatureCascadeAtomicity:
             # partial state.
             assert get_feature(feat_a.id).status == "needs_human"
             assert get_feature(feat_b.id).status == "pending"
+
+
+# ============================================================
+# R9-010: rollback_feature_cascade must not depend on SQLite >= 3.35
+# (the RETURNING clause is unsupported on Python 3.11 + Ubuntu 20.04
+# which ships SQLite 3.31). Use the SELECT-then-UPDATE pattern.
+# ============================================================
+
+
+class TestRollbackFeatureCascadeNoReturningClause:
+    """Regression test for R9-010.
+
+    Earlier versions of rollback_feature_cascade used SQL's
+    ``UPDATE ... WHERE ... RETURNING id`` to capture the affected
+    dependent IDs. ``RETURNING`` requires SQLite >= 3.35.0 (March
+    2021); Python 3.11 on Ubuntu 20.04 still ships SQLite 3.31.1, on
+    which the query raises::
+
+        OperationalError: near "RETURNING": syntax error
+
+    The fix is the SELECT-then-UPDATE pattern used elsewhere in the
+    codebase: SELECT the affected IDs, then UPDATE by primary key,
+    both inside the same ``with connect()`` block so the operation
+    stays atomic.
+
+    These tests verify the new path:
+      1. ``affected_ids`` are returned (the original public contract).
+      2. The dependents really are flipped to ``pending``.
+      3. The SQL the implementation issues does NOT contain
+         ``RETURNING`` — so it is portable to older SQLite.
+    """
+
+    def _seed_diamond(self, project):
+        """A → B and A → C; A=completed, B=ready, C=ready."""
+        feat_a = create_feature(
+            project_id=project.id,
+            name="A-r9-010",
+            description="upstream",
+            status="completed",
+            priority=10,
+            risk_category="medium",
+        )
+        feat_b = create_feature(
+            project_id=project.id,
+            name="B-r9-010",
+            description="downstream-1",
+            status="ready",
+            priority=20,
+            risk_category="medium",
+        )
+        feat_c = create_feature(
+            project_id=project.id,
+            name="C-r9-010",
+            description="downstream-2",
+            status="ready",
+            priority=20,
+            risk_category="medium",
+        )
+        add_feature_dependency(
+            feature_id=feat_b.id, depends_on_feature_id=feat_a.id
+        )
+        add_feature_dependency(
+            feature_id=feat_c.id, depends_on_feature_id=feat_a.id
+        )
+        return feat_a, feat_b, feat_c
+
+    def test_returns_affected_ids(self, tmp_db, project):
+        """rollback_feature_cascade returns the dependent IDs that were
+        flipped from 'ready' to 'pending'."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import rollback_feature_cascade
+
+            feat_a, feat_b, feat_c = self._seed_diamond(project)
+            reverted = rollback_feature_cascade(
+                feat_a.id, target_status="needs_human"
+            )
+
+            assert sorted(reverted) == sorted([feat_b.id, feat_c.id]), (
+                "rollback_feature_cascade must return the IDs of the "
+                "dependents it flipped from 'ready' to 'pending'"
+            )
+
+    def test_dependents_actually_reset_to_pending(self, tmp_db, project):
+        """And those dependents really are 'pending' after the call,
+        and the feature itself is at the requested target_status."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import rollback_feature_cascade
+
+            feat_a, feat_b, feat_c = self._seed_diamond(project)
+            rollback_feature_cascade(feat_a.id, target_status="needs_human")
+
+            assert get_feature(feat_a.id).status == "needs_human"
+            assert get_feature(feat_b.id).status == "pending"
+            assert get_feature(feat_c.id).status == "pending"
+
+    def test_implementation_does_not_use_returning_clause(self):
+        """The source of rollback_feature_cascade must NOT contain
+        the substring 'RETURNING' (case-insensitive). This guards
+        against future regressions that re-introduce the SQLite >= 3.35
+        dependency."""
+        import inspect
+        from bob3.db import rollback_feature_cascade
+
+        src = inspect.getsource(rollback_feature_cascade)
+        # Strip out comments and docstring before searching, so the
+        # explanatory note about ``RETURNING`` doesn't trip us up.
+        # Cheap approach: split on triple-quote and look at code body.
+        # The function has one docstring at the top, then the body.
+        parts = src.split('"""')
+        # parts[0] = def line, parts[1] = docstring, parts[2] = body
+        body = parts[2] if len(parts) >= 3 else src
+
+        # Strip comment lines (anything from '#' to EOL).
+        lines = []
+        for line in body.split("\n"):
+            # find an unquoted '#' — for simplicity strip everything
+            # after any '#' since this body has no '#' inside string
+            # literals.
+            if "#" in line:
+                line = line[: line.index("#")]
+            lines.append(line)
+        code_only = "\n".join(lines)
+
+        assert "returning" not in code_only.lower(), (
+            "rollback_feature_cascade must not use SQL's RETURNING "
+            "clause — it requires SQLite >= 3.35 which is not available "
+            "on Python 3.11 + Ubuntu 20.04 (SQLite 3.31). Use the "
+            "SELECT-then-UPDATE pattern instead. (R9-010)"
+        )
+
+    def test_works_on_current_sqlite(self, tmp_db, project):
+        """Smoke test: regardless of the host SQLite version, the
+        rollback completes without raising. If a future change
+        re-introduces ``RETURNING`` on a host that doesn't support it,
+        this test will surface the OperationalError directly."""
+        import sqlite3
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import rollback_feature_cascade
+
+            feat_a, feat_b, feat_c = self._seed_diamond(project)
+            try:
+                reverted = rollback_feature_cascade(
+                    feat_a.id, target_status="needs_human"
+                )
+            except sqlite3.OperationalError as exc:
+                pytest.fail(
+                    f"rollback_feature_cascade raised "
+                    f"sqlite3.OperationalError on host SQLite "
+                    f"{sqlite3.sqlite_version}: {exc}. This is the "
+                    f"R9-010 regression — the implementation likely "
+                    f"reintroduced an unsupported SQL feature."
+                )
+
+            assert sorted(reverted) == sorted([feat_b.id, feat_c.id])
+
+    def test_no_dependents_returns_empty_list(self, tmp_db, project):
+        """Edge case: a feature with no ready dependents returns an
+        empty list (the SELECT yields zero rows; the UPDATE is skipped
+        entirely so the IN () placeholder list stays valid)."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import rollback_feature_cascade
+
+            solo = create_feature(
+                project_id=project.id,
+                name="solo-r9-010",
+                description="no deps",
+                status="completed",
+                priority=10,
+                risk_category="medium",
+            )
+            reverted = rollback_feature_cascade(
+                solo.id, target_status="needs_human"
+            )
+
+            assert reverted == []
+            assert get_feature(solo.id).status == "needs_human"
+
+# ============================================================
+# R9-002: interruption checkpoint must not double-count the feature cost
+# ============================================================
+
+
+class TestInterruptionCheckpointNoDoubleCount:
+    """R9-002: ``_create_interruption_checkpoint`` previously computed
+    ``cost_at_checkpoint = project_total + result.total_cost_usd`` even
+    though ``project_total`` (the cached, refreshed-from-DB value)
+    already includes the just-finished feature's cost. That double-
+    counted by exactly the feature's cost.
+    """
+
+    def test_checkpoint_cost_does_not_double_count_feature_cost(
+        self, tmp_db, project, feature
+    ):
+        """With prior project total $5 already including the $1.50 feature,
+        the checkpoint cost must equal $5 — NOT $6.50.
+
+        Before R9-002, this test would assert ~6.50 because the
+        in-memory cache was refreshed BEFORE the helper ran but the
+        helper still added ``result.total_cost_usd`` on top. We
+        explicitly seed the cache to the *post-refresh* value the loop
+        would have computed, then verify the helper does not add to it.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import list_checkpoints
+
+            loop = OrchestrationLoop(project_id=project.id)
+            # Simulate: $3.50 already spent before this feature, plus
+            # $1.50 just-charged for the feature whose result we are
+            # checkpointing. After execute_feature's
+            # _refresh_project_cost_cache, the cache equals $5.00.
+            loop._project_total_cost = 5.00
+
+            result = ExecutionResult(
+                text="partial",
+                is_error=True,
+                error_message="Interrupted",
+                duration_ms=1000,
+                num_turns=1,
+                total_cost_usd=1.50,
+            )
+
+            loop._create_interruption_checkpoint(feature, result)
+
+            checkpoints = list_checkpoints(feature_id=feature.id)
+            interruption_cps = [
+                cp for cp in checkpoints
+                if cp.checkpoint_type == "interruption"
+            ]
+            assert len(interruption_cps) == 1
+            cp = interruption_cps[0]
+            # The fix: cost_at_checkpoint reads the refreshed cache
+            # directly. Without the fix, this would be 5.00 + 1.50 = 6.50
+            # (the feature's cost double-counted).
+            assert cp.cost_at_checkpoint == pytest.approx(5.00), (
+                f"expected $5.00 (cache already includes feature), "
+                f"got {cp.cost_at_checkpoint}; the +result.total_cost_usd "
+                f"term double-counts the feature's $1.50"
+            )

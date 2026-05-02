@@ -1647,6 +1647,197 @@ findings:
   - R9-001
   notes: Replaced with spec_id_to_uuid that maps both the YAML key (e.g. 'F001') and the resolved
     title to the created Feature UUID, so depends_on can reference either form.
+- id: R9-005
+  title: spawn_sub_agent leaves agent_run row at status='running' on cancellation
+  pattern: terminal-status update lives outside finally; CancelledError skips it
+  files:
+  - src/bob3/orchestrator/claude_executor.py
+  severity: high
+  status: fixed
+  tags:
+  - state-machine
+  - missing-finally
+  - audit-pollution
+  - cancellation-semantics
+  fixed_in: pending-r9-correctness
+  fixed_at: '2026-05-09'
+  related:
+  - R5-007
+  - R7-004
+  notes: 'spawn_sub_agent created the sub_agent_runs row with status=''running''
+    before invoking the SDK, but ``db.update_agent_run(status=final_status)`` lived
+    AFTER the try/except/finally block. When the caller wrapped this in
+    asyncio.wait_for and the timeout fired, asyncio cancelled the coroutine; the
+    inner ``except asyncio.CancelledError: raise`` re-raised after the finally ran
+    the SDK-stream cleanup, but the post-block update_agent_run call was never
+    reached. Every timeout/cancellation left a permanently-stuck ''running'' row.
+    Pollutes audit queries (``query_agent_runs(status=''running'')`` reports
+    zombies) and cost reporting (the row keeps cost_usd=NULL). Fixed by tracking
+    ``consume_completed`` and ``cancelled`` flags across the try/except, then
+    moving the ``db.update_agent_run`` call into the finally block guarded by a
+    ``BaseException`` handler so it runs even on cancellation. Terminal status
+    is ''completed'' on clean result, ''failed'' on result.is_error, ''interrupted''
+    on cancellation. Regression tests in tests/test_f057_sub_agent_spawning.py
+    (TestSpawnCancellationFinalizesAgentRun): mock query() to raise CancelledError
+    mid-stream and via wait_for timeout — both must end with status=''interrupted''.'
+- id: R9-006
+  title: cost_at_checkpoint double-counts the just-finished feature cost
+  pattern: stale belt-and-suspenders sum after invariant moved upstream
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: medium
+  status: fixed
+  tags:
+  - double-counting
+  - cost-tracking
+  - refactor-debt
+  fixed_in: pending-r9-correctness
+  fixed_at: '2026-05-09'
+  related:
+  - R5-010
+  - R7-004
+  - R8-003
+  notes: '``_create_interruption_checkpoint`` computed ``cost_at_checkpoint =
+    project_total + (result.total_cost_usd or 0.0)``. The +result.total_cost_usd
+    term was a defensive belt-and-suspenders from when the cache could be stale;
+    after the R8-003 ``_increment_expected_total_cost`` + ``_refresh_project_cost_cache``
+    work, ``execute_feature`` always refreshes the cache BEFORE invoking the
+    helper. So ``project_total`` already includes the just-finished feature''s
+    cost, and adding ``result.total_cost_usd`` again over-reports the
+    ``cost_at_checkpoint`` field by exactly the feature''s cost — leaking into
+    resume-forensics dashboards. Fixed by removing the +result.total_cost_usd
+    term and updating the comment to explain the post-R8-003 invariant. Regression
+    test in tests/test_f070_result_handler.py (TestInterruptionCheckpointNoDoubleCount):
+    pre-seeded cache=$5.00 + result.total_cost_usd=$1.50 must yield
+    cost_at_checkpoint=$5.00, not $6.50.'
+- id: R9-007
+  title: check_parent_completion never called from orchestration loop
+  pattern: db helper exists for cascade but caller never invokes it
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: fixed
+  tags:
+  - dead-code-tested-path
+  - state-machine
+  - decomposition
+  - cascade-gap
+  fixed_in: pending-r9-correctness
+  fixed_at: '2026-05-09'
+  related:
+  - R1-002
+  - R4-002
+  notes: '``db.check_parent_completion`` auto-completes a parent feature when
+    all its children are ''completed''; it was added for the F072 decomposition
+    flow but no caller in run_loop.py ever invoked it. Result: after every
+    child of a decomposed parent finished, the parent stayed at
+    ''pending_decomposition'' forever. Worse, any sibling feature that depended
+    on the parent stayed at ''pending'' forever because
+    complete_feature_and_cascade only runs the cascade for the feature being
+    completed (the child), not for the parent that just auto-completed.
+    Fixed by adding a ``while parent_id`` walk in handle_execution_result''s
+    success branch: after ``db.complete_feature_and_cascade(feature.id)``,
+    call ``db.check_parent_completion(child_id)``; if it returned True, also
+    run ``db.complete_feature_and_cascade(parent_id)`` to cascade ITS
+    dependents, then walk up to the grandparent in case of multi-level
+    decomposition. Regression tests in tests/test_f072_feature_decomposition_handling.py
+    (TestParentAutoCompletionOnChildrenComplete): parent transitions to
+    ''completed'' after both children complete, and a feature depending on the
+    parent transitions from ''pending'' to ''ready''.'
+- id: R9-008
+  title: Research and decomposer sub-agents bypass verify_skills_integrity
+  pattern: defense-in-depth check is conditional on a parameter that the caller
+    forgot to pass
+  files:
+  - src/bob3/orchestrator/claude_executor.py
+  - src/bob3/orchestrator/run_loop.py
+  - tests/test_f057_sub_agent_spawning.py
+  severity: high
+  status: fixed
+  tags:
+  - security
+  - skill-poisoning
+  - defense-in-depth
+  - sub-agent
+  fixed_in: pending-r9-security
+  fixed_at: '2026-04-24'
+  related:
+  - R4-012
+  - R8-003
+  notes: 'build_sub_agent_options runs install_skills_to_workspace +
+    verify_skills_integrity only when cwd is supplied. spawn_research_agent and
+    handle_decomposition both omitted cwd, so a previous malicious sub-agent
+    (running with bypassPermissions in the same workspace) could replace a bob3
+    skill symlink with a poisoned directory and the next research/decomposer
+    agent would load the poisoned skill. Fix: spawn_research_agent grew a
+    workspace= parameter forwarded as cwd= to build_sub_agent_options;
+    handle_decomposition grew the same param and OrchestrationLoop now passes
+    self.workspace to both call sites. SECURITY TRADE-OFF: passing cwd also
+    gives those sub-agents filesystem access to the workspace; documented in
+    each function''s docstring. The research agent uses Perplexity MCP only
+    and the decomposer is a planning-only path, so practical blast radius
+    stays small while the integrity check closes the chained-attack window.
+    Regression tests in tests/test_f057_sub_agent_spawning.py
+    (TestResearchAgentVerifiesSkillIntegrity, TestDecomposerVerifiesSkillIntegrity).'
+- id: R9-009
+  title: bob3 init writes bob3.db inside workspace, ignoring BOB3_DATABASE_PATH
+  pattern: command writes a file at a hard-coded path while peer commands
+    route through an env-var-aware lookup
+  files:
+  - src/bob3/cli.py
+  - README.md
+  - tests/test_f008_init_command.py
+  severity: medium
+  status: fixed
+  tags:
+  - security
+  - hardening
+  - env-var-honored
+  - cli-consistency
+  fixed_in: pending-r9-security
+  fixed_at: '2026-04-24'
+  related:
+  - R8-003
+  notes: '''bob3 init <project>'' always created bob3.db at <project>/bob3.db,
+    ignoring BOB3_DATABASE_PATH. Subsequent ''bob3 plan / run / status''
+    commands routed through get_database_path() (which DOES honor the env var)
+    and reported "No project found" for any deployment that put the DB outside
+    the workspace as the README "Security considerations" section recommends.
+    Fix: init now checks BOB3_DATABASE_PATH first, falls back to
+    <project>/bob3.db when unset, and creates the parent directory if needed.
+    init also echoes the resolved DB path so operators can verify the env-var
+    path was honored. README "Security considerations" updated to mention
+    that init honors BOB3_DATABASE_PATH. Regression tests in
+    tests/test_f008_init_command.py (TestInitRespectsBob3DatabasePath).'
+- id: R9-010
+  title: rollback_feature_cascade uses SQLite >= 3.35 RETURNING clause
+  pattern: SQL feature dependency that breaks on still-supported host platforms
+  files:
+  - src/bob3/db.py
+  - tests/test_f070_result_handler.py
+  severity: medium
+  status: fixed
+  tags:
+  - portability
+  - sqlite-version
+  - regression-risk
+  fixed_in: pending-r9-security
+  fixed_at: '2026-04-24'
+  related: []
+  notes: 'rollback_feature_cascade used UPDATE ... WHERE ... RETURNING id to
+    capture the dependent IDs it had flipped from "ready" to "pending".
+    RETURNING requires SQLite >= 3.35.0 (March 2021); Python 3.11 on Ubuntu
+    20.04 still ships SQLite 3.31.1, on which the query raises
+    OperationalError: near "RETURNING": syntax error. Any user on that
+    platform got a crash whenever a git pre-commit hook rejected a commit
+    (the hook-failure path is what calls rollback_feature_cascade). Fix:
+    switched to the SELECT-then-UPDATE pattern that the rest of the codebase
+    uses — SELECT the affected ids first, then issue an UPDATE keyed by id
+    IN (...) — both inside the same with connect() block so the operation
+    stays atomic via the transaction rollback semantics of the connect()
+    context manager. Regression tests in tests/test_f070_result_handler.py
+    (TestRollbackFeatureCascadeNoReturningClause) including a static check
+    that the source no longer contains the substring "RETURNING".'
 recurring_patterns:
 - tag: refactor-debt
   occurrences:
