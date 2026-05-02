@@ -12,6 +12,7 @@ Key classes:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -586,7 +587,23 @@ async def spawn_sub_agent(
     # Step 2: Execute the agent via claude_code_sdk.
     # Strip parent-session env vars for the duration so they don't leak
     # into the sub-agent process (the SDK merges os.environ into its env).
+    #
+    # R5-007: When the caller wraps this in ``asyncio.wait_for`` and the
+    # timeout fires, asyncio cancels this coroutine. Without the
+    # try/finally below, the inner async generator returned by
+    # ``stream_query`` is not always awaited to completion before the
+    # cancel propagates back to the caller, which means the SDK's own
+    # ``query.close()`` (which terminates the underlying ``claude``
+    # Node.js subprocess) may never run. The sub-agent process leaks.
+    #
+    # The fix: explicitly call ``aclose()`` on the async generator inside
+    # a finally block. ``aclose()`` runs any ``finally`` clauses inside
+    # the generator (including the SDK's ``query.close()`` which calls
+    # ``transport.close()``, which sends SIGTERM to the subprocess).
+    # If the SDK still leaks (older versions, transport changes), we
+    # also emit a SECURITY warning so the operator knows to inspect.
     result = ExecutionResult()
+    stream: AsyncIterator[Message] | None = None
     try:
         handler = MessageStreamHandler()
         if on_message is not None:
@@ -594,10 +611,50 @@ async def spawn_sub_agent(
 
         with _stripped_parent_session_env():
             stream = stream_query(prompt, options=options)
-            result = await handler.consume(stream)
+            try:
+                result = await handler.consume(stream)
+            except asyncio.CancelledError:
+                logger.warning(
+                    "SECURITY: Sub-agent (purpose=%s, target=%s/%s, run_id=%s) "
+                    "was cancelled before completion; attempting to close the "
+                    "SDK stream so the underlying claude Node.js process is "
+                    "terminated. If you continue to see orphaned claude "
+                    "processes after a timeout, run `pgrep -f claude` and "
+                    "kill them manually.",
+                    purpose,
+                    target_type,
+                    target_id,
+                    getattr(agent_run, "id", None),
+                )
+                raise
+    except asyncio.CancelledError:
+        # Ensure the finally below still runs to close the stream, then
+        # re-raise so the caller (asyncio.wait_for) sees the timeout.
+        raise
     except Exception as exc:
         result.is_error = True
         result.error_message = str(exc)
+    finally:
+        # Best-effort close of the SDK stream so the SDK's own
+        # ``query.close()`` finally-block runs (it terminates the
+        # underlying subprocess via ``transport.close()``).
+        if stream is not None:
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except asyncio.CancelledError:
+                    # aclose itself can raise CancelledError; we're already
+                    # in the cancellation path so just continue.
+                    pass
+                except Exception:
+                    logger.warning(
+                        "SECURITY: Failed to cleanly close the claude SDK "
+                        "stream after cancellation; the underlying claude "
+                        "Node.js process may still be running. Check "
+                        "`pgrep -f claude` and kill if needed.",
+                        exc_info=True,
+                    )
 
     # Step 3: Determine final status
     final_status = "failed" if result.is_error else "completed"

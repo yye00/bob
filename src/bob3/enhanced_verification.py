@@ -90,14 +90,31 @@ _PYTHON_CRITERION_BANNED_MODULES: frozenset[str] = frozenset(
         "importlib",
         "runpy",
         "pkgutil",
+        # ``builtins`` is the namespace module that backs every unqualified
+        # name lookup. ``import builtins; builtins.open(...)`` reaches the
+        # same callable as the bare ``open`` (which is itself banned below),
+        # and ``builtins.__import__("os")`` re-opens the dynamic-import
+        # escape hatch that ``importlib`` already covers. Banning the
+        # module shuts the named-attribute path entirely; the dunder-attr
+        # ban on ``__builtins__`` separately covers the implicit namespace
+        # accessor.
+        "builtins",
     }
 )
 
 # Bare callable names that, regardless of how they were obtained, are
 # refused. We catch ``eval(...)``, ``exec(...)``, ``__import__("os")``,
 # ``compile(...)`` etc. by AST name and by attribute access (``foo.eval``,
-# ``builtins.exec``). We also catch ``open(..., "w")`` style writes via a
-# specialised check on ``open``.
+# ``builtins.exec``). The ban below also covers ``open(...)``: read-mode
+# bypass attacks like ``python: open("/proc/self/environ").read()`` (which
+# leaks API keys / secrets from the parent process environment) and
+# ``builtins.open("/etc/passwd").read()`` were possible because the
+# previous check only refused write-mode ``open(..., "w")``. We now ban
+# ``open`` outright — read access to filesystem paths is just as much of
+# an exfiltration vector as writes, and any criterion that genuinely
+# needs filesystem access should use the ``pytest:`` form (pytest
+# ``tmp_path`` is the right primitive). The banned-attribute matcher
+# below covers ``builtins.open(...)`` and ``some_obj.open(...)`` as well.
 #
 # ``getattr``/``setattr``/``delattr`` are refused because they let an
 # attacker construct any attribute name dynamically (``getattr(o, "sys"+
@@ -116,6 +133,7 @@ _PYTHON_CRITERION_BANNED_CALL_NAMES: frozenset[str] = frozenset(
         "globals",
         "locals",
         "vars",
+        "open",
     }
 )
 
@@ -171,12 +189,6 @@ _PYTHON_CRITERION_BANNED_ATTRIBUTES: frozenset[str] = frozenset(
         "__getattr__",
     }
 )
-
-# File modes that, when passed as the second positional arg to ``open()``,
-# enable writes. We refuse these on ``open(...)`` calls so a criterion
-# can read a sentinel file but cannot rewrite arbitrary files on disk.
-_OPEN_WRITE_MODE_CHARS: frozenset[str] = frozenset({"w", "a", "x", "+"})
-
 
 def _expression_uses_banned_operation(expression: str) -> str | None:
     """AST-scan ``expression`` for banned operations.
@@ -244,30 +256,18 @@ def _expression_uses_banned_operation(expression: str) -> str | None:
 
         # Plain-name calls: ``eval(...)``, ``exec(...)``, ``__import__(...)``,
         # ``getattr(...)``, ``setattr(...)``, ``globals()``, ``locals()``,
-        # ``vars()``. These are refused regardless of the form of their
-        # arguments — ``getattr(__import__("os"), "sys"+"tem")`` is just as
-        # dangerous as ``getattr(o, "system")``, so we never look at args.
+        # ``vars()``, ``open(...)``. These are refused regardless of the
+        # form of their arguments — ``getattr(__import__("os"), "sys"+"tem")``
+        # is just as dangerous as ``getattr(o, "system")``, so we never look
+        # at args. ``open`` is banned outright (any mode) because read-mode
+        # access to ``/proc/self/environ``, ``/etc/passwd``, etc. is itself
+        # an exfiltration vector — see the comment on
+        # ``_PYTHON_CRITERION_BANNED_CALL_NAMES`` above.
         elif isinstance(node, ast.Call):
             func = node.func
             if isinstance(func, ast.Name):
                 if func.id in _PYTHON_CRITERION_BANNED_CALL_NAMES:
                     return func.id
-                if func.id == "open":
-                    # Refuse write modes on ``open(<path>, <mode>)``.
-                    mode_str: str | None = None
-                    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
-                        val = node.args[1].value
-                        if isinstance(val, str):
-                            mode_str = val
-                    for kw in node.keywords:
-                        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
-                            v = kw.value.value
-                            if isinstance(v, str):
-                                mode_str = v
-                    if mode_str and any(
-                        ch in _OPEN_WRITE_MODE_CHARS for ch in mode_str
-                    ):
-                        return f"open(..., {mode_str!r})"
             # Attribute calls: ``os.system(...)``, ``shutil.rmtree(...)``,
             # ``cls.__subclasses__()``, ``obj.__getattribute__("eval")``.
             # We also refuse attribute-call forms of the banned-call-name
@@ -480,13 +480,16 @@ def _run_python_criterion(
 
     Before executing, the expression is AST-scanned against an allowlist:
     imports of dangerous modules (``subprocess``, ``socket``, ``urllib``,
-    ``http``, ``shutil``, ...) and calls to dangerous builtins/attributes
-    (``eval``, ``exec``, ``__import__``, ``os.system``, ``os.environ``,
-    ``os.remove``, ``os.unlink``, ``shutil.rmtree``, ``open(..., "w")``)
-    are refused with ``(False, "Refused: ...")``. This is not a sandbox —
-    it raises the bar from "trivially exploitable" to "requires real
-    effort". Specs needing unrestricted access should use the ``pytest:``
-    form, which is naturally sandboxed by the test framework.
+    ``http``, ``shutil``, ``builtins``, ...) and calls to dangerous
+    builtins/attributes (``eval``, ``exec``, ``__import__``, ``open``,
+    ``os.system``, ``os.environ``, ``os.remove``, ``os.unlink``,
+    ``shutil.rmtree``) are refused with ``(False, "Refused: ...")``. This
+    is not a sandbox — it raises the bar from "trivially exploitable" to
+    "requires real effort". Specs needing unrestricted access (including
+    any filesystem access at all) should use the ``pytest:`` form,
+    which is naturally sandboxed by the test framework — pytest's
+    ``tmp_path`` fixture is the right primitive for filesystem-touching
+    criteria.
 
     Returns ``(True, "")`` when the inline expression exits 0; otherwise
     ``(False, <stderr or summary>)``. Same defensive error handling as

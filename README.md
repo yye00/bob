@@ -53,12 +53,40 @@ bob3 --help
 | `BOB3_CRITERION_EXEC_TIMEOUT` | No | Timeout in seconds for executable acceptance criteria (`pytest:` and `python:` prefixed criteria) evaluated by the enhanced verification layer. Default: `60`. |
 | `BOB3_TEST_RUN_TIMEOUT` | No | Timeout in seconds for the auto-pytest run executed during the verification superpowers checklist. Default: `300`. |
 | `BOB3_FEATURE_TIMEOUT_SECONDS` | No | Wall-clock timeout in seconds for a single feature's sub-agent execution. If exceeded the feature is marked `interrupted` (no cascade), and the next `bob3 run` resumes it via the F116 auto-resume path. Use to bound runaway tool calls (e.g. a hung Puppeteer / browser MCP). Default: `3600` (1 hour). |
+| `BOB3_REGRESSION_DETECTION_ENABLED` | No | Toggle the per-feature pytest snapshot pair used by F051 regression detection. When set to a falsy value (`0`, `false`, `no`, `off`), both the pre- and post-execution `capture_pytest_snapshot` calls are skipped, disabling regression detection entirely. Useful when the workspace test suite is large/slow or when regression tracking is unwanted (e.g. CI bring-up). Default: enabled. |
+| `BOB3_MAX_MEMORY_CONTENT_BYTES` | No | Maximum size in UTF-8 bytes accepted by the `memory_add` MCP tool. Memories above this are refused with a structured error. Default: `8000`. Tighter caps reduce the risk of a sub-agent flooding the embedder / Qdrant index, at the cost of less verbose memory entries. |
 
 Add to your shell profile if needed:
 
 ```bash
 export PERPLEXITY_API_KEY="pplx-..."  # optional
 ```
+
+### Security considerations
+
+Bob3 spawns sub-agents via the Claude Code SDK with
+`permission_mode=bypassPermissions` and `cwd=<workspace>`, so a sub-agent
+has full read/write access to anything inside the project workspace. The
+orchestrator includes several defense-in-depth measures (cost-tampering
+detection, lock-file symlink hardening, `python:` criterion allowlist,
+`memory_add` size cap), but these are mitigations, not a sandbox. For
+hardened deployments:
+
+- **Place `bob3.db` outside the workspace.** Sub-agents can write to
+  files in the workspace, which is fine for the source tree but means
+  the SQLite database used for budget / status tracking is also
+  reachable. Set `BOB3_DATABASE_PATH=/secure/path/bob3.db` (e.g. under
+  your home directory) so sub-agents cannot reach the DB at all. With
+  this in place, the cost-tampering detection is a defense-in-depth
+  backstop, not the primary defense.
+- **Run sub-agents under a confined user / container.** The trust model
+  assumes the workspace is yours; if it isn't, run bob3 under a
+  dedicated user account (or a container) so workspace writes can't
+  reach `~/.ssh`, `~/.aws`, etc.
+- **Treat workspace-scoped secrets as compromised.** Any environment
+  variable inherited by `bob3 run` is visible to sub-agents (e.g. via
+  the `pytest:` criterion form, which spawns a real subprocess).
+  Don't put long-lived secrets in `.env` next to the workspace.
 
 ## Quickstart
 
@@ -155,6 +183,28 @@ See the Quickstart above for a full walkthrough and the Commands section below f
 | `bob3 show-regressions` | Active regression events |
 
 Global options: `--version`, `-v/--verbose` (DEBUG logging), `--help`.
+
+### Exit codes
+
+`bob3 run` (and `bob3 run --feature`) maps the orchestration loop's
+termination reason to a POSIX exit code so CI pipelines can chain
+commands safely. Only `0` means "build is healthy and complete":
+
+| Code | Termination reason | Meaning |
+|---|---|---|
+| `0` | `ALL_COMPLETED` | All targeted features completed successfully |
+| `2` | `ALL_BLOCKED` | All remaining features are blocked / not runnable |
+| `3` | `BUDGET_EXCEEDED` | The loop stopped because `--max-cost` (or the project budget) was exhausted |
+| `130` | `SHUTDOWN_REQUESTED` | Graceful shutdown via SIGINT / SIGTERM (the conventional `128 + signum` for SIGINT) |
+| `1` | misc errors | MCP startup failure, unknown feature ID, lock contention, invalid spec, etc. |
+
+A common gotcha this avoids:
+
+```bash
+# Old CLI exited 0 on BUDGET_EXCEEDED, so deploy.sh ran on a partial build.
+# Now: non-zero exit on BUDGET_EXCEEDED / ALL_BLOCKED stops the chain.
+bob3 run --all && deploy.sh
+```
 
 ## Writing your own spec
 

@@ -1156,6 +1156,100 @@ findings:
     tests/test_f069_run_command.py (TestSubAgentWallClockTimeout).
 
     '
+- id: R5-008
+  title: bob3 run exits 0 regardless of LoopTermination reason
+  pattern: CLI swallows BUDGET_EXCEEDED / ALL_BLOCKED / SHUTDOWN_REQUESTED into exit 0
+  files:
+  - src/bob3/cli.py
+  - README.md
+  - tests/test_f069_run_command.py
+  - tests/test_f086_e2e_orchestration.py
+  severity: high
+  status: fixed
+  tags:
+  - cli-contract
+  - ci-safety
+  - exit-code
+  fixed_in: pending-r5-observability
+  fixed_at: '2026-04-24'
+  notes: The ``bob3 run`` command printed a coloured termination message and then returned
+    normally for every LoopTermination value. CI scripts chaining ``bob3 run --all && deploy.sh``
+    would deploy on a budget- exceeded or all-blocked run because the shell saw exit 0. Fixed
+    by mapping LoopTermination -> POSIX exit code (ALL_COMPLETED=0, ALL_BLOCKED=2, BUDGET_EXCEEDED=3,
+    SHUTDOWN_REQUESTED=130) in both the --feature and --all branches via raise SystemExit(code).
+    Documented in the run command epilog and a new "Exit codes" section in README. Regression
+    tests in tests/test_f069_run_command.py (TestRunExitCodes) cover all four termination
+    values for both branches plus the help-text contract.
+- id: R5-009
+  title: No per-feature timing/cost summary in orchestration logs
+  pattern: logger.info("Feature X completed successfully") with no duration / cost / attempts
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - tests/test_f069_run_command.py
+  severity: medium
+  status: fixed
+  tags:
+  - observability
+  - structured-logging
+  fixed_in: pending-r5-observability
+  fixed_at: '2026-04-24'
+  notes: 'execute_feature only emitted "Feature X completed successfully" on the success path
+    — no duration, cost, attempts, or final status — making it impossible to triage long runs
+    from the log alone. The timeout path emitted nothing structured at all. Fix: emit a single
+    structured "Feature %s (%s) done: status=%s duration=%.1fs cost=$%.4f attempts=%d" line
+    at the end of execute_feature (covering success, verification-failure, retry, and git-hook-rejection
+    paths) and on the wall-clock-timeout early return. Also added a one-shot loop-level "Run
+    finished: termination=... features_completed=... features_failed=... total_cost=$... total_duration=...s"
+    log, captured in a finally block off ``run()`` so partial / raised runs still get a summary.
+    Regression tests in tests/test_f069_run_command.py (TestPerFeatureSummaryLog).'
+- id: R5-010
+  title: _create_interruption_checkpoint records stale total_cost (always 0.0)
+  pattern: state snapshot reads dead self.total_cost instead of canonical project total
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - tests/test_f069_run_command.py
+  severity: high
+  status: fixed
+  tags:
+  - non-atomic-counter
+  - dead-code
+  - resume-forensics
+  fixed_in: pending-r5-observability
+  fixed_at: '2026-04-24'
+  related:
+  - R1-003
+  - R2-001
+  - R6-001
+  - R6-002
+  - R7-004
+  notes: 'After the round-3 fix moved cost accumulation to ``project.total_cost_usd`` (with
+    ``self.total_cost`` left as a dead field for test backwards-compat), ``_create_interruption_checkpoint``
+    still read ``self.total_cost`` for both the state snapshot ``total_cost_at_interrupt``
+    field and the ``cost_at_checkpoint`` parameter. Result: every interruption checkpoint
+    recorded ``total_cost_at_interrupt=0.0`` regardless of how much the project had actually
+    spent — useless for resume forensics or post-mortem spend reconciliation. Fix: replace
+    both reads with the cached, refreshed-from-DB ``self._project_total_cost`` value (the
+    canonical accumulator). Audited the rest of run_loop.py for stale ``self.total_cost``
+    reads — only the documented test-bypass fallback in ``budget_exceeded()`` remains. Regression
+    test in tests/test_f069_run_command.py (TestInterruptionCheckpointRecordsProjectCost).'
+- id: R7-004
+  title: Round-7 audit confirmation of R5-010 (interruption checkpoint cost)
+  pattern: same as R5-010 (recorded as separate finding for audit traceability)
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: fixed
+  tags:
+  - non-atomic-counter
+  - dead-code
+  - audit-traceability
+  fixed_in: pending-r5-observability
+  fixed_at: '2026-04-24'
+  related:
+  - R5-010
+  notes: Round-7 review independently flagged the same stale ``self.total_cost`` reads in
+    ``_create_interruption_checkpoint``. Both findings are resolved by the single fix described
+    in R5-010; this entry exists so the round-7 ledger has a corresponding closed item.
 - id: R6-001
   title: Research cost double-counted (recurrence of non-atomic-counter)
   pattern: research path bumps both self.total_cost AND project.total_cost_usd
@@ -1246,6 +1340,234 @@ findings:
     as the realised result. task_class is currently a coarse ''implementation'' bucket — see
     _feature_task_class for the seam to plug in richer classification. Regression tests in
     tests/test_f019_calibration_data.py (TestCalibrationWiredIntoOrchestrator).'
+- id: R5-006
+  title: capture_pytest_snapshot blocks the asyncio event loop
+  pattern: synchronous subprocess.run inside async def execute_feature
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - README.md
+  severity: high
+  status: fixed
+  tags:
+  - blocking-event-loop
+  - performance
+  - reliability
+  fixed_in: pending-r7-orch-fixes
+  fixed_at: '2026-04-24'
+  related:
+  - R7-001
+  notes: 'execute_feature called capture_pytest_snapshot twice per feature (before and after)
+    directly inside the async coroutine. The helper uses synchronous subprocess.run with a
+    300s timeout, which would block the asyncio event loop for the entire pytest run — preventing
+    signal handling, cancellation, and any other coroutine progress. Fix: wrap both calls
+    in asyncio.to_thread so the snapshot runs in a worker thread. Regression test in tests/test_f051_regression_detection.py
+    (TestRegressionSnapshotInWorkerThread) verifies the calling thread differs from the event-loop
+    thread.'
+- id: R5-007
+  title: asyncio.wait_for does not kill the SDK Node.js subprocess
+  pattern: cancellation propagates to coroutine but transport may leak
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - src/bob3/orchestrator/claude_executor.py
+  severity: high
+  status: fixed
+  tags:
+  - subprocess-pitfalls
+  - reliability
+  - timeout
+  - process-leak
+  fixed_in: pending-r7-orch-fixes
+  fixed_at: '2026-04-24'
+  related:
+  - R5-005
+  notes: 'On wait_for timeout, asyncio cancels the awaited coroutine but the inner async generator
+    returned by stream_query was not always closed cleanly, so the SDK''s own query.close()
+    (which terminates the claude Node.js subprocess via transport.close()) might not run.
+    Fix: spawn_sub_agent now wraps the message-consume loop with an explicit try/except asyncio.CancelledError
+    that emits a SECURITY warning, and a finally block that calls aclose() on the SDK stream
+    so the SDK''s own cleanup runs. The wait_for handler in execute_feature also emits a SECURITY
+    warning pointing operators at `pgrep -f claude`. The underlying SDK does not expose a
+    richer cancel API, so this is the cleanest available recovery. Regression test in tests/test_f069_run_command.py
+    (TestSubAgentTimeoutCleanup).'
+- id: R7-001
+  title: pre-execution pytest snapshot wasted on decomposition path; no global toggle
+  pattern: snapshot runs unconditionally before research/decomposition decisions
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - README.md
+  severity: medium
+  status: fixed
+  tags:
+  - wasted-work
+  - missing-toggle
+  - operator-controls
+  fixed_in: pending-r7-orch-fixes
+  fixed_at: '2026-04-24'
+  related:
+  - R5-006
+  - R6-003
+  notes: 'The pre-execution capture_pytest_snapshot fired before the decomposition early-return
+    check OR was always taken even in environments where regression detection is unwanted.
+    Fix: the decomposition early-return now sits BEFORE the snapshot (it already did, but
+    the ordering is now load-bearing and tested), and a new BOB3_REGRESSION_DETECTION_ENABLED
+    env var lets operators skip both snapshots entirely. README updated. Regression tests
+    in tests/test_f051_regression_detection.py (TestRegressionDetectionToggle, TestDecompositionSkipsSnapshot).'
+- id: R7-002
+  title: unguarded fallback in _run_research crashes the orchestration loop
+  pattern: try/except around primary call but secondary call unguarded
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: fixed
+  tags:
+  - broad-except-swallow
+  - error-handling
+  - loop-crash
+  fixed_in: pending-r7-orch-fixes
+  fixed_at: '2026-04-24'
+  notes: 'The fallback db.create_research_result in _run_research (the one without agent_run_id,
+    used when the FK constraint fires) was itself a DB write and could raise for unrelated
+    reasons (disk full, schema drift, transient SQLite lock). When it did, the unhandled exception
+    crashed the entire orchestration loop. Fix: wrap the whole research-result-recording block
+    in a try/except that logs a warning and continues — the research findings are advisory
+    and losing one row must not stop the run. Regression test in tests/test_f101_research_agent.py
+    (TestResearchResultRecordingResilience).'
+- id: R7-003
+  title: below-threshold ready features burn refinement slots after research
+  pattern: loop picks ready-but-below-threshold feature; needs_research goes False; reruns
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: fixed
+  tags:
+  - infinite-loop-budget-burn
+  - state-machine
+  - readiness
+  fixed_in: pending-r7-orch-fixes
+  fixed_at: '2026-04-24'
+  related:
+  - F024
+  notes: 'When find_next_ready_feature returned None but features in ''ready'' status existed,
+    run() picked the first below-threshold one and called execute_feature. The first time,
+    _run_research bumped research_iterations and boosted readiness; if the boost still left
+    the feature below threshold, the next iteration picked the SAME feature, this time needs_research
+    returned False, and the implementation sub-agent ran — burning a refinement attempt every
+    iteration until max_refinement_attempts was exhausted. Fix: after picking a below-threshold
+    feature, check research_iterations > 0; if so, mark needs_human with a clear log line
+    (score, threshold, iterations) and continue the loop. Regression test in tests/test_f069_run_command.py
+    (TestBelowThresholdReadyFeature).'
+- id: R8-001
+  title: 'python: criterion open() read-mode bypass leaks secrets via /proc/self/environ'
+  pattern: 'allowlist-gap: open() write-mode-only check left read-mode opens unrestricted'
+  files:
+  - src/bob3/enhanced_verification.py
+  - src/bob3/skills/implementing-acceptance-criteria/SKILL.md
+  severity: critical
+  status: fixed
+  tags:
+  - security
+  - allowlist-gap
+  - secret-exfiltration
+  fixed_in: pending-r8-security
+  fixed_at: '2026-05-02'
+  related:
+  - R3-001
+  - R3-002
+  - R4-009
+  notes: 'python: <expr> criteria allowed open(<path>) in read mode; only open(<path>, "w"|"a"|"x"|"+")
+    write modes were refused. A spec like python: open("/proc/self/environ").read() would
+    silently leak every env var (including ANTHROPIC_API_KEY) inherited by the criterion subprocess.
+    Also bypassable via python: import builtins; builtins.open("/etc/passwd").read() because
+    the builtins module was not in the banned-modules set. Fixed by (1) adding open to _PYTHON_CRITERION_BANNED_CALL_NAMES
+    so any open() call (read or write, bare or attribute-form) is refused; (2) adding builtins
+    to _PYTHON_CRITERION_BANNED_MODULES; (3) removing the obsolete write-mode-only branch.
+    Specs that genuinely need filesystem access must use the pytest: form (pytest tmp_path
+    is the right primitive). Regression tests in tests/test_f124_executable_acceptance_criteria.py:
+    test_open_for_read_is_refused, test_open_proc_self_environ_is_refused, test_builtins_open_is_refused,
+    test_dunder_builtins_open_is_refused, test_attribute_open_is_refused, test_bare_open_reference_is_refused.'
+- id: R8-002
+  title: .bob3.lock symlink attack lets two concurrent bob3 run race the DB
+  pattern: flock anchor not validated as a regular file at open time
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: fixed
+  tags:
+  - security
+  - symlink-attack
+  - cli-concurrency
+  - trust-boundary
+  fixed_in: pending-r8-security
+  fixed_at: '2026-05-02'
+  related:
+  - R5-002
+  - R4-012
+  notes: 'A sub-agent with workspace write access (cwd=workspace + permission_mode=bypassPermissions)
+    could replace .bob3.lock with a symlink to /dev/null before the next bob3 run. flock on
+    a non-regular fd succeeds trivially, so two concurrent bob3 run invocations would both
+    pass the lock check and race on the DB. Fixed by (1) opening the lock with O_NOFOLLOW
+    so symlinks raise ELOOP at open time; (2) fstat + S_ISREG check after open to refuse fifos/devices/directories;
+    both surface as AlreadyRunningError with a tampering-hint message. Regression tests in
+    tests/test_f069_run_command.py (TestRunLockSymlinkHardening): symlink to /dev/null, symlink
+    to a real file, fifo, and the regular-file happy path.'
+- id: R8-003
+  title: Sub-agents can reset budget by writing to bob3.db
+  pattern: in-DB cost cache trusted without comparing against in-memory expected total
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - README.md
+  severity: high
+  status: fixed
+  tags:
+  - security
+  - budget-bypass
+  - trust-boundary
+  - tamper-detection
+  fixed_in: pending-r8-security
+  fixed_at: '2026-05-02'
+  related:
+  - R1-003
+  - R2-001
+  - R6-001
+  - R6-002
+  notes: Sub-agents run with cwd=workspace and bypassPermissions; if bob3.db lives in the
+    workspace they can UPDATE projects SET total_cost_usd = 0 to disable budget enforcement.
+    The orchestrator cannot prevent the write (the trust model accepts sub-agent FS access),
+    but it can detect tampering. Fixed by maintaining self._expected_total_cost in OrchestrationLoop,
+    incremented in lockstep with every db.update_project_cost. When _refresh_project_cost_cache
+    reloads the DB total, it compares against the expected total; if the DB total has decreased
+    beyond floating-point slack, it logs a SECURITY warning and clamps the in-memory cache
+    to expected_total instead of honoring the lower value. README "Security considerations"
+    section recommends placing bob3.db outside the workspace via BOB3_DATABASE_PATH for hardened
+    deployments. Regression tests in tests/test_f069_run_command.py (TestCostTamperDetection).
+- id: R8-004
+  title: memory_add has no content-size cap (OOM/disk-fill DoS)
+  pattern: MCP tool accepts unbounded user input straight into the embedder
+  files:
+  - src/bob3/memory_mcp.py
+  - src/bob3/skills/using-bob3-memory/SKILL.md
+  - README.md
+  severity: medium
+  status: fixed
+  tags:
+  - security
+  - dos
+  - mcp-surface
+  - input-validation
+  fixed_in: pending-r8-security
+  fixed_at: '2026-05-02'
+  related:
+  - R2-018
+  - R5-005
+  notes: 'memory_add(content="X" * 10**8, ...) would forward the whole string to the embedder
+    + Qdrant, OOM-ing the embedder or filling disk. A sub-agent could also flood the index
+    with many manipulative entries to poison future-search ranking. Fixed by capping content
+    at MAX_MEMORY_CONTENT_BYTES (default 8000 UTF-8 bytes, configurable via BOB3_MAX_MEMORY_CONTENT_BYTES).
+    Cap is on encoded bytes, not codepoints, so a 4000-codepoint string of 4-byte UTF-8 chars
+    (16000 bytes) is also refused. Refusal returns {"success": False, "error": "content exceeds
+    maximum length (... bytes)"} without invoking the backend. using-bob3-memory SKILL.md
+    updated with the cap and a "write concise memories" anti-pattern. Regression tests in
+    tests/test_f126_memory_mcp_validation.py (TestMemoryAddContentSizeCap).'
 recurring_patterns:
 - tag: refactor-debt
   occurrences:

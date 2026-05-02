@@ -8,9 +8,22 @@ launches this server as a subprocess. The server exposes tools named
 
 Run directly (e.g. via ``python -m bob3.memory_mcp``) to start the
 server over stdio.
+
+Defense in depth — input-size cap on memory_add (R5-005)
+--------------------------------------------------------
+Sub-agents call ``memory_add`` over stdio with arbitrary content. Without
+a cap, a malicious sub-agent could ``memory_add(content="X" * 10**8, ...)``
+to OOM the embedder, fill the Qdrant index disk, or — more subtly — spam
+many manipulative entries to poison the future-search ranking. We refuse
+content larger than ``MAX_MEMORY_CONTENT_BYTES`` (default 8000 bytes,
+configurable via the ``BOB3_MAX_MEMORY_CONTENT_BYTES`` env var). 8000
+bytes comfortably fits a focused, useful memory and is well below the
+typical embedding model's input limit; a sub-agent that wants more
+should be writing a doc, not a memory.
 """
 
 import logging
+import os
 import uuid
 from typing import Any, Optional
 
@@ -19,6 +32,34 @@ from mcp.server.fastmcp import FastMCP
 from bob3.memory import BobMemory, VALID_POOLS
 
 logger = logging.getLogger(__name__)
+
+# Maximum size of a single memory's content (UTF-8 bytes). Configurable
+# via ``BOB3_MAX_MEMORY_CONTENT_BYTES``; falls back to 8000 if the env
+# var is unset, non-numeric, or non-positive. Concise memories retrieve
+# better, embed faster, and aren't a DoS vector — keep it tight.
+_DEFAULT_MAX_MEMORY_CONTENT_BYTES = 8000
+
+
+def _resolve_max_memory_content_bytes() -> int:
+    """Read ``BOB3_MAX_MEMORY_CONTENT_BYTES`` from the environment.
+
+    Returns the configured cap. Falls back to
+    ``_DEFAULT_MAX_MEMORY_CONTENT_BYTES`` on parse error / non-positive
+    value. Resolved each call so tests can monkeypatch the env var
+    without re-importing the module.
+    """
+    raw = os.environ.get("BOB3_MAX_MEMORY_CONTENT_BYTES")
+    if not raw:
+        return _DEFAULT_MAX_MEMORY_CONTENT_BYTES
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_MEMORY_CONTENT_BYTES
+    return value if value > 0 else _DEFAULT_MAX_MEMORY_CONTENT_BYTES
+
+
+# Public alias kept stable for tests / introspection.
+MAX_MEMORY_CONTENT_BYTES = _DEFAULT_MAX_MEMORY_CONTENT_BYTES
 
 _memory: Optional[BobMemory] = None
 
@@ -68,11 +109,30 @@ def memory_add(
     """Store a memory.
 
     Args:
-        content: Memory content to store.
+        content: Memory content to store. Max size is
+            ``BOB3_MAX_MEMORY_CONTENT_BYTES`` UTF-8 bytes (default 8000).
+            Larger content is refused with a structured error.
         pool: Optional pool (facts, preferences, lessons, context).
               Auto-classified if None.
         metadata: Optional extra metadata to store alongside.
     """
+    # R5-005: cap content length to avoid OOM-on-embed and disk-fill DoS
+    # via the MCP surface. ``len(content.encode("utf-8"))`` measures the
+    # actual on-the-wire size — Python's ``len(str)`` only counts code
+    # points and undercounts non-ASCII content. Refuse with a structured
+    # error rather than letting the backend handle a 100MB string.
+    if not isinstance(content, str):
+        return {"success": False, "error": "content must be a string"}
+    cap = _resolve_max_memory_content_bytes()
+    try:
+        encoded_len = len(content.encode("utf-8"))
+    except UnicodeError:
+        return {"success": False, "error": "content is not valid UTF-8"}
+    if encoded_len > cap:
+        return {
+            "success": False,
+            "error": f"content exceeds maximum length ({cap} bytes)",
+        }
     return _mem().add(content, pool=pool, metadata=metadata)
 
 

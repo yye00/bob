@@ -554,3 +554,101 @@ class TestNoForbiddenPatterns:
         source = EXECUTOR_PATH.read_text()
         assert "from anthropic" not in source
         assert "import anthropic" not in source
+
+
+# ===================================================================
+# R7-002: research-result recording must not crash the loop
+# ===================================================================
+
+
+class TestResearchResultRecordingResilience:
+    """R7-002: ``_run_research`` previously had a bare fallback to
+    ``db.create_research_result`` (without agent_run_id). If BOTH the
+    primary and the fallback raised, the unhandled exception crashed the
+    whole orchestration loop. The recording block must now be wrapped in
+    a try/except that logs and continues.
+    """
+
+    @pytest.mark.asyncio
+    async def test_loop_survives_research_recording_failure(
+        self, project, caplog
+    ):
+        """When both create_research_result calls raise, _run_research
+        must return normally (logging a warning) so the orchestration
+        loop continues.
+        """
+        import logging
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import create_feature, get_feature, update_feature
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import OrchestrationLoop
+
+        f = create_feature(
+            project_id=project.id,
+            name="Triggers research",
+            description="research_required=True",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        # Low confidence forces needs_research() to return True via
+        # trigger 3 (low confidence path).
+        update_feature(
+            f.id,
+            conf_spec_understanding=0.3,
+            conf_impl_correctness=0.3,
+            conf_test_adequacy=0.3,
+            readiness_score=0.3,
+        )
+        feature = get_feature(f.id)
+
+        loop = OrchestrationLoop(project_id=project.id)
+
+        async def fake_research(*args, **kwargs):
+            res = ExecutionResult(
+                text="findings",
+                is_error=False,
+                duration_ms=1,
+                num_turns=1,
+                total_cost_usd=0.0,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        def always_raise(*args, **kwargs):
+            raise RuntimeError("simulated DB failure on research recording")
+
+        with patch(
+            "bob3.orchestrator.run_loop.spawn_research_agent",
+            new_callable=AsyncMock,
+            side_effect=fake_research,
+        ), patch(
+            "bob3.orchestrator.run_loop.db.create_research_result",
+            side_effect=always_raise,
+        ):
+            with caplog.at_level(
+                logging.WARNING, logger="bob3.orchestrator.run_loop"
+            ):
+                # Must NOT raise — the loop crash would happen here.
+                result = await loop._run_research(feature)
+
+        # _run_research returned normally (the SpawnResult, not None,
+        # since needs_research was True and the research agent ran).
+        assert result is not None
+        # And the failure was logged so operators can see why no
+        # research_result row exists.
+        warned = [
+            r for r in caplog.records
+            if "Failed to record research result" in r.getMessage()
+        ]
+        assert warned, (
+            "Expected a warning about the research-result recording "
+            "failure; got "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )

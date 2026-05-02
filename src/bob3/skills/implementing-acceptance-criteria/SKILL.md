@@ -74,15 +74,22 @@ Operational notes:
     - **Banned modules** (top-level imports and `from <mod> import ...`):
       `subprocess`, `socket`, `urllib`, `http`, `requests`, `ftplib`,
       `telnetlib`, `smtplib`, `shutil`, `ctypes`, `multiprocessing`,
-      `pty`, `pickle`, `marshal`, `importlib`, `runpy`, `pkgutil`. The
-      last three close the dynamic-import escape (e.g.
-      `importlib.import_module("os")`).
+      `pty`, `pickle`, `marshal`, `importlib`, `runpy`, `pkgutil`,
+      `builtins`. `importlib`/`runpy`/`pkgutil` close the dynamic-import
+      escape (e.g. `importlib.import_module("os")`); `builtins` closes
+      the `import builtins; builtins.open(...)` / `builtins.__import__(...)`
+      bypass.
     - **Banned call names** (refused regardless of argument values):
       `eval`, `exec`, `compile`, `__import__`, `getattr`, `setattr`,
-      `delattr`, `globals`, `locals`, `vars`. `getattr`/`setattr` are
-      banned even with constant args because the attacker can construct
-      any string at runtime; `globals`/`locals`/`vars` return mutable
-      namespaces.
+      `delattr`, `globals`, `locals`, `vars`, `open`. `getattr`/`setattr`
+      are banned even with constant args because the attacker can
+      construct any string at runtime; `globals`/`locals`/`vars` return
+      mutable namespaces. **`open` is banned outright** — both write
+      modes (which can rewrite arbitrary files) and read modes (which
+      can leak secrets via paths like `/proc/self/environ`,
+      `/etc/passwd`, `~/.ssh/id_*`). If your criterion needs filesystem
+      access, use `pytest:` and let pytest's `tmp_path` fixture give you
+      an isolated workspace.
     - **Banned attribute names** (refused on access, with or without a
       call): `system`, `popen`, `spawn*`, `exec*`, `remove`, `unlink`,
       `rmdir`, `removedirs`, `rmtree`, `environ`, `putenv`, `chmod`,
@@ -92,9 +99,8 @@ Operational notes:
       `__init_subclass__`, `__getattribute__`, `__getattr__`. The dunder
       set blocks the classic
       `().__class__.__bases__[0].__subclasses__()` sandbox-escape walk.
-    - **`open(<path>, <mode>)` write modes** (any of `w`, `a`, `x`, `+`)
-      are refused. Read modes (`r`, default) are allowed for sentinel
-      files.
+      The same matcher refuses `obj.open(...)` and `builtins.open(...)`
+      via the banned-call-name set (`open` is in both lists, by intent).
   Refusal reports `"Refused: criterion uses banned operation '<op>'"`.
 
 ### Why this is restricted

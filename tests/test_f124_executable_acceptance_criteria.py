@@ -507,7 +507,121 @@ class TestPythonCriterionAllowlist:
         )
         assert passed is False
         assert "refused" in details.lower()
+        assert "open" in details.lower()
         assert not target.exists()
+
+    def test_open_for_read_is_refused(self, tmp_path):
+        """``open(<path>)`` (read mode) is now ALSO refused.
+
+        The previous policy allowed read-mode opens for sentinel files,
+        but ``python: open("/proc/self/environ").read()`` is a one-line
+        secret-exfiltration bypass against any criterion runtime that
+        leaks parent-process environment to children. We ban ``open``
+        outright; specs that need to read files should use the
+        ``pytest:`` form (``tmp_path`` is the right fixture for that).
+        """
+        sentinel = tmp_path / "sentinel.txt"
+        sentinel.write_text("ok")
+        passed, details = _check_criterion_with_details(
+            criterion=f'python: assert open("{sentinel}").read() == "ok"',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False, (
+            f"open() must be refused outright, got passed=True details={details!r}"
+        )
+        assert "refused" in details.lower()
+        assert "open" in details.lower()
+
+    def test_open_proc_self_environ_is_refused(self, tmp_path):
+        """The exact bypass: ``open('/proc/self/environ').read()``.
+
+        This was the pre-fix exploit — read-mode ``open`` was permitted,
+        and ``/proc/self/environ`` exposes every env var inherited by
+        the criterion subprocess (including ANTHROPIC_API_KEY).
+        """
+        passed, details = _check_criterion_with_details(
+            criterion='python: open("/proc/self/environ").read()',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "open" in details.lower()
+
+    def test_builtins_open_is_refused(self, tmp_path):
+        """``import builtins; builtins.open(...).read()`` must be refused.
+
+        ``builtins`` itself is now in the banned-modules set, so the
+        ``import builtins`` line should already be the first AST hit.
+        Either way the criterion must NOT execute.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion='python: import builtins; builtins.open("/etc/passwd").read()',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        # Either ``builtins`` (module ban) or ``open`` (attr-call ban) is
+        # acceptable as the surfaced reason — both close this hole.
+        assert "builtins" in details.lower() or "open" in details.lower()
+
+    def test_dunder_builtins_open_is_refused(self, tmp_path):
+        """``__builtins__.open(...)`` must be refused.
+
+        ``__builtins__`` is in the banned-attribute set (covered by the
+        existing dunder bans); we add a regression test pinning the
+        specific access pattern so it cannot regress quietly.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion='python: __builtins__.open("/etc/passwd").read()',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+
+    def test_attribute_open_is_refused(self, tmp_path):
+        """``some.attr.open(...)`` is refused via the attribute-call ban.
+
+        Even if a future module wrapper is added that exposes ``open``
+        as an attribute, calling it must remain blocked.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion='python: x = object(); x.open("/etc/passwd")',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "open" in details.lower()
+
+    def test_bare_open_reference_is_refused(self, tmp_path):
+        """``f = open`` is refused via the Name-binding check.
+
+        Catches the rename-then-call smuggling pattern.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion="python: f = open",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "open" in details.lower()
 
     def test_benign_assertion_still_works(self, tmp_path):
         """The classic ``python: assert 1 + 1 == 2`` still passes — no false positive."""
@@ -542,19 +656,6 @@ class TestPythonCriterionAllowlist:
         )
         assert passed is True, f"allowed-import criterion failed: {details!r}"
         assert details == ""
-
-    def test_open_for_read_still_works(self, tmp_path):
-        """``open(<path>)`` and ``open(<path>, "r")`` (read modes) are allowed."""
-        sentinel = tmp_path / "sentinel.txt"
-        sentinel.write_text("ok")
-        passed, details = _check_criterion_with_details(
-            criterion=f'python: assert open("{sentinel}").read() == "ok"',
-            workspace=tmp_path,
-            is_python_project=True,
-            is_cmake_project=False,
-            is_opm_project=False,
-        )
-        assert passed is True, f"open-for-read incorrectly refused: {details!r}"
 
     def test_pytest_form_unaffected_by_allowlist(
         self, workspace_with_passing_test
@@ -943,6 +1044,24 @@ class TestPythonCriterionAllowlist:
             is_opm_project=False,
         )
         assert passed is True, f"user-module compute criterion refused: {details!r}"
+        assert details == ""
+
+    def test_json_dumps_after_open_ban_still_works(self, tmp_path):
+        """Pin a representative ``Allowed`` case after the ``open`` ban.
+
+        The R5-001 / R5-006 hardening pass must not turn benign criteria
+        like ``import json; assert json.dumps({"a":1}) == '{"a": 1}'``
+        into refusals. ``json`` is not in the banned-modules set, no
+        ``open`` call is made, no banned attribute is touched.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion='python: import json; assert json.dumps({"a": 1}) == \'{"a": 1}\'',
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, f"benign json criterion refused after open ban: {details!r}"
         assert details == ""
 
 

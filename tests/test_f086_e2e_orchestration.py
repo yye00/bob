@@ -506,7 +506,9 @@ class TestE2ECLIIntegration:
                     result = runner.invoke(
                         main, ["run", "--all", "--max-cost", "25.0"]
                     )
-                    assert result.exit_code == 0
+                    # R5-008: BUDGET_EXCEEDED maps to exit code 3 so CI
+                    # pipelines don't deploy on a partial build.
+                    assert result.exit_code == 3, result.output
                     call_kwargs = mock_loop.call_args
                     assert call_kwargs[1].get("max_cost") == 25.0 or (
                         len(call_kwargs[0]) > 1 and call_kwargs[0][1] == 25.0

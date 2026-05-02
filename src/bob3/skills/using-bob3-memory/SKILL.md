@@ -109,6 +109,7 @@ This feeds into the memory's usefulness score and lets bob3 demote bad memories 
 - **Don't duplicate what's in the code**. If the information lives in a source file or docstring, point to it rather than copying.
 - **Don't write memories that are too vague** to be retrievable. "Be careful with faults" is useless; "Fault facet tags must be assigned AFTER `dolfinx.io.gmshio.model_to_mesh` returns, because the function renumbers cells and the old tags become invalid" is useful.
 - **Don't skip the search step**. The 10 seconds you save not searching will cost you an hour when you rediscover a solved problem.
+- **Don't write giant memories.** ``memory_add`` enforces a hard cap on `content` size of `BOB3_MAX_MEMORY_CONTENT_BYTES` UTF-8 bytes (default 8000). Anything larger is refused with `{"success": False, "error": "content exceeds maximum length (... bytes)"}`. Concise, focused memories retrieve better and embed faster — if your memory needs more than 8000 bytes you're either dumping a transcript (don't) or trying to write a doc (use a real file). Summarize the lesson in one or two paragraphs and link to the doc if you need more.
 
 ## Concrete workflow
 

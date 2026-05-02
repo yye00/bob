@@ -5,6 +5,7 @@ until all are completed, all remaining are blocked, or budget is exceeded.
 """
 
 import asyncio
+import os
 import signal
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -651,7 +652,10 @@ class TestRunFeatureScoping:
                             "0.01",
                         ],
                     )
-                    assert result.exit_code == 0, result.output
+                    # R5-008: BUDGET_EXCEEDED must surface as exit code 3
+                    # so 'bob3 run && deploy.sh' does not deploy on a
+                    # partially-completed build.
+                    assert result.exit_code == 3, result.output
 
             # Budget gate should have prevented any spawn.
             assert spawn_mock.call_count == 0, (
@@ -706,7 +710,10 @@ class TestRunFeatureScoping:
                     result = runner.invoke(
                         main, ["run", "--feature", target.id]
                     )
-                    assert result.exit_code == 0, result.output
+                    # R5-008: ALL_BLOCKED must surface as exit code 2 so
+                    # CI scripts (``bob3 run && deploy.sh``) do not
+                    # deploy on a build whose work could not run.
+                    assert result.exit_code == 2, result.output
 
             # No spawn should have happened.
             assert spawn_mock.call_count == 0
@@ -911,6 +918,272 @@ class TestRunLockConcurrency:
 
 
 # ============================================================
+# Security: lock-file symlink attack hardening (R5-002)
+# ============================================================
+
+
+class TestRunLockSymlinkHardening:
+    """``acquire_run_lock`` must refuse a tampered ``.bob3.lock``.
+
+    A sub-agent with workspace write access can replace ``.bob3.lock``
+    with a symlink to ``/dev/null`` (or any non-regular file) before the
+    next ``bob3 run``. ``flock`` on a non-regular file's fd succeeds
+    trivially — two concurrent runs would both pass the lock check and
+    race on the database.
+
+    Defenses:
+      1. ``os.open(..., O_NOFOLLOW)`` raises ``ELOOP`` if the path is a
+         symlink at open time → ``AlreadyRunningError``.
+      2. ``fstat`` + ``S_ISREG`` rejects fifos / devices / directories
+         that slipped past O_NOFOLLOW (e.g. a fresh fifo created at the
+         path) → ``AlreadyRunningError``.
+    """
+
+    def test_lock_path_as_symlink_to_dev_null_is_refused(self, tmp_path):
+        """``.bob3.lock`` -> /dev/null must raise AlreadyRunningError.
+
+        This is the exploit that motivated R5-002. Without O_NOFOLLOW,
+        ``flock`` on /dev/null's fd succeeds and two concurrent runs
+        both proceed.
+        """
+        from bob3.orchestrator.run_loop import (
+            AlreadyRunningError,
+            acquire_run_lock,
+        )
+
+        lock_path = tmp_path / ".bob3.lock"
+        # Build the symlink pointing at /dev/null.
+        os.symlink("/dev/null", lock_path)
+        assert lock_path.is_symlink()
+
+        with pytest.raises(AlreadyRunningError) as exc_info:
+            acquire_run_lock(tmp_path)
+        msg = str(exc_info.value).lower()
+        # Tampering hint must be visible to the operator so they know
+        # this isn't an ordinary "another bob3 run" collision.
+        assert "tamper" in msg or "symlink" in msg
+
+    def test_lock_path_as_symlink_to_other_file_is_refused(self, tmp_path):
+        """A symlink to any other regular file must also be refused.
+
+        The attacker doesn't have to point at /dev/null specifically —
+        any indirection breaks the per-project lock invariant. Even a
+        symlink to a real file lets the attacker hold the flock on the
+        target without the orchestrator noticing.
+        """
+        from bob3.orchestrator.run_loop import (
+            AlreadyRunningError,
+            acquire_run_lock,
+        )
+
+        target = tmp_path / "real_target.txt"
+        target.write_text("decoy")
+        lock_path = tmp_path / ".bob3.lock"
+        os.symlink(target, lock_path)
+        assert lock_path.is_symlink()
+
+        with pytest.raises(AlreadyRunningError):
+            acquire_run_lock(tmp_path)
+
+    def test_lock_path_as_regular_file_works(self, tmp_path):
+        """Regression: a plain regular file is accepted (the happy path).
+
+        The hardening must not break the ordinary acquire path.
+        """
+        from bob3.orchestrator.run_loop import (
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        # Pre-create the lock file as a regular file (this is what
+        # acquire_run_lock would create on its own anyway).
+        lock_path = tmp_path / ".bob3.lock"
+        lock_path.write_bytes(b"")
+        assert not lock_path.is_symlink()
+
+        handle = acquire_run_lock(tmp_path)
+        try:
+            assert handle is not None
+            assert lock_path.exists()
+        finally:
+            release_run_lock(handle)
+
+    def test_lock_path_as_fifo_is_refused(self, tmp_path):
+        """A fifo at .bob3.lock must be refused by the S_ISREG check.
+
+        A fifo isn't a symlink, so O_NOFOLLOW lets it through, but it
+        also isn't a regular file — flock on a fifo behaves differently
+        and is not a sound concurrency primitive. The S_ISREG check is
+        the second defense layer.
+        """
+        from bob3.orchestrator.run_loop import (
+            AlreadyRunningError,
+            acquire_run_lock,
+        )
+
+        lock_path = tmp_path / ".bob3.lock"
+        os.mkfifo(lock_path)
+        assert lock_path.is_fifo()
+
+        with pytest.raises(AlreadyRunningError) as exc_info:
+            acquire_run_lock(tmp_path)
+        msg = str(exc_info.value).lower()
+        assert "regular file" in msg or "tamper" in msg
+
+
+# ============================================================
+# Security: cost-tampering detection (R5-003)
+# ============================================================
+
+
+class TestCostTamperDetection:
+    """Sub-agents have FS access to ``bob3.db``; if they ``UPDATE projects
+    SET total_cost_usd = 0`` they can effectively reset the budget. The
+    orchestrator can't prevent the write, but it can DETECT it: it
+    maintains an in-memory ``_expected_total_cost`` and clamps
+    ``_project_total_cost`` to that value on refresh whenever the DB
+    total has gone DOWN beyond floating-point slack.
+    """
+
+    def test_expected_total_cost_initialized_from_db(self, tmp_db, project):
+        """``__init__`` seeds ``_expected_total_cost`` from the DB total.
+
+        A resumed run that already had cost on the books must not
+        falsely trip the tamper detector — the floor starts at the
+        DB value at construction time.
+        """
+        from bob3.db import update_project_cost
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            update_project_cost(project_id=project.id, cost_usd=12.34)
+
+            loop = OrchestrationLoop(project_id=project.id)
+            assert loop._project_total_cost == pytest.approx(12.34)
+            assert loop._expected_total_cost == pytest.approx(12.34)
+
+    def test_db_total_dropped_to_zero_is_clamped(self, tmp_db, project, caplog):
+        """Direct ``UPDATE projects SET total_cost_usd = 0`` is refused.
+
+        Mirrors the R5-003 exploit: a sub-agent with FS access mutates
+        the DB to reset the running cost. The next ``_refresh_project_cost_cache``
+        must keep ``_project_total_cost`` at ``_expected_total_cost``,
+        not the attacker-supplied 0.
+        """
+        from bob3.db import connect, update_project_cost
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id, max_cost=10.0)
+
+            # Loop legitimately records $5.00 of cost.
+            update_project_cost(project_id=project.id, cost_usd=5.0)
+            loop._increment_expected_total_cost(5.0)
+            loop._refresh_project_cost_cache()
+            assert loop._project_total_cost == pytest.approx(5.0)
+            assert loop._expected_total_cost == pytest.approx(5.0)
+
+            # Sub-agent zeroes out the DB column.
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE projects SET total_cost_usd = 0 WHERE id = ?",
+                    (project.id,),
+                )
+
+            with caplog.at_level("WARNING"):
+                loop._refresh_project_cost_cache()
+
+            # Cache must NOT be 0 — clamped to the expected total.
+            assert loop._project_total_cost == pytest.approx(5.0), (
+                "tamper-detection failed: cache was lowered to attacker value"
+            )
+            # SECURITY warning emitted with both totals named.
+            joined = " ".join(r.getMessage() for r in caplog.records)
+            assert "SECURITY" in joined
+            assert "tamper" in joined.lower() or "reduced unexpectedly" in joined.lower()
+
+    def test_legit_db_increase_lifts_expected_total(self, tmp_db, project):
+        """A peer process recording cost must not be flagged as tampering.
+
+        If another orchestrator (or this one, via a path that mirrored
+        correctly) raised ``total_cost_usd``, the next refresh should
+        accept the new value AND lift ``_expected_total_cost`` so
+        subsequent refreshes have a coherent floor.
+        """
+        from bob3.db import update_project_cost
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id)
+
+            # Peer process bumps DB without us calling _increment.
+            update_project_cost(project_id=project.id, cost_usd=7.0)
+            loop._refresh_project_cost_cache()
+            assert loop._project_total_cost == pytest.approx(7.0)
+            assert loop._expected_total_cost == pytest.approx(7.0)
+
+            # Now a tamper attempt drops DB to 1.0 — must be refused.
+            from bob3.db import connect
+
+            with connect() as conn:
+                conn.execute(
+                    "UPDATE projects SET total_cost_usd = 1.0 WHERE id = ?",
+                    (project.id,),
+                )
+            loop._refresh_project_cost_cache()
+            assert loop._project_total_cost == pytest.approx(7.0)
+
+    def test_negative_increment_is_refused(self, tmp_db, project, caplog):
+        """``_increment_expected_total_cost`` rejects negative deltas.
+
+        Cost is monotonic by contract; a negative delta would re-open
+        the same hole the tamper detector closes.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id)
+            loop._increment_expected_total_cost(3.0)
+            assert loop._expected_total_cost == pytest.approx(3.0)
+
+            with caplog.at_level("ERROR"):
+                loop._increment_expected_total_cost(-1.0)
+            assert loop._expected_total_cost == pytest.approx(3.0)
+            joined = " ".join(r.getMessage() for r in caplog.records)
+            assert "SECURITY" in joined or "monotonic" in joined.lower()
+
+    @pytest.mark.asyncio
+    async def test_execute_feature_increments_expected_total_cost(
+        self, tmp_db, project, ready_features
+    ):
+        """End-to-end: ``execute_feature`` must keep expected total in lockstep.
+
+        After a successful execution that records $0.75 of cost, both
+        ``_project_total_cost`` and ``_expected_total_cost`` should be
+        $0.75 — the in-memory floor must mirror the DB write.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id, max_cost=100.0)
+
+            async def mock_spawn(*args, **kwargs):
+                res = ExecutionResult(
+                    text="ok",
+                    is_error=False,
+                    duration_ms=1000,
+                    num_turns=3,
+                    total_cost_usd=0.75,
+                )
+                agent_run = MagicMock()
+                agent_run.id = str(uuid.uuid4())
+                return SpawnResult(execution_result=res, agent_run=agent_run)
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=mock_spawn,
+            ):
+                await loop.execute_feature(ready_features[0])
+
+            assert loop._project_total_cost == pytest.approx(0.75)
+            assert loop._expected_total_cost == pytest.approx(0.75)
+
+
+# ============================================================
 # Performance: budget_exceeded() must NOT re-fetch the project
 # from the DB on every loop iteration.
 # ============================================================
@@ -1102,3 +1375,483 @@ class TestSubAgentWallClockTimeout:
             # Parent timed out -> child must stay 'pending'.
             assert get_feature(parent.id).status == "interrupted"
             assert get_feature(child.id).status == "pending"
+
+
+# ============================================================
+# R5-007: SDK subprocess cleanup on timeout + SECURITY warning
+# ============================================================
+
+
+class TestSubAgentTimeoutCleanup:
+    """R5-007: When ``asyncio.wait_for`` fires, the orchestrator must emit
+    a SECURITY warning explaining that the underlying claude Node.js
+    process may still be running, and ``spawn_sub_agent`` must attempt
+    to close the SDK stream so the SDK's own cleanup runs.
+    """
+
+    @pytest.mark.asyncio
+    async def test_timeout_emits_security_warning_with_pgrep_guidance(
+        self, tmp_db, project, ready_features, monkeypatch, caplog
+    ):
+        """The TimeoutError handler must log a SECURITY warning that
+        references ``pgrep -f claude`` so operators know how to inspect.
+        """
+        import logging
+
+        monkeypatch.setenv("BOB3_FEATURE_TIMEOUT_SECONDS", "0.05")
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id)
+
+            async def hanging_spawn(*args, **kwargs):
+                await asyncio.sleep(5)
+                raise AssertionError("unreachable")
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=hanging_spawn,
+            ):
+                with caplog.at_level(logging.WARNING, logger="bob3.orchestrator.run_loop"):
+                    await loop.execute_feature(ready_features[0])
+
+        security_records = [
+            r for r in caplog.records
+            if "SECURITY" in r.getMessage()
+            and "pgrep -f claude" in r.getMessage()
+        ]
+        assert security_records, (
+            "Expected a SECURITY warning mentioning `pgrep -f claude` after "
+            "the sub-agent timed out so operators can clean up orphaned "
+            f"processes; got log records: {[r.getMessage() for r in caplog.records]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_spawn_sub_agent_closes_sdk_stream_on_cancellation(
+        self, tmp_db, project
+    ):
+        """When the spawn_sub_agent coroutine is cancelled, the SDK
+        async-generator stream must have ``aclose`` invoked so the SDK's
+        own ``query.close()`` finally-block (which terminates the
+        subprocess) runs.
+        """
+        from bob3.orchestrator import claude_executor
+
+        aclose_called = False
+
+        class FakeStream:
+            def __init__(self):
+                self._closed = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                # Simulate a hung SDK call by sleeping forever.
+                await asyncio.sleep(60)
+                raise StopAsyncIteration
+
+            async def aclose(self):
+                nonlocal aclose_called
+                aclose_called = True
+                self._closed = True
+
+        def fake_stream_query(*args, **kwargs):
+            return FakeStream()
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db), patch.object(
+            claude_executor, "stream_query", side_effect=fake_stream_query
+        ):
+            task = asyncio.create_task(
+                claude_executor.spawn_sub_agent(
+                    project_id=project.id,
+                    purpose="implement_feature",
+                    prompt="hello",
+                )
+            )
+            # Let the coroutine reach the await on FakeStream.
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert aclose_called, (
+            "spawn_sub_agent must call aclose() on the SDK stream when "
+            "cancelled, so the SDK can terminate the underlying claude "
+            "Node.js subprocess (R5-007)."
+        )
+
+
+# ============================================================
+# R5-008: bob3 run exit codes reflect LoopTermination reason
+# ============================================================
+
+
+class TestRunExitCodes:
+    """R5-008: ``bob3 run`` must exit non-zero on non-success terminations.
+
+    Without these codes, ``bob3 run --all && deploy.sh`` would deploy after
+    a BUDGET_EXCEEDED / ALL_BLOCKED run, shipping a partial build. We map:
+
+        ALL_COMPLETED       -> 0
+        ALL_BLOCKED         -> 2
+        BUDGET_EXCEEDED     -> 3
+        SHUTDOWN_REQUESTED  -> 130   (conventional 128+SIGINT)
+    """
+
+    @pytest.mark.parametrize(
+        "termination,expected_code",
+        [
+            (LoopTermination.ALL_COMPLETED, 0),
+            (LoopTermination.ALL_BLOCKED, 2),
+            (LoopTermination.BUDGET_EXCEEDED, 3),
+            (LoopTermination.SHUTDOWN_REQUESTED, 130),
+        ],
+    )
+    def test_run_all_exit_code_matches_termination(
+        self, tmp_db, project, ready_features, termination, expected_code
+    ):
+        """``bob3 run --all`` exit code must match the termination reason."""
+        runner = CliRunner()
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            with patch("bob3.cli.start_mcp_server"):
+                with patch(
+                    "bob3.cli._run_orchestration_loop",
+                    return_value=termination,
+                ):
+                    result = runner.invoke(main, ["run", "--all"])
+                    assert result.exit_code == expected_code, (
+                        f"termination={termination!r} expected exit "
+                        f"{expected_code}, got {result.exit_code}\n"
+                        f"output: {result.output}"
+                    )
+
+    @pytest.mark.parametrize(
+        "termination,expected_code",
+        [
+            (LoopTermination.ALL_COMPLETED, 0),
+            (LoopTermination.ALL_BLOCKED, 2),
+            (LoopTermination.BUDGET_EXCEEDED, 3),
+            (LoopTermination.SHUTDOWN_REQUESTED, 130),
+        ],
+    )
+    def test_run_feature_exit_code_matches_termination(
+        self, tmp_db, project, ready_features, termination, expected_code
+    ):
+        """``bob3 run --feature`` exit code must match the termination reason."""
+        feat = ready_features[0]
+        runner = CliRunner()
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            with patch("bob3.cli.start_mcp_server"):
+                with patch(
+                    "bob3.cli._run_orchestration_loop",
+                    return_value=termination,
+                ):
+                    result = runner.invoke(
+                        main, ["run", "--feature", feat.id]
+                    )
+                    assert result.exit_code == expected_code, (
+                        f"termination={termination!r} expected exit "
+                        f"{expected_code}, got {result.exit_code}\n"
+                        f"output: {result.output}"
+                    )
+
+    def test_run_help_documents_exit_codes(self):
+        """The ``--help`` epilog must document the exit-code contract.
+
+        Without this, the CLI behaviour is invisible to operators
+        wiring CI pipelines.
+        """
+        runner = CliRunner()
+        result = runner.invoke(main, ["run", "--help"])
+        assert result.exit_code == 0, result.output
+        out = result.output
+        assert "Exit codes" in out, "help must mention 'Exit codes'"
+        # Spot-check that each code appears in the help text.
+        for code in ("0", "2", "3", "130"):
+            assert code in out, f"exit code {code} missing from help"
+
+
+# ============================================================
+# R5-009: per-feature and per-run summary log lines
+# ============================================================
+
+
+class TestPerFeatureSummaryLog:
+    """R5-009: after each feature, log a structured summary line with
+    duration, cost, attempts, and final status. After the loop terminates,
+    log a single run-level summary line.
+    """
+
+    @pytest.mark.asyncio
+    async def test_feature_summary_log_after_successful_completion(
+        self, tmp_db, project, ready_features, caplog
+    ):
+        """A successful feature must produce a single "Feature ... done:"
+        line containing duration / cost / attempts / status fields."""
+        import logging as _logging
+
+        feat = ready_features[0]
+
+        async def mock_spawn(*args, **kwargs):
+            return SpawnResult(
+                execution_result=ExecutionResult(
+                    text="ok",
+                    is_error=False,
+                    duration_ms=2500,
+                    num_turns=3,
+                    total_cost_usd=0.42,
+                ),
+                agent_run=MagicMock(id=str(uuid.uuid4())),
+            )
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id)
+            loop.target_feature_id = feat.id  # exercise single-feature path
+
+            caplog.set_level(_logging.INFO, logger="bob3.orchestrator.run_loop")
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=mock_spawn,
+            ):
+                await loop.run()
+
+            summary_lines = [
+                rec.getMessage()
+                for rec in caplog.records
+                if "done:" in rec.getMessage()
+            ]
+            assert summary_lines, (
+                "expected a 'Feature ... done:' summary line "
+                f"from execute_feature; got {[r.getMessage() for r in caplog.records]}"
+            )
+            line = summary_lines[-1]
+            # Required structured fields:
+            for token in (
+                f"Feature {feat.id[:8]}",
+                "status=",
+                "duration=",
+                "cost=$",
+                "attempts=",
+            ):
+                assert token in line, (
+                    f"summary line missing '{token}': {line}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_run_summary_log_on_termination(
+        self, tmp_db, project, ready_features, caplog
+    ):
+        """After the loop terminates, a single 'Run finished:' summary log
+        line must appear with termination, counts, cost, and duration."""
+        import logging as _logging
+
+        async def mock_spawn(*args, **kwargs):
+            return SpawnResult(
+                execution_result=ExecutionResult(
+                    text="ok",
+                    is_error=False,
+                    duration_ms=1000,
+                    num_turns=2,
+                    total_cost_usd=0.10,
+                ),
+                agent_run=MagicMock(id=str(uuid.uuid4())),
+            )
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id)
+
+            caplog.set_level(_logging.INFO, logger="bob3.orchestrator.run_loop")
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=mock_spawn,
+            ):
+                termination = await loop.run()
+
+            run_summaries = [
+                rec.getMessage()
+                for rec in caplog.records
+                if rec.getMessage().startswith("Run finished:")
+            ]
+            assert len(run_summaries) == 1, (
+                f"expected exactly one 'Run finished:' line, "
+                f"got {len(run_summaries)}: {run_summaries}"
+            )
+            line = run_summaries[0]
+            for token in (
+                f"termination={termination.name}",
+                "features_completed=",
+                "features_failed=",
+                "total_cost=$",
+                "total_duration=",
+            ):
+                assert token in line, (
+                    f"run summary missing '{token}': {line}"
+                )
+
+
+# ============================================================
+# R5-010 / R7-004: interruption checkpoint records the project total cost
+# ============================================================
+
+
+class TestInterruptionCheckpointRecordsProjectCost:
+    """R5-010 / R7-004: ``_create_interruption_checkpoint`` must record the
+    actual project cost (the canonical DB total), not the dead in-memory
+    ``self.total_cost`` accumulator that the round-3 fix zeroed.
+
+    Before the fix, ``state_snapshot["total_cost_at_interrupt"]`` and
+    ``cost_at_checkpoint`` were always 0.0 — useless for resume forensics
+    because the project had spent N>0 dollars before the shutdown.
+    """
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_records_actual_project_cost(
+        self, tmp_db, project, ready_features
+    ):
+        """After execute_feature interrupts during shutdown, the
+        checkpoint's cost fields must reflect the project's DB total
+        cost, not 0.0.
+        """
+        import json as _json
+
+        from bob3.db import list_checkpoints, update_project
+
+        feat = ready_features[0]
+
+        # Pre-populate the project cost so we can assert that the
+        # checkpoint sees the canonical DB total (not the dead
+        # ``self.total_cost`` field).
+        update_project(project.id, total_cost_usd=2.50)
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id)
+            loop.target_feature_id = feat.id
+
+            async def mock_spawn(*args, **kwargs):
+                # Trip shutdown so handle_execution_result writes 'interrupted'
+                # and execute_feature creates an interruption checkpoint.
+                loop.request_shutdown()
+                return SpawnResult(
+                    execution_result=ExecutionResult(
+                        text="partial",
+                        is_error=True,
+                        error_message="Interrupted",
+                        duration_ms=5000,
+                        num_turns=1,
+                        total_cost_usd=0.30,
+                    ),
+                    agent_run=MagicMock(id=str(uuid.uuid4())),
+                )
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=mock_spawn,
+            ):
+                await loop.run()
+
+            checkpoints = list_checkpoints(feature_id=feat.id)
+            interruption_cps = [
+                cp for cp in checkpoints
+                if cp.checkpoint_type == "interruption"
+            ]
+            assert interruption_cps, (
+                "expected an interruption checkpoint after shutdown"
+            )
+            cp = interruption_cps[-1]
+            # cost_at_checkpoint must reflect the actual project cost,
+            # not the always-zero in-memory accumulator. We pre-loaded
+            # 2.50 and the spawn added 0.30, so it must be > 2.0.
+            assert cp.cost_at_checkpoint is not None
+            assert cp.cost_at_checkpoint > 2.0, (
+                f"cost_at_checkpoint must reflect project cost, "
+                f"got {cp.cost_at_checkpoint}"
+            )
+            state = _json.loads(cp.state_snapshot)
+            # The state-snapshot field must mirror the project total
+            # (not 0.0). Allow a wide upper bound to cover any path
+            # variations in cost normalisation.
+            assert state["total_cost_at_interrupt"] >= 2.50, (
+                f"total_cost_at_interrupt must mirror project total, "
+                f"got {state['total_cost_at_interrupt']}"
+            )
+
+
+# ============================================================
+# R7-003: below-threshold ready features must not burn refinement slots
+# ============================================================
+
+
+class TestBelowThresholdReadyFeature:
+    """R7-003: when find_next_ready_feature() returns None but the loop
+    falls back to the first 'ready' feature that is below threshold,
+    repeat iterations would burn refinement slots once research had
+    already run. The loop must instead mark the feature 'needs_human'
+    and stop touching it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_below_threshold_with_research_marks_needs_human(
+        self, tmp_db, project
+    ):
+        """A feature with research_iterations >= 1 and readiness below
+        threshold must be marked 'needs_human' and NOT executed via
+        spawn_sub_agent.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            f = create_feature(
+                project_id=project.id,
+                name="Stuck below threshold",
+                description="research already ran but still below threshold",
+                status="ready",
+                priority=10,
+                risk_category="medium",  # threshold = 0.80
+            )
+            # Below the medium threshold of 0.80, with research already done.
+            update_feature(
+                f.id,
+                conf_spec_understanding=0.5,
+                conf_impl_correctness=0.5,
+                conf_test_adequacy=0.5,
+                readiness_score=0.5,
+                research_iterations=1,
+            )
+
+            loop = OrchestrationLoop(project_id=project.id, max_cost=10.0)
+
+            async def boom_spawn(*args, **kwargs):
+                raise AssertionError(
+                    "spawn_sub_agent must not run for a below-threshold "
+                    "feature whose research already completed (R7-003)"
+                )
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=boom_spawn,
+            ), patch(
+                "bob3.orchestrator.run_loop.acquire_run_lock",
+                return_value=None,
+            ), patch(
+                "bob3.orchestrator.run_loop.release_run_lock",
+                return_value=None,
+            ):
+                termination = await loop.run()
+
+            # The loop should have terminated cleanly (ALL_BLOCKED or
+            # ALL_COMPLETED). What matters is the feature got marked
+            # needs_human, NOT executing or failed.
+            assert termination in (
+                LoopTermination.ALL_BLOCKED,
+                LoopTermination.ALL_COMPLETED,
+            ), f"unexpected termination={termination}"
+
+            updated = get_feature(f.id)
+            assert updated.status == "needs_human", (
+                "below-threshold feature with research_iterations>0 must be "
+                "marked needs_human (R7-003); got "
+                f"status={updated.status!r}"
+            )

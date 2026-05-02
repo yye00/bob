@@ -94,6 +94,33 @@ the SDK message-consumption loop can cancel the client between message
 events. That requires changes in ``claude_executor.py`` and is not done
 here. As a stopgap, the loop logs a clear warning when shutdown is
 observed, telling the user roughly how long they might have to wait.
+
+Defense in depth — budget tampering by sub-agents (R5-003)
+----------------------------------------------------------
+Sub-agents are spawned by the Claude Code SDK with
+``permission_mode=bypassPermissions`` and ``cwd=<workspace>``, which gives
+them write access to anything in the workspace — including ``bob3.db`` if
+it lives there. A malicious sub-agent could ``UPDATE projects SET
+total_cost_usd = 0`` to reset the running cost and effectively disable
+budget enforcement on the next iteration of the loop.
+
+The orchestrator can't prevent the write (the trust model accepts that
+sub-agents have FS access), but it can DETECT the tampering and refuse
+to honor the lower value. The loop maintains an in-memory ``_expected_total_cost``
+that is incremented on every ``db.update_project_cost`` call. When
+``_refresh_project_cost_cache`` reloads the canonical DB total, it
+compares to the expected total; if the DB total has DECREASED beyond a
+small floating-point slack, the loop:
+
+1. Logs a ``SECURITY:`` warning naming both totals and the suspected
+   tampering.
+2. Refuses to lower the in-memory cache: it clamps to the expected
+   total instead.
+
+This means a sub-agent zeroing out the DB cannot extend its own runtime
+budget. As a hardened deployment, place ``bob3.db`` outside the workspace
+via ``BOB3_DATABASE_PATH=/secure/path/bob3.db`` so sub-agents cannot
+reach it at all — see the README "Security considerations" section.
 """
 
 from __future__ import annotations
@@ -101,6 +128,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import enum
+import errno
 import fcntl
 import json
 import logging
@@ -108,6 +136,8 @@ import os
 import pathlib
 import re
 import signal
+import stat
+import time
 from typing import Any
 
 from bob3 import db
@@ -214,6 +244,30 @@ def acquire_run_lock(workspace: str | pathlib.Path) -> Any:
     POSIX-only (uses ``fcntl.flock``). Bob3 explicitly does not support
     Windows in production, so we don't bother with an msvcrt fallback.
 
+    Symlink-attack hardening (R5-002)
+    ---------------------------------
+    A sub-agent with workspace write access could replace ``.bob3.lock``
+    with a symlink to ``/dev/null`` (or any other non-regular file) before
+    the next ``bob3 run``. ``flock`` on a non-regular file's fd succeeds
+    trivially because the kernel doesn't track exclusive locks on devices
+    or unrelated paths the way it does on regular files — two concurrent
+    ``bob3 run`` processes would then both pass the lock check and race
+    on the database.
+
+    Two defenses applied here:
+
+    1. ``os.open(..., O_NOFOLLOW)`` refuses at open time if the path
+       already exists as a symlink. The kernel returns ``ELOOP``; we
+       translate that into ``AlreadyRunningError`` so the user gets a
+       coherent message.
+    2. After opening, we ``fstat`` the descriptor and check
+       ``stat.S_ISREG(st.st_mode)``. If it isn't a regular file (e.g. a
+       sub-agent replaced the lock with a fifo, a directory, or a device
+       node before we got there), we refuse to use it.
+
+    Both checks fire before any flock attempt, so no caller ever holds a
+    lock against ``/dev/null``.
+
     Args:
         workspace: The project workspace directory (where ``.bob3.lock``
             lives). The directory must already exist; we don't try to
@@ -225,7 +279,9 @@ def acquire_run_lock(workspace: str | pathlib.Path) -> Any:
         file is closed (explicitly or via GC) the lock is released.
 
     Raises:
-        AlreadyRunningError: another process holds the lock.
+        AlreadyRunningError: another process holds the lock, or the lock
+            path was found to be a symlink / non-regular file (suggesting
+            tampering by a sub-agent).
         OSError: any other I/O failure opening the lock file.
     """
     workspace_path = pathlib.Path(workspace) if workspace else pathlib.Path.cwd()
@@ -242,9 +298,54 @@ def acquire_run_lock(workspace: str | pathlib.Path) -> Any:
         )
         workspace_path = pathlib.Path.cwd()
     lock_path = workspace_path / _BOB3_LOCK_FILENAME
-    # Open in append-binary mode so we don't truncate any prior contents
-    # (we don't write to it; the file is purely a flock anchor).
-    fh = open(lock_path, "ab")
+
+    # R5-002: open with O_NOFOLLOW so a symlink at ``.bob3.lock`` (e.g.
+    # pointing at /dev/null) raises ELOOP instead of giving us a usable
+    # fd we'd then flock-against-a-non-regular-file. We use os.open to
+    # get the flag wired in, then wrap the fd with os.fdopen so the rest
+    # of the function (and callers / release_run_lock) sees a normal
+    # file object as before.
+    open_flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW
+    try:
+        fd = os.open(lock_path, open_flags, 0o600)
+    except OSError as exc:
+        # ELOOP comes from O_NOFOLLOW hitting a symlink. Surface that as
+        # an AlreadyRunningError with a tampering hint — letting it
+        # propagate as a bare OSError would crash the CLI with no
+        # actionable message.
+        if getattr(exc, "errno", None) == errno.ELOOP:
+            raise AlreadyRunningError(
+                f"Lock path {lock_path} is a symlink — refusing to use it. "
+                f"This usually means a sub-agent or external process "
+                f"tampered with the lock; remove the symlink and try "
+                f"again. (Possible tampering)"
+            ) from exc
+        raise
+
+    # R5-002: verify the open fd refers to a regular file. A pre-existing
+    # fifo / device / directory would have skipped the symlink check but
+    # is still not a sound flock anchor.
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        raise
+    if not stat.S_ISREG(st.st_mode):
+        os.close(fd)
+        raise AlreadyRunningError(
+            f"Lock path {lock_path} is not a regular file (st_mode={oct(st.st_mode)}). "
+            f"Refusing to use it; remove it and try again. (Possible tampering)"
+        )
+
+    # Wrap the fd with a Python file object so the existing
+    # release_run_lock() path (close-the-file-object) keeps working. The
+    # mode "ab" matches the previous behaviour (no truncation, binary).
+    try:
+        fh = os.fdopen(fd, "ab")
+    except OSError:
+        os.close(fd)
+        raise
+
     try:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
@@ -311,6 +412,47 @@ _DEFAULT_COST_PER_TURN_PROXY = 0.05
 # work path.
 
 _DEFAULT_FEATURE_TIMEOUT_SECONDS = 3600  # 1 hour
+
+
+# ---------------------------------------------------------------
+# Regression-detection toggle (R7-001)
+# ---------------------------------------------------------------
+#
+# capture_pytest_snapshot is invoked twice per feature (before and after
+# the sub-agent) and uses synchronous subprocess.run with a ~300s timeout.
+# In environments where the workspace test suite is large, slow, or simply
+# uninteresting from a regression-tracking standpoint, this overhead is
+# unwanted. Operators can disable both snapshots (and therefore the entire
+# regression-detection path) via BOB3_REGRESSION_DETECTION_ENABLED=0.
+#
+# The default is "enabled" because regression detection is wired into
+# show-regressions / rollback (F051 / F052) and most operators want it on.
+
+_REGRESSION_DETECTION_DEFAULT = True
+
+
+def _regression_detection_enabled() -> bool:
+    """Return True when regression-detection snapshots should run.
+
+    Honours the ``BOB3_REGRESSION_DETECTION_ENABLED`` env var. Truthy
+    values: ``1``, ``true``, ``yes``, ``on`` (case-insensitive). Falsy
+    values: ``0``, ``false``, ``no``, ``off``. Anything unrecognised is
+    treated as truthy with a warning so misconfigurations don't silently
+    disable regression detection.
+    """
+    raw = os.environ.get("BOB3_REGRESSION_DETECTION_ENABLED")
+    if raw is None:
+        return _REGRESSION_DETECTION_DEFAULT
+    normalized = raw.strip().lower()
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    logger.warning(
+        "Unrecognised BOB3_REGRESSION_DETECTION_ENABLED=%r; treating as enabled",
+        raw,
+    )
+    return _REGRESSION_DETECTION_DEFAULT
 
 
 def _resolve_feature_timeout_seconds() -> float:
@@ -1149,6 +1291,10 @@ class OrchestrationLoop:
         self.total_cost: float = 0.0
         self.features_completed: int = 0
         self.features_failed: int = 0
+        # R5-009: wall-clock start time for the run, captured at the top
+        # of ``_run_locked``. Used by the loop-level termination summary
+        # log so the operator sees how long the entire run took.
+        self._run_start_time: float | None = None
         self.shutdown_requested: bool = False
         self._current_feature: Feature | None = None
         # Set to True the first time we see a result with total_cost_usd=None.
@@ -1167,7 +1313,15 @@ class OrchestrationLoop:
         # it to one connection per cost write.
         self._project_total_cost: float = 0.0
         self._project_max_cost_usd: float | None = None
-        self._refresh_project_cost_cache()
+        # R5-003: tamper-detection running total. Mirrors every
+        # ``db.update_project_cost(... cost_usd=X)`` call this loop issues
+        # so that ``_refresh_project_cost_cache`` can detect a sub-agent
+        # zeroing out the DB to bypass the budget. Initialized from the
+        # DB total on construction so a resumed run keeps a coherent
+        # baseline; ``_increment_expected_total_cost`` updates it.
+        self._expected_total_cost: float = 0.0
+        self._refresh_project_cost_cache(_priming=True)
+        self._expected_total_cost = self._project_total_cost
 
     def request_shutdown(self) -> None:
         """Request graceful shutdown of the loop."""
@@ -1205,7 +1359,27 @@ class OrchestrationLoop:
         )
         self._cost_proxy_warning_emitted = True
 
-    def _refresh_project_cost_cache(self) -> None:
+    def _increment_expected_total_cost(self, delta: float) -> None:
+        """Mirror a ``db.update_project_cost(... cost_usd=delta)`` call.
+
+        Caller MUST invoke this immediately after issuing the DB write,
+        with the SAME ``delta`` it passed to the DB. The expected total
+        is the floor below which ``_refresh_project_cost_cache`` will
+        not let the cache drop — see the module docstring's "Defense in
+        depth — budget tampering" section for the threat model.
+
+        Negative deltas are rejected: cost is monotonic by contract.
+        """
+        if delta < 0:
+            logger.error(
+                "SECURITY: refusing to apply negative cost delta %.6f to "
+                "expected total (cost is monotonic by contract)",
+                delta,
+            )
+            return
+        self._expected_total_cost += float(delta)
+
+    def _refresh_project_cost_cache(self, _priming: bool = False) -> None:
         """Reload cached project cost values from the DB.
 
         Call this exactly when something has, or might have, mutated the
@@ -1219,6 +1393,23 @@ class OrchestrationLoop:
         is safe because the loop simply will not advance past the next
         ``find_next_ready_feature`` if the project has been deleted out
         from under it.
+
+        R5-003 tamper detection
+        -----------------------
+        After each refresh, the loaded DB total is compared against
+        ``self._expected_total_cost`` — the in-memory running total of
+        every cost increment THIS loop has issued. If the DB total has
+        gone DOWN beyond a tiny floating-point slack, that means
+        something outside the orchestrator (almost always: a sub-agent
+        with workspace write access) has mutated the projects table to
+        reduce ``total_cost_usd``. We log a SECURITY warning and clamp
+        the in-memory cache to ``_expected_total_cost`` instead of the
+        attacker-supplied lower value, so the next ``budget_exceeded``
+        check honors the original budget.
+
+        ``_priming=True`` is used by ``__init__`` for the first call,
+        before the expected total has been seeded — that path skips the
+        comparison so we don't compare against a default-zero baseline.
         """
         project = db.get_project(self.project_id)
         if project is None:
@@ -1230,7 +1421,30 @@ class OrchestrationLoop:
                 self.project_id,
             )
             total = 0.0
-        self._project_total_cost = float(total)
+        db_total = float(total)
+
+        # Tamper detection: a sub-agent with workspace FS access can
+        # ``UPDATE projects SET total_cost_usd = 0`` directly in bob3.db
+        # to disable the budget guard on the next iteration. Detect any
+        # decrease beyond floating-point slack and refuse to honor it.
+        if not _priming and db_total + 1e-6 < self._expected_total_cost:
+            logger.warning(
+                "SECURITY: Project cost in DB reduced unexpectedly "
+                "(db=%.2f, expected=%.2f); possible tampering. "
+                "Refusing to lower budget.",
+                db_total,
+                self._expected_total_cost,
+            )
+            self._project_total_cost = self._expected_total_cost
+        else:
+            self._project_total_cost = db_total
+            # If the DB total moved UP relative to our expected (e.g. a
+            # peer process legitimately recorded cost we didn't issue),
+            # bring the expected total along so future comparisons stay
+            # consistent.
+            if db_total > self._expected_total_cost:
+                self._expected_total_cost = db_total
+
         self._project_max_cost_usd = project.max_cost_usd
 
     def budget_exceeded(self) -> bool:
@@ -1371,28 +1585,46 @@ class OrchestrationLoop:
                 project_id=self.project_id,
                 cost_usd=research_cost,
             )
+            # R5-003: mirror the cost delta into the tamper-detection
+            # expected total before refreshing the cache.
+            self._increment_expected_total_cost(research_cost)
             self._refresh_project_cost_cache()
 
         # Store research results in DB (even if research failed, record the attempt)
         findings = research_exec.text if not research_exec.is_error else None
         # agent_run_id may not exist in DB (e.g. during tests with mocked agents)
         agent_run_id = getattr(research_result.agent_run, "id", None)
+        # R7-002: The fallback ``db.create_research_result`` (without
+        # agent_run_id) is itself a DB write and can fail for reasons
+        # unrelated to FK violations (disk full, schema drift, transient
+        # SQLite lock). If both calls raise, the unhandled exception used
+        # to crash the orchestration loop. Wrap the whole block so any
+        # failure is logged and the loop continues — the research
+        # findings are advisory; losing one row must not stop the run.
         try:
-            db.create_research_result(
-                feature_id=feature.id,
-                project_id=self.project_id,
-                query=query,
-                findings=findings,
-                agent_run_id=agent_run_id,
-            )
-        except Exception:
-            # FK constraint may fail if agent_run record doesn't exist;
-            # store without the agent_run_id reference
-            db.create_research_result(
-                feature_id=feature.id,
-                project_id=self.project_id,
-                query=query,
-                findings=findings,
+            try:
+                db.create_research_result(
+                    feature_id=feature.id,
+                    project_id=self.project_id,
+                    query=query,
+                    findings=findings,
+                    agent_run_id=agent_run_id,
+                )
+            except Exception:
+                # FK constraint may fail if agent_run record doesn't exist;
+                # store without the agent_run_id reference
+                db.create_research_result(
+                    feature_id=feature.id,
+                    project_id=self.project_id,
+                    query=query,
+                    findings=findings,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Failed to record research result for feature %s: %s; continuing",
+                feature.id,
+                exc,
+                exc_info=True,
             )
 
         # Increment research_iterations
@@ -1485,6 +1717,9 @@ class OrchestrationLoop:
                     project_id=self.project_id,
                     cost_usd=decomp_normalized,
                 )
+                # R5-003: mirror the cost delta into the tamper-detection
+                # expected total before refreshing the cache.
+                self._increment_expected_total_cost(decomp_normalized)
                 self._refresh_project_cost_cache()
 
             if decomp_result["success"]:
@@ -1524,16 +1759,31 @@ class OrchestrationLoop:
             except Exception:
                 logger.debug("Could not capture pre-execution git state")
 
-        # F051 / R4-003: Capture a pre-execution test snapshot so that, after
-        # verification passes, we can compare the test verdicts and detect
-        # newly-failing tests caused by THIS feature. ``capture_pytest_snapshot``
-        # returns None when pytest can't be run (no workspace, no test dir,
-        # pytest not installed, timeout, etc.); the post-execution code
-        # only calls ``db.detect_regression`` when both before and after
-        # snapshots are available.
-        before_snapshot: dict[str, bool] | None = capture_pytest_snapshot(
-            self.workspace or None
-        )
+        # F051 / R4-003 / R5-006 / R7-001: Capture a pre-execution test
+        # snapshot so that, after verification passes, we can compare the test
+        # verdicts and detect newly-failing tests caused by THIS feature.
+        # ``capture_pytest_snapshot`` returns None when pytest can't be run
+        # (no workspace, no test dir, pytest not installed, timeout, etc.);
+        # the post-execution code only calls ``db.detect_regression`` when
+        # both before and after snapshots are available.
+        #
+        # R5-006: ``capture_pytest_snapshot`` uses synchronous subprocess.run
+        # with a 300s timeout, which would block the asyncio event loop for
+        # the entire pytest run. Offload to a worker thread so the loop
+        # remains responsive (signals, cancellation).
+        #
+        # R7-001: The pre-execution snapshot is wasted work when the feature
+        # is going to be decomposed (we returned early above) OR when the
+        # operator has disabled regression detection entirely via
+        # BOB3_REGRESSION_DETECTION_ENABLED=0. In both cases, skip both the
+        # before and after snapshots so we don't spend several minutes per
+        # feature on data nobody will read.
+        regression_enabled = _regression_detection_enabled()
+        before_snapshot: dict[str, bool] | None = None
+        if regression_enabled:
+            before_snapshot = await asyncio.to_thread(
+                capture_pytest_snapshot, self.workspace or None
+            )
 
         # F109: Run research phase if needed
         await self._run_research(feature)
@@ -1614,6 +1864,20 @@ class OrchestrationLoop:
                 feature.id,
                 feature_timeout,
             )
+            # R5-007: ``asyncio.wait_for`` cancels the underlying task,
+            # but the claude_code_sdk subprocess may not always honour
+            # cancellation cleanly (depends on which tool call was in
+            # flight). ``spawn_sub_agent`` makes a best-effort to close
+            # the SDK stream on cancellation, but if the underlying
+            # Node.js process is wedged in a syscall it can survive.
+            # Surface a clear SECURITY warning so the operator can
+            # inspect / clean up if needed.
+            logger.warning(
+                "SECURITY: Sub-agent for feature %s timed out; underlying "
+                "claude Node.js process may still be running. Check "
+                "`pgrep -f claude` and kill any orphaned PIDs if needed.",
+                feature.id,
+            )
             # Persist a synthetic evidence artifact so the operator can
             # tell the difference between "sub-agent crashed" and
             # "sub-agent ran past the timeout". Best-effort — never let an
@@ -1655,6 +1919,20 @@ class OrchestrationLoop:
                 duration_ms=int(feature_timeout * 1000),
                 num_turns=0,
                 total_cost_usd=None,
+            )
+            # R5-009: Emit a per-feature summary on the timeout path too,
+            # so wall-clock-timeout features show up in the same log
+            # format as normal completions / failures. Refinement attempts
+            # are NOT incremented on timeout (see comment above on F116).
+            logger.info(
+                "Feature %s (%s) done: status=%s duration=%.1fs "
+                "cost=$%.4f attempts=%d",
+                feature.id[:8],
+                feature.name,
+                "interrupted",
+                float(feature_timeout),
+                0.0,
+                feature.refinement_attempts,
             )
             agent_run = type("_FakeRun", (), {"id": None})()
             return SpawnResult(execution_result=timeout_exec, agent_run=agent_run)
@@ -1728,6 +2006,15 @@ class OrchestrationLoop:
             verification_passed=verification_passed,
             verification_summary=verification_summary,
         )
+        # R5-003: mirror the cost delta into our in-memory expected total
+        # BEFORE refreshing the cache. ``handle_execution_result`` only
+        # writes to the DB when ``normalized_cost > 0`` (zero is a no-op),
+        # so we apply the same gate here. This keeps tamper detection
+        # tight: if a sub-agent zeroes out the DB, the next refresh sees
+        # ``db_total < expected_total`` and the SECURITY warning fires.
+        cost_recorded = float(outcome.get("cost_usd") or 0.0)
+        if cost_recorded > 0:
+            self._increment_expected_total_cost(cost_recorded)
         # Refresh the cached project cost after handle_execution_result —
         # it issues db.update_project_cost on the success path, so the
         # next budget_exceeded() must see the updated total without
@@ -1983,8 +2270,12 @@ class OrchestrationLoop:
             and verification_passed
             and not git_hook_failed
         )
-        if feature_landed and before_snapshot is not None:
-            after_snapshot = capture_pytest_snapshot(self.workspace or None)
+        if feature_landed and before_snapshot is not None and regression_enabled:
+            # R5-006: offload the post-execution pytest run to a worker
+            # thread so the event loop stays responsive during the snapshot.
+            after_snapshot = await asyncio.to_thread(
+                capture_pytest_snapshot, self.workspace or None
+            )
             if after_snapshot is not None:
                 try:
                     event = db.detect_regression(
@@ -2049,6 +2340,27 @@ class OrchestrationLoop:
             project_id=self.project_id,
             feature=feature,
             passed=feature_landed,
+        )
+
+        # R5-009: Emit a structured per-feature summary so operators can
+        # see the cost / duration / outcome of each feature in the log
+        # without reconstructing it from individual lines. Re-fetch the
+        # feature so ``status`` and ``refinement_attempts`` reflect any
+        # mutations made by handle_execution_result, retry logic, or git
+        # hook rollback above. Falls back to the in-memory feature if
+        # the row vanished mid-run (deleted by a parallel admin tool).
+        final_feature = db.get_feature(feature.id) or feature
+        normalized_cost = float(outcome.get("cost_usd") or 0.0)
+        duration_ms = result.duration_ms or 0
+        logger.info(
+            "Feature %s (%s) done: status=%s duration=%.1fs "
+            "cost=$%.4f attempts=%d",
+            feature.id[:8],
+            feature.name,
+            final_feature.status,
+            duration_ms / 1000.0,
+            normalized_cost,
+            final_feature.refinement_attempts,
         )
 
         # Clear current feature tracking
@@ -2132,12 +2444,23 @@ class OrchestrationLoop:
             feature: The feature that was being executed.
             result: The execution result from the sub-agent.
         """
+        # R5-010 / R7-004: ``self.total_cost`` was zeroed by the round-3
+        # fix that moved cost accounting into the project DB row, so the
+        # previous version of this method always recorded
+        # total_cost_at_interrupt=0.0 — useless for resume forensics.
+        # Use the cached, refreshed-from-DB project total instead.
+        # ``handle_execution_result`` (the caller's caller) has already
+        # written ``result.total_cost_usd`` into the DB and refreshed the
+        # cache; the +result.total_cost_usd term below is a defensive
+        # belt-and-suspenders for paths where the refresh has not yet
+        # happened.
+        project_total = float(self._project_total_cost or 0.0)
         state = {
             "feature_id": feature.id,
             "feature_name": feature.name,
             "feature_status": "interrupted",
             "reason": "graceful_shutdown",
-            "total_cost_at_interrupt": self.total_cost,
+            "total_cost_at_interrupt": project_total,
             "features_completed": self.features_completed,
             "features_failed": self.features_failed,
         }
@@ -2147,7 +2470,7 @@ class OrchestrationLoop:
                 feature_id=feature.id,
                 checkpoint_type="interruption",
                 state_snapshot=json.dumps(state),
-                cost_at_checkpoint=self.total_cost + (result.total_cost_usd or 0.0),
+                cost_at_checkpoint=project_total + (result.total_cost_usd or 0.0),
                 duration_at_checkpoint_ms=result.duration_ms,
             )
             logger.info(
@@ -2449,10 +2772,59 @@ class OrchestrationLoop:
         # or doing any DB writes — the second invocation should be a
         # no-op from the project's point of view.
         lock_handle = acquire_run_lock(self.workspace or os.getcwd())
+        # R5-009: Capture the wall-clock start so the termination summary
+        # log reflects the actual run time (not OrchestrationLoop init
+        # time). Set inside ``run`` so re-running the same loop instance
+        # gets a fresh window.
+        self._run_start_time = time.monotonic()
+        termination: LoopTermination | None = None
         try:
-            return await self._run_locked()
+            termination = await self._run_locked()
+            return termination
         finally:
+            # Always emit the loop-level summary on the way out — even if
+            # _run_locked raised — so operators see the cost / counts
+            # for partial runs too. ``termination`` stays None on a raised
+            # exception; surface that distinctly so the log doesn't claim
+            # a completion reason that never happened.
+            self._emit_run_summary(termination)
             release_run_lock(lock_handle)
+
+    def _emit_run_summary(self, termination: LoopTermination | None) -> None:
+        """Log a single structured line summarising the run.
+
+        Intended to be called exactly once per ``run()`` invocation,
+        from the ``finally`` block so that crashes / cancellations also
+        get a summary line. The log line format is parsable by ops
+        tooling: features_completed / features_failed / total_cost /
+        total_duration are space-separated key=value pairs.
+        """
+        if self._run_start_time is None:
+            run_duration = 0.0
+        else:
+            run_duration = max(0.0, time.monotonic() - self._run_start_time)
+        # Project total cost is the canonical accumulator (in-memory
+        # ``total_cost`` is dead). Refresh once here in case the last
+        # path forgot to (defensive — every cost write site already
+        # refreshes today).
+        try:
+            self._refresh_project_cost_cache()
+        except Exception:
+            logger.debug(
+                "Could not refresh project cost cache for run summary",
+                exc_info=True,
+            )
+        total_cost = float(self._project_total_cost or 0.0)
+        termination_name = termination.name if termination is not None else "RAISED"
+        logger.info(
+            "Run finished: termination=%s features_completed=%d "
+            "features_failed=%d total_cost=$%.2f total_duration=%.1fs",
+            termination_name,
+            self.features_completed,
+            self.features_failed,
+            total_cost,
+            run_duration,
+        )
 
     async def _run_locked(self) -> LoopTermination:
         """Body of :meth:`run` executed while the project lock is held."""
@@ -2494,6 +2866,31 @@ class OrchestrationLoop:
                 if features_in_ready_status:
                     # Pick the first one that's in 'ready' status but doesn't meet threshold
                     feature = features_in_ready_status[0]
+                    # R7-003: If research has already run for this feature
+                    # then ``needs_research`` will return False on the next
+                    # ``execute_feature`` call. Without research, readiness
+                    # cannot improve, but the loop would still spawn the
+                    # implementation sub-agent — burning a refinement
+                    # attempt every iteration until ``max_refinement_attempts``
+                    # is exhausted. Mark it ``needs_human`` instead so the
+                    # operator can intervene (raise readiness, lower risk
+                    # category, or split the work).
+                    if feature.research_iterations and feature.research_iterations > 0:
+                        threshold = db.RISK_THRESHOLDS.get(
+                            feature.risk_category, 0.80
+                        )
+                        logger.warning(
+                            "Feature %s is below readiness threshold "
+                            "(score=%.2f, threshold=%.2f) and research already "
+                            "completed (iterations=%d); marking needs_human.",
+                            feature.id,
+                            feature.readiness_score,
+                            threshold,
+                            feature.research_iterations,
+                        )
+                        db.update_feature(feature.id, status="needs_human")
+                        # Loop again — there may be other actionable work.
+                        continue
                     logger.info(
                         "No features meet readiness threshold, but found feature %s in 'ready' status (readiness=%.2f). Will assess and potentially trigger research.",
                         feature.id[:8],

@@ -304,7 +304,66 @@ def _run_orchestration_loop(
         raise SystemExit(1)
 
 
-@main.command()
+def _build_exit_codes() -> dict:
+    """Build the LoopTermination -> POSIX exit code map.
+
+    Imported lazily because LoopTermination lives in
+    ``bob3.orchestrator.run_loop``, which we don't want to drag into the
+    CLI module's import cost on every invocation. Resolving on demand
+    also keeps test patches honoured.
+    """
+    from bob3.orchestrator.run_loop import LoopTermination
+
+    return {
+        LoopTermination.ALL_COMPLETED: 0,
+        LoopTermination.ALL_BLOCKED: 2,
+        LoopTermination.BUDGET_EXCEEDED: 3,
+        # SIGINT exit code by widely-used convention (128 + 2). Use the
+        # same value for any graceful shutdown so operators can detect
+        # interrupted runs in shell pipelines without parsing logs.
+        LoopTermination.SHUTDOWN_REQUESTED: 130,
+    }
+
+
+class _LazyExitCodes:
+    """Dict-like proxy that materialises the exit-code map on first read."""
+
+    def __init__(self) -> None:
+        self._cache: dict | None = None
+
+    def _load(self) -> dict:
+        if self._cache is None:
+            self._cache = _build_exit_codes()
+        return self._cache
+
+    def get(self, key, default=None):
+        return self._load().get(key, default)
+
+    def __getitem__(self, key):
+        return self._load()[key]
+
+    def __contains__(self, key) -> bool:
+        return key in self._load()
+
+
+_EXIT_CODES = _LazyExitCodes()
+
+
+_RUN_EPILOG = """\
+Exit codes:
+
+\b
+  0   ALL_COMPLETED       all targeted features completed successfully
+  2   ALL_BLOCKED         all remaining features are blocked / not runnable
+  3   BUDGET_EXCEEDED     loop stopped because the budget was exhausted
+  130 SHUTDOWN_REQUESTED  graceful shutdown (SIGINT / SIGTERM)
+
+CI scripts that chain commands ('bob3 run --all && deploy.sh') can rely on
+these codes — only exit 0 means "build is healthy and complete".
+"""
+
+
+@main.command(epilog=_RUN_EPILOG)
 @click.option("--feature", "-f", help="Run a specific feature by ID.")
 @click.option("--all", "run_all", is_flag=True, help="Run all ready features.")
 @click.option(
@@ -340,6 +399,10 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
     --all         runs the continuous orchestration loop, picking the
                   highest-priority ready feature each iteration until all
                   features are completed/blocked or the budget is exceeded.
+
+    The process exit code reflects how the loop terminated; see the
+    Exit codes section below. CI pipelines should treat anything other
+    than 0 as "do not deploy".
     """
     logger.info("Starting build run")
     console = Console()
@@ -421,6 +484,13 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
             LoopTermination.SHUTDOWN_REQUESTED: "[yellow]Shutdown requested.[/yellow]",
         }
         console.print(_TERMINATION_MESSAGES.get(termination, str(termination)))
+        # Map termination reason to a non-zero exit code so CI pipelines
+        # (e.g. ``bob3 run --feature X && deploy.sh``) do not treat a
+        # budget-exceeded or blocked run as success. ALL_COMPLETED is the
+        # only outcome that exits cleanly with 0.
+        exit_code = _EXIT_CODES.get(termination, 1)
+        if exit_code != 0:
+            raise SystemExit(exit_code)
     elif run_all:
         logger.info("Running all ready features")
         click.echo("Running all ready features...")
@@ -472,6 +542,13 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
             LoopTermination.SHUTDOWN_REQUESTED: "[yellow]Shutdown requested.[/yellow]",
         }
         console.print(_TERMINATION_MESSAGES.get(termination, str(termination)))
+        # Map termination reason to a non-zero exit code so CI pipelines
+        # (e.g. ``bob3 run --all && deploy.sh``) do not treat a
+        # budget-exceeded or blocked run as success. ALL_COMPLETED is the
+        # only outcome that exits cleanly with 0.
+        exit_code = _EXIT_CODES.get(termination, 1)
+        if exit_code != 0:
+            raise SystemExit(exit_code)
     else:
         click.echo("No feature specified. Use --feature or --all.")
 

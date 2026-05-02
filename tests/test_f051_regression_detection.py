@@ -811,3 +811,256 @@ class TestRegressionDetectionWiredIntoOrchestrator:
         assert capture_pytest_snapshot(None) is None
         assert capture_pytest_snapshot("") is None
         assert capture_pytest_snapshot("/nonexistent/path/does/not/exist") is None
+
+
+# ============================================================
+# R5-006 / R7-001: regression-snapshot offload + toggle + decomposition skip
+# ============================================================
+
+
+class TestRegressionSnapshotInWorkerThread:
+    """R5-006: capture_pytest_snapshot must run via asyncio.to_thread so it
+    does not block the event loop for the duration of the pytest run.
+    """
+
+    @pytest.mark.asyncio
+    async def test_snapshot_runs_in_worker_thread(self, project):
+        """The before- and after-snapshots must execute on a thread other
+        than the one running the asyncio event loop.
+        """
+        import threading
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import create_feature, get_feature, update_feature
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import OrchestrationLoop
+
+        f = create_feature(
+            project_id=project.id,
+            name="Snapshot in worker thread",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            f.id,
+            conf_spec_understanding=0.9,
+            conf_impl_correctness=0.9,
+            conf_test_adequacy=0.9,
+            readiness_score=0.9,
+        )
+        feature = get_feature(f.id)
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        loop_thread = threading.get_ident()
+        snapshot_calls: list[int] = []
+
+        def fake_capture(*_args, **_kwargs):
+            snapshot_calls.append(threading.get_ident())
+            return {"tests/test_x.py::tx": True}
+
+        async def mock_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="done",
+                is_error=False,
+                duration_ms=1,
+                num_turns=1,
+                total_cost_usd=0.0,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        with patch(
+            "bob3.orchestrator.run_loop.spawn_sub_agent",
+            new_callable=AsyncMock,
+            side_effect=mock_spawn,
+        ), patch(
+            "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+            side_effect=fake_capture,
+        ), patch(
+            "bob3.orchestrator.run_loop.run_verification_checklist",
+            return_value={"passed": True, "summary": "ok", "checks": []},
+        ), patch(
+            "bob3.orchestrator.run_loop.git_commit_feature",
+            return_value="deadbeef",
+        ), patch(
+            "bob3.orchestrator.run_loop.git_get_status",
+            return_value={"sha": "abc123"},
+        ):
+            await loop.execute_feature(feature)
+
+        # We expect 2 calls (before + after) and BOTH must run on a thread
+        # different from the event-loop thread.
+        assert len(snapshot_calls) == 2, (
+            f"expected 2 snapshot calls (before + after); got {len(snapshot_calls)}"
+        )
+        for tid in snapshot_calls:
+            assert tid != loop_thread, (
+                "capture_pytest_snapshot ran on the event-loop thread; "
+                "must be offloaded via asyncio.to_thread (R5-006)."
+            )
+
+
+class TestRegressionDetectionToggle:
+    """R7-001: BOB3_REGRESSION_DETECTION_ENABLED=0 must skip both snapshots."""
+
+    @pytest.mark.asyncio
+    async def test_env_var_disables_snapshots(self, project, monkeypatch):
+        """When BOB3_REGRESSION_DETECTION_ENABLED=0, capture_pytest_snapshot
+        must not be called at all during execute_feature.
+        """
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import create_feature, get_feature, update_feature
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import OrchestrationLoop
+
+        monkeypatch.setenv("BOB3_REGRESSION_DETECTION_ENABLED", "0")
+
+        f = create_feature(
+            project_id=project.id,
+            name="Snapshots disabled",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            f.id,
+            conf_spec_understanding=0.9,
+            conf_impl_correctness=0.9,
+            conf_test_adequacy=0.9,
+            readiness_score=0.9,
+        )
+        feature = get_feature(f.id)
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        snapshot_call_count = 0
+
+        def fake_capture(*_args, **_kwargs):
+            nonlocal snapshot_call_count
+            snapshot_call_count += 1
+            return None
+
+        async def mock_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="done",
+                is_error=False,
+                duration_ms=1,
+                num_turns=1,
+                total_cost_usd=0.0,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        with patch(
+            "bob3.orchestrator.run_loop.spawn_sub_agent",
+            new_callable=AsyncMock,
+            side_effect=mock_spawn,
+        ), patch(
+            "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+            side_effect=fake_capture,
+        ), patch(
+            "bob3.orchestrator.run_loop.run_verification_checklist",
+            return_value={"passed": True, "summary": "ok", "checks": []},
+        ), patch(
+            "bob3.orchestrator.run_loop.git_commit_feature",
+            return_value="deadbeef",
+        ), patch(
+            "bob3.orchestrator.run_loop.git_get_status",
+            return_value={"sha": "abc123"},
+        ):
+            await loop.execute_feature(feature)
+
+        assert snapshot_call_count == 0, (
+            "BOB3_REGRESSION_DETECTION_ENABLED=0 must skip both pytest "
+            "snapshots; capture_pytest_snapshot was called "
+            f"{snapshot_call_count} times."
+        )
+
+
+class TestDecompositionSkipsSnapshot:
+    """R7-001: A feature that gets decomposed (exceeds_size_limits=True)
+    must not trigger the pre-execution pytest snapshot. The pre-snapshot
+    is wasted work because execute_feature returns early before any
+    sub-agent runs against the implementation path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_decomposition_path_does_not_call_snapshot(self, project):
+        import uuid
+        from unittest.mock import AsyncMock, patch
+
+        from bob3.db import (
+            check_feature_size,
+            create_feature,
+            get_feature,
+            update_feature,
+        )
+        from bob3.orchestrator.run_loop import OrchestrationLoop
+
+        f = create_feature(
+            project_id=project.id,
+            name="Oversized",
+            description="This feature should decompose",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            f.id,
+            estimated_lines_of_code=1000,
+            estimated_files_touched=10,
+            estimated_complexity=9,
+            conf_spec_understanding=0.9,
+            conf_impl_correctness=0.9,
+            conf_test_adequacy=0.9,
+            readiness_score=0.9,
+        )
+        check_feature_size(f.id)
+        feature = get_feature(f.id)
+        assert feature.exceeds_size_limits is True
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        snapshot_calls: list[int] = []
+
+        def fake_capture(*_args, **_kwargs):
+            snapshot_calls.append(1)
+            return None
+
+        async def fake_decomp(*_args, **_kwargs):
+            return {
+                "success": True,
+                "children_created": 2,
+                "cost_usd": 0.0,
+                "num_turns": 0,
+            }
+
+        with patch(
+            "bob3.orchestrator.run_loop.handle_decomposition",
+            new_callable=AsyncMock,
+            side_effect=fake_decomp,
+        ), patch(
+            "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+            side_effect=fake_capture,
+        ):
+            await loop.execute_feature(feature)
+
+        assert snapshot_calls == [], (
+            "Decomposition path must not call capture_pytest_snapshot — "
+            "execute_feature returns early before any implementation "
+            "snapshot would be useful (R7-001). Got "
+            f"{len(snapshot_calls)} call(s)."
+        )
