@@ -167,6 +167,25 @@ from bob3.superpowers import (
 
 logger = logging.getLogger(__name__)
 
+
+def _log_safe(s: str | None) -> str:
+    """Sanitize a string for inclusion in a log line (R9-003).
+
+    Feature names come from the spec YAML and ultimately from the user
+    or from a sub-agent decomposition result. Both inputs are untrusted
+    relative to the log stream: a name containing newline / carriage-return
+    characters can spoof a fake log record by injecting a synthetic
+    "feature completed" line into stdout / log files. Mitigated by
+    escaping CR / LF before formatting.
+
+    Returns ``""`` for ``None`` so callers don't have to special-case it.
+    The escaping is reversible (``\\n`` / ``\\r`` literals) so the original
+    name is still recoverable if the operator wants it, but it cannot
+    forge a new log record.
+    """
+    return (s or "").replace("\n", "\\n").replace("\r", "\\r")
+
+
 # Statuses that indicate a feature cannot make further progress
 _TERMINAL_STATUSES = frozenset({
     "completed",
@@ -1679,7 +1698,7 @@ class OrchestrationLoop:
         # Set feature to executing and track as current
         self._current_feature = feature
         db.update_feature(feature.id, status="executing")
-        logger.info("Executing feature %s: %s", feature.id, feature.name)
+        logger.info("Executing feature %s: %s", feature.id, _log_safe(feature.name))
 
         # F072: Check if feature exceeds size limits and needs decomposition
         if feature.exceeds_size_limits:
@@ -1928,7 +1947,7 @@ class OrchestrationLoop:
                 "Feature %s (%s) done: status=%s duration=%.1fs "
                 "cost=$%.4f attempts=%d",
                 feature.id[:8],
-                feature.name,
+                _log_safe(feature.name),
                 "interrupted",
                 float(feature_timeout),
                 0.0,
@@ -2356,7 +2375,7 @@ class OrchestrationLoop:
             "Feature %s (%s) done: status=%s duration=%.1fs "
             "cost=$%.4f attempts=%d",
             feature.id[:8],
-            feature.name,
+            _log_safe(feature.name),
             final_feature.status,
             duration_ms / 1000.0,
             normalized_cost,
@@ -2721,7 +2740,7 @@ class OrchestrationLoop:
             logger.info(
                 "Assessing confidence for target feature %s (%s)",
                 feature.id[:8],
-                feature.name,
+                _log_safe(feature.name),
             )
             confidence = db.assess_feature_confidence(feature.id)
             db.update_feature(feature.id, **confidence)
@@ -2915,7 +2934,7 @@ class OrchestrationLoop:
                 logger.info(
                     "Assessing confidence for feature %s (%s)",
                     feature.id[:8],
-                    feature.name
+                    _log_safe(feature.name)
                 )
                 confidence = db.assess_feature_confidence(feature.id)
                 db.update_feature(feature.id, **confidence)

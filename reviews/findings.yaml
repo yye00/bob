@@ -1568,6 +1568,163 @@ findings:
     maximum length (... bytes)"} without invoking the backend. using-bob3-memory SKILL.md
     updated with the cap and a "write concise memories" anti-pattern. Regression tests in
     tests/test_f126_memory_mcp_validation.py (TestMemoryAddContentSizeCap).'
+- id: R6-005
+  title: bob3 show-reviews command missing from README Commands table
+  pattern: CLI grew a new command but the README reference table did not
+  files:
+  - README.md
+  severity: low
+  status: fixed
+  tags:
+  - doc-drift
+  fixed_in: pending-r6-doc-ux
+  fixed_at: '2026-04-24'
+  notes: 'show-reviews has been a registered Click command for a while, but README
+    Commands table never listed it, so users had no documented entry point to the
+    review-findings registry. Fixed by adding the row. Regression test in tests/test_r6_doc_ux_fixes.py
+    (TestReadmeShowReviewsCommand).'
+- id: R6-006
+  title: BOB3_SNAPSHOT_TIMEOUT undocumented; conftest snapshots dead env vars
+  pattern: env vars read by code not in README; env vars in conftest not read by code
+  files:
+  - README.md
+  - tests/conftest.py
+  severity: low
+  status: fixed
+  tags:
+  - doc-drift
+  - test-isolation
+  fixed_in: pending-r6-doc-ux
+  fixed_at: '2026-04-24'
+  notes: 'run_loop._snapshot_timeout_s reads BOB3_SNAPSHOT_TIMEOUT before falling
+    back to BOB3_TEST_RUN_TIMEOUT, but the README env-var table only listed the latter.
+    Separately, tests/conftest.py snapshotted BOB3_WORKSPACE / BOB3_LOG_DIR / BOB3_LOG_LEVEL
+    even though no production module reads them — pure dead state. Fix: document
+    BOB3_SNAPSHOT_TIMEOUT in README; replace the dead names in conftest with BOB3_SNAPSHOT_TIMEOUT
+    and BOB3_TEST_RUN_TIMEOUT (which ARE read by run_loop). Regression test in tests/test_r6_doc_ux_fixes.py
+    (TestEnvVarDocs, TestConftestEnvSnapshot).'
+- id: R6-007
+  title: Quickstart misleading — example specs require unavailable dependencies
+  pattern: tutorial points at specs that need FEniCSx/PyQt6; bootstrap spec hardcodes
+    author path
+  files:
+  - README.md
+  - examples/00_bootstrap_spec.yaml
+  - examples/03_simple_calculator_spec.yaml
+  severity: medium
+  status: fixed
+  tags:
+  - setup-friction
+  - doc-drift
+  fixed_in: pending-r6-doc-ux
+  fixed_at: '2026-04-24'
+  notes: 'README Quickstart told users to run examples/01_geomech_simulator_spec.yaml
+    (needs fenics-dolfinx, petsc4py, mpi4py — HPC-only) or examples/02_geotech_slope_stability_spec.yaml
+    (needs PyQt6 — fails on headless servers). examples/00_bootstrap_spec.yaml hardcoded
+    workspace: /home/captain/clawd/work/bob3 (the original author''s home). Fix:
+    add examples/03_simple_calculator_spec.yaml as a stdlib-only quickstart target;
+    rewrite the README Quickstart section around it; explicitly mark 01/02 as aspirational
+    examples; replace the bootstrap workspace with /tmp/bob3-self-build and a comment
+    telling users to override it. Regression test in tests/test_r6_doc_ux_fixes.py
+    (TestCalculatorExampleSpec, TestBootstrapSpecWorkspace, TestReadmeQuickstartUsesCalculatorSpec).'
+- id: R6-008
+  title: No Node.js / Claude Code CLI pre-flight check
+  pattern: deep SDK error instead of actionable message when external runtime missing
+  files:
+  - src/bob3/cli.py
+  severity: medium
+  status: fixed
+  tags:
+  - setup-friction
+  - error-message-quality
+  fixed_in: pending-r6-doc-ux
+  fixed_at: '2026-04-24'
+  notes: '''bob3 run'' / ''bob3 init'' both depend on the claude-code-sdk Python
+    package, which itself shells out to the ''claude'' CLI binary, which in turn
+    requires Node.js >= 18. When either was missing, the failure surfaced deep inside
+    an asyncio coroutine inside the SDK with an opaque message — by the time the
+    user saw it, MCP was already half-started. Fix: add _check_runtime_dependencies
+    to cli.py that uses shutil.which to verify both ''node'' and ''claude'' are on
+    PATH before MCP startup; print an actionable "install Node.js >= 18" / "npm
+    install -g @anthropic-ai/claude-code" message and exit 1 if either is missing.
+    Regression test in tests/test_r6_doc_ux_fixes.py (TestNodePreflightCheck).'
+- id: R6-009
+  title: Resume-after-interruption flow undocumented
+  pattern: implementation exists but README does not tell users how to use it
+  files:
+  - README.md
+  severity: low
+  status: fixed
+  tags:
+  - doc-drift
+  fixed_in: pending-r6-doc-ux
+  fixed_at: '2026-04-24'
+  notes: 'F116 / F117 implement checkpoint-on-interrupt and auto-resume on next ''bob3
+    run'', but the README never told users where checkpoints lived (resource_checkpoints
+    table), what was in them, that resume is the default ''bob3 run --all'' behaviour,
+    or how to retry a single failed feature with ''bob3 run --feature <id> --fresh''.
+    Fix: add a "Resuming after interruption" subsection to README covering checkpoint
+    location, contents, default-resume behaviour, single-feature retry, and DB-corruption
+    troubleshooting. Regression test in tests/test_r6_doc_ux_fixes.py (TestResumeFlowDocs).'
+- id: R6-010
+  title: using-bob3-memory SKILL.md missing memory_delete / demote / get_candidates
+  pattern: skill tools table out of sync with MCP surface
+  files:
+  - src/bob3/skills/using-bob3-memory/SKILL.md
+  severity: low
+  status: fixed
+  tags:
+  - doc-drift
+  fixed_in: pending-r6-doc-ux
+  fixed_at: '2026-04-24'
+  notes: 'The bob3-memory MCP server exposes memory_delete, memory_demote, and memory_get_candidates,
+    but the SKILL.md tools table only listed memory_search/add/get/archive/feedback/stats/list_pools.
+    Sub-agents reading the skill never learned the maintenance tools existed and
+    couldn''t triage stale memories. Fix: add the three tools to the table with
+    one-line descriptions noting when to prefer demote vs archive vs delete. Regression
+    test in tests/test_r6_doc_ux_fixes.py (TestUsingMemorySkillToolsTable).'
+- id: R6-011
+  title: no-stubs-no-mocks grep example uses GNU-only regex extensions
+  pattern: \s and \b in a documented grep command — silently broken on macOS BSD
+    grep
+  files:
+  - src/bob3/skills/no-stubs-no-mocks/SKILL.md
+  severity: low
+  status: fixed
+  tags:
+  - doc-drift
+  - portability
+  fixed_in: pending-r6-doc-ux
+  fixed_at: '2026-04-24'
+  notes: 'The "before committing, grep your own work" example used \s and \b, which
+    are GNU-only extensions that BSD grep on macOS treats as literal characters.
+    A macOS user copy-pasting the snippet would silently get zero matches and conclude
+    the check passed. Fix: simplify the grep example to plain alternation that works
+    on POSIX grep, and add a note clarifying that the AST-based stub detector is
+    what catches the function-body cases. Regression test in tests/test_r6_doc_ux_fixes.py
+    (TestNoStubsGrepPortability).'
+- id: R9-003
+  title: Log injection via feature.name CR/LF in run_loop.py
+  pattern: untrusted spec field formatted directly into log lines
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: medium
+  status: fixed
+  tags:
+  - security
+  - log-injection
+  - input-validation
+  fixed_in: pending-r6-doc-ux
+  fixed_at: '2026-04-24'
+  notes: 'feature.name comes from the spec YAML (or, recursively, from a sub-agent
+    decomposition result). A name containing newline / carriage-return characters
+    would be formatted directly into log records like "Executing feature %s: %s",
+    letting an attacker forge a synthetic "Feature completed" log line in stdout
+    or operator log files and obscure the real outcome. Fix: add _log_safe(s) helper
+    at run_loop.py module top that escapes \n and \r as their literal two-character
+    forms; route every logger.* call site that included feature.name through it
+    (Executing-feature, two Feature-done lines, two Assessing-confidence lines).
+    Regression test in tests/test_r6_doc_ux_fixes.py (TestLogSafeHelper, TestExecutingFeatureLogIsInjectionSafe).'
 recurring_patterns:
 - tag: refactor-debt
   occurrences:

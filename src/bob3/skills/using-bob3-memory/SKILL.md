@@ -18,6 +18,9 @@ All exposed via MCP under the `bob3-memory` server:
 | `memory_record_feedback(memory_id, success)` | Mark a retrieved memory as helpful/unhelpful |
 | `memory_get(memory_id)` | Fetch a specific memory |
 | `memory_archive(memory_id)` | Hide a memory from future searches |
+| `memory_delete(memory_id)` | Permanently remove a memory (irrecoverable; prefer `memory_archive` unless the memory is wrong/harmful) |
+| `memory_demote(memory_id)` | Lower a memory's visibility (precursor to archive) — useful when feedback says it's stale but you don't want to drop it yet |
+| `memory_get_candidates(min_times_applied, max_usefulness, limit)` | Find memories that have been retrieved enough times but performed poorly (low usefulness score). Use to triage what to demote / archive / delete. |
 | `memory_get_stats()` | Pool/status counts |
 | `memory_list_pools()` | Valid pool names |
 

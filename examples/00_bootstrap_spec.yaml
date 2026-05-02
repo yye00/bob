@@ -12,7 +12,9 @@ description: |
   - Sub-agent orientation protocol for context recovery
   - Research-enabled sub-agents for when implementation is stuck
 
-workspace: /home/captain/clawd/work/bob3
+# NOTE: the bootstrap spec does not assume a particular checkout location.
+# Override this to your local clone path before running ``bob3 plan``.
+workspace: /tmp/bob3-self-build
 
 # ============================================================
 # ⚠️  CRITICAL: CLAUDE CODE SDK ONLY - NO CLI ⚠️

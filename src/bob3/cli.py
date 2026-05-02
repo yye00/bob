@@ -9,6 +9,7 @@ import logging
 import os
 import pathlib
 import re
+import shutil
 import sqlite3
 import uuid
 
@@ -39,6 +40,40 @@ from bob3.pdf_utils import extract_pdf_text
 logger = logging.getLogger(__name__)
 
 
+def _check_runtime_dependencies() -> None:
+    """Pre-flight check for Node.js + Claude Code CLI before MCP startup.
+
+    Bob3 spawns sub-agents through the ``claude-code-sdk`` Python package,
+    which itself shells out to the ``claude`` CLI binary, which in turn
+    requires a Node.js >= 18 runtime. If either is missing, the failure
+    surfaces deep inside an asyncio coroutine inside the SDK with an
+    opaque message — by the time the user sees it, MCP is already half
+    started and the error doesn't tell them what to install. Surface a
+    clear, actionable message before any of that fires.
+
+    The check is intentionally cheap (``shutil.which``); it does NOT
+    invoke the binaries, so it is safe to call from every entry point
+    that will subsequently spawn a sub-agent.
+
+    Exits with code 1 (matching the rest of the CLI's pre-flight error
+    code) on missing dependency. Returns None on success.
+    """
+    if shutil.which("node") is None:
+        click.echo(
+            "ERROR: Node.js is required (install Node.js >= 18). "
+            "See README Requirements.",
+            err=True,
+        )
+        raise SystemExit(1)
+    if shutil.which("claude") is None:
+        click.echo(
+            "ERROR: Claude Code CLI is required. Install with: "
+            "npm install -g @anthropic-ai/claude-code",
+            err=True,
+        )
+        raise SystemExit(1)
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="bob3")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose (DEBUG) logging.")
@@ -64,6 +99,11 @@ def init(project_path, name):
     PROJECT_PATH is the path to the project workspace directory.
     """
     logger.info("Initializing project at %s", project_path)
+
+    # Pre-flight: confirm the Node.js / Claude Code CLI runtime is
+    # available before we try to talk to MCP, so users get an actionable
+    # message rather than a deep SDK error.
+    _check_runtime_dependencies()
 
     # Start bob3-memory MCP server (required for all operations)
     try:
@@ -406,6 +446,11 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
     """
     logger.info("Starting build run")
     console = Console()
+
+    # Pre-flight: confirm the Node.js / Claude Code CLI runtime is
+    # available before we try to talk to MCP, so users get an actionable
+    # message rather than a deep SDK error.
+    _check_runtime_dependencies()
 
     # Pre-flight: surface which auth path will be used so users get a clear
     # signal before MCP startup or sub-agent spawning. We do not fail here:
