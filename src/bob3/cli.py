@@ -220,14 +220,46 @@ def plan(spec_file, create):
     console.print(info_table)
 
     if features:
+        # Normalize features into an ordered list of (spec_id, name, description)
+        # tuples regardless of whether the YAML uses list-of-dicts or
+        # dict-of-dicts (the form shipped in examples/03_simple_calculator_spec.yaml).
+        # The previous implementation iterated a dict, which yielded the YAML
+        # keys ("F001", "F002") as the value of `feat` — so the rendered Name
+        # column was the spec ID and Description was always empty (R10-001).
+        feat_rows: list[tuple[str, str, str]] = []
+        if isinstance(features, dict):
+            for idx, (spec_key, feat) in enumerate(features.items(), 1):
+                if isinstance(feat, dict):
+                    name = (
+                        feat.get("title")
+                        or feat.get("name")
+                        or str(spec_key)
+                    )
+                    desc = feat.get("description", "") or ""
+                else:
+                    name = str(spec_key)
+                    desc = str(feat) if feat is not None else ""
+                feat_rows.append((str(spec_key), str(name), str(desc)))
+        elif isinstance(features, list):
+            for i, feat in enumerate(features, 1):
+                if isinstance(feat, dict):
+                    name = (
+                        feat.get("title")
+                        or feat.get("name")
+                        or f"Feature {i}"
+                    )
+                    desc = feat.get("description", "") or ""
+                else:
+                    name = str(feat) if feat is not None else f"Feature {i}"
+                    desc = ""
+                feat_rows.append((str(i), str(name), str(desc)))
+
         feat_table = Table(title="Features")
         feat_table.add_column("#", justify="right", style="dim")
         feat_table.add_column("Name")
         feat_table.add_column("Description", max_width=60)
-        for i, feat in enumerate(features, 1):
-            name = feat.get("name", f"Feature {i}") if isinstance(feat, dict) else str(feat)
-            desc = feat.get("description", "") if isinstance(feat, dict) else ""
-            feat_table.add_row(str(i), name, desc)
+        for row_id, row_name, row_desc in feat_rows:
+            feat_table.add_row(row_id, row_name, row_desc)
         console.print(feat_table)
 
     # Store spec hash for change detection (F115)
@@ -627,14 +659,49 @@ def status(feature, verbose):
     logger.info("Checking project status")
     console = Console()
     db_path = get_database_path()
-    conn = get_connection(db_path=db_path)
-    conn.row_factory = __import__("sqlite3").Row
+
+    # R10-004: Print a friendly hint if the DB file is missing or
+    # corrupt, instead of letting a raw sqlite3 traceback bubble up.
+    # ``bob3 status`` is the first command an operator will run after a
+    # crash / cleanup script blew the DB away, and a stack trace there
+    # is actively confusing — it suggests the CLI itself is broken.
+    if not db_path.exists():
+        console.print(
+            f"[yellow]No bob3 database found at {db_path}.[/yellow]\n"
+            f"[dim]Run [bold]bob3 init <path>[/bold] to create one, "
+            f"or set BOB3_DATABASE_PATH to point at an existing project.[/dim]"
+        )
+        raise SystemExit(1)
+
+    try:
+        conn = get_connection(db_path=db_path)
+    except sqlite3.DatabaseError as exc:
+        console.print(
+            f"[red]Failed to open bob3 database at {db_path}: {exc}.[/red]\n"
+            f"[dim]The file exists but is not a valid SQLite database. "
+            f"Restore from backup, or delete it and re-run "
+            f"[bold]bob3 init[/bold] to start fresh.[/dim]"
+        )
+        raise SystemExit(1) from exc
+
+    conn.row_factory = sqlite3.Row
 
     try:
         if feature:
             _show_feature_status(console, conn, feature)
         else:
-            _show_project_status(console, conn, verbose)
+            try:
+                _show_project_status(console, conn, verbose)
+            except sqlite3.OperationalError as exc:
+                # The file is a real SQLite DB but the schema is missing
+                # / partial (e.g. someone created a 0-byte file by hand).
+                console.print(
+                    f"[red]bob3 database at {db_path} is missing expected "
+                    f"tables ({exc}).[/red]\n"
+                    f"[dim]Re-run [bold]bob3 init[/bold] to recreate the "
+                    f"schema, or restore from backup.[/dim]"
+                )
+                raise SystemExit(1) from exc
     finally:
         conn.close()
 

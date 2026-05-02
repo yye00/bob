@@ -899,6 +899,45 @@ def find_orphaned_pending_features(project_id: str) -> list[str]:
     return [row[0] for row in rows]
 
 
+def find_pending_features_without_deps(project_id: str) -> list[str]:
+    """Return IDs of pending features that have no declared dependencies.
+
+    These are root features (e.g. the ``F001`` of a freshly-planned spec)
+    whose ``feature_dependencies`` table has no rows. The orchestrator's
+    main-loop ``find_next_ready_feature`` queries the ``features_ready``
+    view, which requires ``status='ready'`` — so a brand-new project
+    where every feature was just created in ``status='pending'`` exits
+    ``ALL_BLOCKED`` immediately because nothing is ever promoted.
+
+    The companion to ``find_orphaned_pending_features`` (which only
+    targets pending features with declared deps that all completed):
+    together they cover every case where a feature is "ready to run"
+    but lives in the wrong status column. Kept as a separate function
+    so the original orphan semantic — "stuck because of a missed
+    cascade" — stays unchanged and the existing F116 regression tests
+    remain meaningful.
+
+    Args:
+        project_id: The project to scan.
+
+    Returns:
+        List of feature IDs (strings) that have no declared dependencies
+        and are still ``status='pending'``. Empty list if none.
+    """
+    sql = """
+        SELECT f.id FROM features f
+        WHERE f.project_id = ?
+          AND f.status = 'pending'
+          AND NOT EXISTS (
+              SELECT 1 FROM feature_dependencies fd
+              WHERE fd.feature_id = f.id
+          )
+    """
+    with connect() as conn:
+        rows = conn.execute(sql, (project_id,)).fetchall()
+    return [row[0] for row in rows]
+
+
 def bulk_promote_features_to_ready(feature_ids: list[str]) -> int:
     """Promote a batch of pending features to 'ready' in a single transaction.
 

@@ -2689,33 +2689,71 @@ class OrchestrationLoop:
     def _recover_orphaned_pending_features(self) -> None:
         """Promote pending features whose deps are all completed to 'ready'.
 
-        A crash between the feature status update and the dependent cascade
-        in ``db.complete_feature_and_cascade`` would leave dependents in
-        'pending' with all dependencies satisfied — a state the loop would
-        otherwise never escape. We scan for that case on every startup and
-        repair it.
+        Two cases are handled here, both with the same fix (bulk promote
+        ``pending`` → ``ready``):
 
-        Implementation note: orphan detection is a single indexed SQL query
-        in ``db.find_orphaned_pending_features``, and the promotion itself
-        is a single bulk ``UPDATE ... WHERE id IN (...) AND status='pending'``
-        in ``db.bulk_promote_features_to_ready``. The previous implementation
-        called ``update_feature`` once per orphan, opening N transactions and
-        serializing on the WAL writer — fine for a handful of orphans, but
-        visibly slow when a project comes back with hundreds of stale
-        'pending' rows after a crash.
+        1. **Mid-cascade crash recovery.** A crash between the feature
+           status update and the dependent cascade in
+           ``db.complete_feature_and_cascade`` would leave dependents in
+           'pending' with all dependencies satisfied — a state the loop
+           would otherwise never escape.
+        2. **Fresh-spec root features (R10-003).** Features with no
+           declared dependencies are created by ``bob3 plan --create``
+           in ``status='pending'`` and were never promoted to ``ready``
+           on first run, so a brand-new project would exit
+           ``ALL_BLOCKED`` immediately. This is the most visible
+           Quickstart regression: the literal README sequence ``init`` →
+           ``plan --create`` → ``run --all`` did nothing useful.
+
+        Implementation note: detection is two cheap indexed SQL queries
+        (``db.find_orphaned_pending_features`` and
+        ``db.find_pending_features_without_deps``), and the promotion is
+        one bulk ``UPDATE ... WHERE id IN (...) AND status='pending'`` in
+        ``db.bulk_promote_features_to_ready``. We dedupe before the
+        promote so the log message reflects the actual unique work.
         """
         orphaned_ids = db.find_orphaned_pending_features(self.project_id)
-        if not orphaned_ids:
+        no_dep_ids = db.find_pending_features_without_deps(self.project_id)
+
+        # Dedupe (the two queries are disjoint by construction — one
+        # requires EXISTS deps, the other requires NOT EXISTS deps — but
+        # be defensive in case a future schema change blurs the line).
+        all_ids: list[str] = []
+        seen: set[str] = set()
+        for fid in (*orphaned_ids, *no_dep_ids):
+            if fid not in seen:
+                seen.add(fid)
+                all_ids.append(fid)
+
+        if not all_ids:
             return
 
-        promoted = db.bulk_promote_features_to_ready(orphaned_ids)
+        promoted = db.bulk_promote_features_to_ready(all_ids)
 
-        logger.info(
-            "Mid-cascade crash recovery: promoted %d orphaned pending "
-            "feature(s) to 'ready': %s",
-            promoted,
-            ", ".join(p[:8] for p in orphaned_ids),
-        )
+        if orphaned_ids:
+            logger.info(
+                "Mid-cascade crash recovery: promoted %d orphaned pending "
+                "feature(s) to 'ready': %s",
+                len(orphaned_ids),
+                ", ".join(p[:8] for p in orphaned_ids),
+            )
+        if no_dep_ids:
+            logger.info(
+                "Promoted %d pending root feature(s) (no declared deps) "
+                "to 'ready': %s",
+                len(no_dep_ids),
+                ", ".join(p[:8] for p in no_dep_ids),
+            )
+        # Sanity check: the bulk promote is idempotent and may report a
+        # smaller count than ``len(all_ids)`` if a feature moved status
+        # between the SELECT and the UPDATE. Log if so — it usually means
+        # a concurrent path is also touching status.
+        if promoted < len(all_ids):
+            logger.debug(
+                "Bulk promote raced: requested %d, applied %d",
+                len(all_ids),
+                promoted,
+            )
 
     async def _run_single_feature(self) -> LoopTermination:
         """Run only the target feature (one iteration) then exit.
@@ -2820,6 +2858,16 @@ class OrchestrationLoop:
         # Execute exactly one feature, then exit regardless of outcome.
         await self.execute_feature(feature)
         self._maybe_warn_cost_proxy_active()
+        # R10-002: If the operator hit Ctrl-C / SIGTERM during the run, the
+        # outer CLI used to print "Feature completed!" and exit 0 because the
+        # single-feature path returned ALL_COMPLETED unconditionally. That
+        # masked an interrupted run as success — concretely, this is exactly
+        # how a CI pipeline that does `bob3 run --feature X && deploy.sh`
+        # would push a half-built tree to production. Mirror the main loop:
+        # if shutdown was requested, surface SHUTDOWN_REQUESTED so the CLI
+        # prints "Shutdown requested." and exits 130.
+        if self.shutdown_requested:
+            return LoopTermination.SHUTDOWN_REQUESTED
         return LoopTermination.ALL_COMPLETED
 
     async def run(self) -> LoopTermination:
