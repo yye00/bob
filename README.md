@@ -52,6 +52,7 @@ bob3 --help
 | `BOB3_COST_PER_TURN_PROXY` | No | Per-turn cost proxy in USD used when the Claude Code SDK returns `total_cost_usd=None` (typical for Max Pro / OAuth subscriptions). Default: `0.05`. |
 | `BOB3_CRITERION_EXEC_TIMEOUT` | No | Timeout in seconds for executable acceptance criteria (`pytest:` and `python:` prefixed criteria) evaluated by the enhanced verification layer. Default: `60`. |
 | `BOB3_TEST_RUN_TIMEOUT` | No | Timeout in seconds for the auto-pytest run executed during the verification superpowers checklist. Default: `300`. |
+| `BOB3_SNAPSHOT_TIMEOUT` | No | Per-snapshot pytest timeout in seconds used by the F051 regression detection capture. Falls back to `BOB3_TEST_RUN_TIMEOUT` when unset, then to `300`. |
 | `BOB3_FEATURE_TIMEOUT_SECONDS` | No | Wall-clock timeout in seconds for a single feature's sub-agent execution. If exceeded the feature is marked `interrupted` (no cascade), and the next `bob3 run` resumes it via the F116 auto-resume path. Use to bound runaway tool calls (e.g. a hung Puppeteer / browser MCP). Default: `3600` (1 hour). |
 | `BOB3_REGRESSION_DETECTION_ENABLED` | No | Toggle the per-feature pytest snapshot pair used by F051 regression detection. When set to a falsy value (`0`, `false`, `no`, `off`), both the pre- and post-execution `capture_pytest_snapshot` calls are skipped, disabling regression detection entirely. Useful when the workspace test suite is large/slow or when regression tracking is unwanted (e.g. CI bring-up). Default: enabled. |
 | `BOB3_MAX_MEMORY_CONTENT_BYTES` | No | Maximum size in UTF-8 bytes accepted by the `memory_add` MCP tool. Memories above this are refused with a structured error. Default: `8000`. Tighter caps reduce the risk of a sub-agent flooding the embedder / Qdrant index, at the cost of less verbose memory entries. |
@@ -97,27 +98,35 @@ hardened deployments:
 
 ## Quickstart
 
-The repo ships with three example specs in `examples/`. Let's walk through running one.
+The repo ships with example specs in `examples/`. The recommended starting point is `03_simple_calculator_spec.yaml` — it has stdlib-only dependencies and runs end-to-end on any machine.
 
 ### 1. Pick a spec
 
 ```
 examples/
-├── 00_bootstrap_spec.yaml              # Bob3 itself (the harness rebuilds itself)
-├── 01_geomech_simulator_spec.yaml      # FEniCSx poromechanics simulator (28 features)
-└── 02_geotech_slope_stability_spec.yaml # 2D slope stability GUI app (30 features)
+├── 00_bootstrap_spec.yaml              # Bob3 itself (the harness rebuilds itself).
+│                                       # NOTE: edit `workspace:` to a path on your machine before running.
+├── 01_geomech_simulator_spec.yaml      # FEniCSx poromechanics simulator (28 features).
+│                                       # ASPIRATIONAL: needs fenics-dolfinx, petsc4py, mpi4py
+│                                       # — HPC stack, not pip-installable on most machines.
+├── 02_geotech_slope_stability_spec.yaml # 2D slope stability GUI app (30 features).
+│                                       # ASPIRATIONAL: needs PyQt6 — fails on headless servers.
+└── 03_simple_calculator_spec.yaml      # Simple calculator library — stdlib-only, runs anywhere.
+                                        # RECOMMENDED FIRST RUN.
 ```
+
+The 01 / 02 specs are kept as illustrative examples of "what a real project spec looks like"; treat them as references rather than out-of-the-box quickstart targets unless you already have the specialized dependencies on your machine.
 
 Each spec is a complete project description with features, acceptance criteria, and V&V requirements. Pick one and read through it to understand the target.
 
 ### 2. Initialize a new project
 
 The project name must match the `name:` field in the spec you intend to load.
-For `01_geomech_simulator_spec.yaml` (name: `geomech-sim`):
+For `03_simple_calculator_spec.yaml` (name: `calculator`):
 
 ```bash
-bob3 init ./geomech-sim --name geomech-sim
-cd ./geomech-sim
+bob3 init ./calculator --name calculator
+cd ./calculator
 ```
 
 This creates a workspace directory and a SQLite database (`bob3.db`) for tracking state.
@@ -125,7 +134,7 @@ This creates a workspace directory and a SQLite database (`bob3.db`) for trackin
 ### 3. Load the spec
 
 ```bash
-bob3 plan /path/to/bob3/examples/01_geomech_simulator_spec.yaml --create
+bob3 plan /path/to/bob3/examples/03_simple_calculator_spec.yaml --create
 ```
 
 This parses the spec and persists its features to the database. Drop `--create` to just preview.
@@ -188,6 +197,7 @@ See the Quickstart above for a full walkthrough and the Commands section below f
 | `bob3 show-lessons` | Lessons stored in Bob3 Memory |
 | `bob3 show-calibration` | Confidence calibration drift |
 | `bob3 show-regressions` | Active regression events |
+| `bob3 show-reviews` | Search the adversarial-review findings registry |
 
 Global options: `--version`, `-v/--verbose` (DEBUG logging), `--help`.
 
@@ -212,6 +222,52 @@ A common gotcha this avoids:
 # Now: non-zero exit on BUDGET_EXCEEDED / ALL_BLOCKED stops the chain.
 bob3 run --all && deploy.sh
 ```
+
+### Resuming after interruption
+
+Bob3 is designed so that interruptions (Ctrl-C, SIGTERM, machine reboot,
+hung sub-agent) never lose work-in-flight irrecoverably. The recovery
+pieces are:
+
+- **Where checkpoints live.** Checkpoint state is persisted to the
+  ``resource_checkpoints`` table inside ``bob3.db`` (the SQLite database
+  that ``bob3 init`` creates next to your workspace, or wherever
+  ``BOB3_DATABASE_PATH`` points). The signal handler writes a checkpoint
+  row when a graceful shutdown is requested mid-feature.
+- **What's in a checkpoint.** A JSON state snapshot with the
+  ``feature_id`` that was executing, the project's
+  ``total_cost_at_interrupt``, the running totals
+  (``features_completed`` / ``features_failed``), and the reason
+  (``graceful_shutdown``). Features that were ``executing`` at the time
+  are flipped to ``interrupted`` so they're picked up on resume.
+- **How to resume.** Just re-run ``bob3 run --all``. The orchestrator
+  auto-detects the latest checkpoint for the project, replays the
+  totals into its in-memory state, and dispatches ``interrupted``
+  features back through the loop. No special flag is needed; resume
+  is the default.
+- **How to retry a single failed feature.** Use
+  ``bob3 run --feature <id> --fresh``. ``--feature`` scopes the loop to
+  exactly one feature and exits after that one iteration; ``--fresh``
+  bypasses the resume path so the feature is run from scratch (existing
+  evidence and prior partial commits remain in the DB / git history,
+  but the in-memory loop state is not preloaded from a checkpoint).
+- **Force a clean restart.** ``bob3 run --all --fresh`` skips the
+  resume path entirely and resets ``interrupted`` features to
+  ``ready``. Use this if you suspect the in-flight state for a feature
+  was bogus (e.g. it was hung on a tool call that no longer makes
+  sense) and want to start it over rather than resume mid-run.
+
+**Troubleshooting checkpoint / DB issues.** Bob3 protects ``bob3.db``
+with two layers — a per-project advisory file lock
+(``<workspace>/.bob3.lock``, used by ``bob3 run`` to refuse concurrent
+invocations on the same project) and SQLite's WAL journal mode (so a
+crash during a write leaves the DB consistent and the WAL replays on
+the next open). If the DB file alone is recovered (e.g. the WAL was
+truncated by an aggressive cleanup script) it is still openable, you
+just lose the most recent uncommitted transactions. To recover from a
+truly corrupted DB, restore ``bob3.db`` (and the matching ``.bob3.lock``,
+if you keep one) from your backup; do **not** delete the lock file by
+hand while a run is in flight.
 
 ## Writing your own spec
 

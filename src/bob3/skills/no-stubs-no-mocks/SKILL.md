@@ -49,9 +49,17 @@ You are building real software. Bob3 runs an AST-based stub detector on your sou
 
 4. **Before committing, grep your own work**:
    ```bash
-   grep -rn "NotImplementedError\|TODO\|FIXME\|XXX\|def [a-z_]*():\s*pass\b" src/
+   grep -rn "NotImplementedError\|TODO\|FIXME\|XXX" src/
    ```
    If this returns hits in your new code, fix them before declaring done.
+
+   This grep is intentionally simple and POSIX-portable — it does NOT
+   rely on the GNU-only `\s` / `\b` regex extensions, so it works
+   identically on macOS BSD `grep`, busybox, and GNU `grep`. The
+   AST-based stub detector (not grep) is what catches the harder cases
+   like `def foo(): pass` / `def foo(): ...` inside function bodies;
+   relying on grep alone for those is unreliable across `grep`
+   implementations.
 
 ## Why this matters
 
