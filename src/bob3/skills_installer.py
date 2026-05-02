@@ -248,6 +248,124 @@ def install_skills_to_workspace(
     return installed
 
 
+def verify_skills_integrity(workspace: str | Path) -> list[str]:
+    """Audit ``<workspace>/.claude/skills/`` for tampering and reinstall.
+
+    Sub-agents run in the workspace with ``permission_mode='bypassPermissions'``
+    and ``cwd=<workspace>``. That means a sub-agent can write into
+    ``.claude/skills/`` — including replacing one of bob3's symlinks with a
+    real directory containing a malicious ``SKILL.md``. A future sub-agent
+    spawned in the same workspace would then load the attacker's SKILL.md
+    instead of bob3's.
+
+    This function is the defense-in-depth audit step. For every bundled
+    bob3 skill it checks:
+
+    1. The destination at ``<workspace>/.claude/skills/<name>`` exists and
+       is a symlink.
+    2. The symlink resolves into the *current* bob3 bundled skills
+       directory (the one returned by :func:`get_bundled_skills_dir`).
+
+    Anything that fails either check is treated as tampering: a security
+    warning is logged identifying the skill and the actual on-disk state,
+    and the entry is force-replaced with a fresh symlink to the canonical
+    bundled skill (delegating to :func:`install_skills_to_workspace` after
+    removing the offending entry).
+
+    Returns the list of skill names that were force-replaced. An empty
+    list means everything looked clean.
+
+    This is intended to be called from the sub-agent spawn path
+    (``build_sub_agent_options``) immediately before each ``query()`` call
+    so a poisoned skill cannot persist across sub-agents.
+    """
+    workspace_path = Path(workspace).resolve()
+    target_dir = workspace_path / ".claude" / "skills"
+    source_dir = get_bundled_skills_dir()
+
+    if not source_dir.is_dir():
+        # Nothing to audit against.
+        return []
+
+    if not target_dir.is_dir():
+        # No skills installed yet; integrity check is a no-op. The caller
+        # (build_sub_agent_options) will call install_skills_to_workspace
+        # separately; this function only detects *tampering*.
+        return []
+
+    tampered: list[str] = []
+    for skill_src in sorted(source_dir.iterdir()):
+        if not skill_src.is_dir():
+            continue
+        if not (skill_src / "SKILL.md").is_file():
+            continue
+
+        name = skill_src.name
+        dest = target_dir / name
+
+        if not dest.exists() and not dest.is_symlink():
+            # Skill was removed entirely from the workspace. Not strictly
+            # tampering, but reinstall to restore expected behavior.
+            logger.warning(
+                "SECURITY: bob3 skill %r missing from %s; reinstalling",
+                name,
+                target_dir,
+            )
+            tampered.append(name)
+            continue
+
+        if not dest.is_symlink():
+            # A real directory (or file) is sitting where bob3's symlink
+            # should be. This is the canonical poisoning shape: a
+            # sub-agent wrote SKILL.md inside a directory it created at
+            # the bob3 skill name. Refuse to trust it and force-replace.
+            kind = "directory" if dest.is_dir() else "file"
+            logger.warning(
+                "SECURITY: bob3 skill %r at %s is a %s, not a symlink — "
+                "possible skill poisoning. Force-replacing with the "
+                "canonical bob3 skill.",
+                name,
+                dest,
+                kind,
+            )
+            _remove_dest(dest)
+            tampered.append(name)
+            continue
+
+        # It's a symlink — but does it resolve into THIS bob3 install?
+        if not _symlink_resolves_into(dest, source_dir):
+            try:
+                actual = str(dest.resolve(strict=False))
+            except (OSError, RuntimeError):
+                actual = "<unresolvable>"
+            logger.warning(
+                "SECURITY: bob3 skill %r at %s resolves to %s, which is "
+                "outside the current bob3 bundled skills dir %s — "
+                "possible skill poisoning. Force-replacing.",
+                name,
+                dest,
+                actual,
+                source_dir,
+            )
+            _remove_dest(dest)
+            tampered.append(name)
+            continue
+
+    if tampered:
+        # Force a reinstall pass so the replaced skills are restored.
+        # ``install_skills_to_workspace`` is idempotent, so untampered
+        # skills are unaffected.
+        install_skills_to_workspace(workspace_path)
+        logger.warning(
+            "SECURITY: force-replaced %d bob3 skill(s) after integrity "
+            "check: %s",
+            len(tampered),
+            tampered,
+        )
+
+    return tampered
+
+
 def clean_workspace_skills(workspace: str | Path) -> list[str]:
     """Remove only bob3-installed skills from a workspace.
 

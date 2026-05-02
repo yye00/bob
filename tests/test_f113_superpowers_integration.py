@@ -660,10 +660,33 @@ class TestVerificationOnCompletion:
     """Step 6: Complete feature, verify verification checklist runs."""
 
     @pytest.mark.asyncio
-    async def test_verification_evidence_created_on_success(self, project, feature_with_criteria):
-        """Successful execution creates verification checklist evidence."""
+    async def test_verification_evidence_created_on_success(self, project):
+        """Successful execution creates verification checklist evidence.
+
+        Uses a freshly-created feature WITHOUT acceptance criteria so
+        the verifier's ``acceptance_criteria_met`` check is skipped (it
+        only runs when ``acceptance_criteria`` is provided). The
+        previous version of this test used ``feature_with_criteria``,
+        whose criteria ("Step 1: Create validation module", ...) are
+        not satisfiable by the synthetic workspace below — so
+        verification reported ``passed=False`` and the test only
+        green-passed because it didn't ASSERT ``passed`` was True.
+
+        This rewrite tests the actual contract: on a clean workspace
+        with real source + real tests and no extraneous criteria,
+        verification MUST report ``passed=True`` with a non-empty
+        summary.
+        """
         from bob3.orchestrator.run_loop import OrchestrationLoop
         from claude_code_sdk import ResultMessage
+
+        # Create a feature WITHOUT acceptance_criteria to keep the
+        # acceptance_criteria_met verifier path out of the picture.
+        feature = db.create_feature(
+            project_id=project.id,
+            name="Verification-success feature",
+            description="Implement a small utility",
+        )
 
         async def mock_query(*, prompt, options=None, transport=None):
             yield ResultMessage(
@@ -679,7 +702,7 @@ class TestVerificationOnCompletion:
             )
 
         db.update_feature(
-            feature_with_criteria.id,
+            feature.id,
             status="ready",
             readiness_score=0.85,
             conf_spec_understanding=0.85,
@@ -696,7 +719,18 @@ class TestVerificationOnCompletion:
             tests_dir.mkdir(parents=True)
 
             (src_dir / "__init__.py").write_text("")
-            (src_dir / "module.py").write_text("def func():\n    return 42\n")
+            # Use a function with a non-trivial body so the AST
+            # stub-detector does not flag it as a heuristic stub
+            # (single ``return <literal>`` triggers a warning even
+            # though warnings don't fail ``passed``; using a real
+            # body is the safer assertion).
+            (src_dir / "module.py").write_text(
+                "def add(a, b):\n"
+                "    total = a + b\n"
+                "    if total < 0:\n"
+                "        return 0\n"
+                "    return total\n"
+            )
             (tests_dir / "__init__.py").write_text("")
             (tests_dir / "test_module.py").write_text(
                 "def test_func():\n    assert True\n"
@@ -708,8 +742,8 @@ class TestVerificationOnCompletion:
             )
 
             with patch("bob3.orchestrator.claude_executor.query", mock_query):
-                feature = db.get_feature(feature_with_criteria.id)
-                await loop.execute_feature(feature)
+                feat_db = db.get_feature(feature.id)
+                await loop.execute_feature(feat_db)
 
         # Check that verification evidence was created
         evidence_list = db.query_evidence(project_id=project.id)
@@ -723,6 +757,20 @@ class TestVerificationOnCompletion:
         assert "passed" in content
         assert "checks" in content
         assert "summary" in content
+        # Successful execution against a workspace with real source +
+        # real test files MUST result in ``passed=True`` and a
+        # non-empty human-readable summary. Without these assertions
+        # the test green-passes even when verification silently
+        # reports ``passed=False`` — the exact false-confidence the
+        # adversarial-review-cycle test-fidelity finding called out.
+        assert content["passed"] is True, (
+            f"Verification should pass on a clean workspace; "
+            f"summary was: {content.get('summary')!r}"
+        )
+        assert content["summary"], (
+            "Verification summary must be non-empty for downstream "
+            "rendering / human review"
+        )
 
     @pytest.mark.asyncio
     async def test_verification_not_run_on_failure(self, project, feature_with_criteria):

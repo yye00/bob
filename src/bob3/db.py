@@ -26,25 +26,42 @@ logger = logging.getLogger(__name__)
 def get_database_path() -> pathlib.Path:
     """Return the database file path.
 
-    Uses BOB3_DATABASE_PATH env var if set, otherwise defaults to
-    {workspace}/bob3.db where workspace is the project root.
+    Uses ``BOB3_DATABASE_PATH`` env var if set, otherwise defaults to
+    ``Path.cwd() / "bob3.db"`` so that ``bob3 init ./my-project`` followed
+    by ``cd ./my-project`` resolves to the database created inside that
+    workspace. The previous default (the package install location) was
+    incorrect for any user-facing flow because pip installs land outside
+    the user's project directory.
     """
     env_path = os.environ.get("BOB3_DATABASE_PATH")
     if env_path:
         return pathlib.Path(env_path)
-    workspace = get_package_dir().parent.parent
-    return workspace / "bob3.db"
+    return pathlib.Path.cwd() / "bob3.db"
 
 
 def get_connection(*, db_path: pathlib.Path | None = None) -> sqlite3.Connection:
     """Open and return a configured SQLite connection.
 
-    Enables WAL journal mode and foreign key enforcement.
+    Enables WAL journal mode and foreign key enforcement. Also sets a
+    generous ``busy_timeout`` (and matching Python-level ``timeout``) so
+    that concurrent ``bob3 run`` invocations and overlapping ``bob3 status``
+    queries during a long ``bob3 run`` do not crash with
+    ``OperationalError: database is locked``. With WAL the writer/reader
+    contention window is small, but bursty workloads on slow disks can
+    still hit it; 30s is a comfortable upper bound that keeps the loop
+    correct without hanging the CLI for long if something is genuinely
+    deadlocked at the OS level.
     """
     if db_path is None:
         db_path = get_database_path()
-    conn = sqlite3.connect(str(db_path))
+    # ``timeout`` here controls how long sqlite3 will wait when the file
+    # itself is locked at connect time / for the implicit BEGIN. It is
+    # complementary to PRAGMA busy_timeout (which the driver also honours
+    # for subsequent statements). We set both for belt-and-suspenders
+    # behaviour against concurrent bob3 invocations.
+    conn = sqlite3.connect(str(db_path), timeout=30)
     conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -740,6 +757,84 @@ def complete_feature_and_cascade(feature_id: str) -> list[str]:
     return updated_features
 
 
+def rollback_feature_cascade(
+    feature_id: str,
+    *,
+    target_status: str = "needs_human",
+) -> list[str]:
+    """Atomically roll back a previously cascaded feature completion.
+
+    Companion to :func:`complete_feature_and_cascade`. When a feature has been
+    marked completed and its dependents promoted to ``ready`` (e.g. via the
+    F123 cascade in ``handle_execution_result``) but a *later* step decides
+    the feature isn't actually done after all — the canonical example being a
+    pre-commit hook rejecting the commit — we need to undo BOTH writes
+    together. Doing them as separate transactions (``update_feature`` + a
+    Python loop calling ``update_feature`` per dependent) leaves a
+    partial-state window: a crash mid-loop leaves some dependents flipped
+    back to ``pending`` while others remain ``ready``.
+
+    This function performs the entire rollback inside a single
+    ``connect()`` block so a process crash anywhere during the rollback
+    leaves the database exactly as it was *before* the call.
+
+    Specifically, in one transaction:
+      1. The feature itself is set to ``target_status``.
+      2. Every dependent that is currently in ``ready`` status because of
+         the (now-being-undone) cascade is reverted to ``pending``.
+
+    Note: only dependents in ``ready`` status are touched. Dependents that
+    have already moved past ``ready`` (e.g. ``in_progress``, ``completed``)
+    are intentionally left alone — flipping a running or finished feature
+    back to ``pending`` would itself corrupt state.
+
+    Args:
+        feature_id: The ID of the feature whose completion is being undone.
+        target_status: The status to assign to the feature itself. Defaults
+            to ``"needs_human"`` since the typical caller is a hook-failure
+            path where the implementation looks valid but couldn't be
+            committed.
+
+    Returns:
+        List of dependent feature IDs that were reverted from ``ready`` to
+        ``pending``. Empty list if the feature didn't exist or had no
+        ready-state dependents.
+    """
+    reverted: list[str] = []
+    now_iso = datetime.now().isoformat()
+
+    with connect() as conn:
+        # 1. Update the feature itself.
+        cursor = conn.execute(
+            "UPDATE features SET status = ?, updated_at = ? WHERE id = ?",
+            (target_status, now_iso, feature_id),
+        )
+        if cursor.rowcount == 0:
+            # No such feature — nothing to roll back. Still return cleanly
+            # rather than raise; the caller is already in an error path.
+            return reverted
+
+        # 2. Find every dependent currently in 'ready' and flip it back to
+        # 'pending'. The WHERE-status guard makes this idempotent and safe
+        # against dependents that have already advanced past 'ready'.
+        cursor = conn.execute(
+            """
+            UPDATE features
+            SET status = 'pending', updated_at = ?
+            WHERE status = 'ready'
+              AND id IN (
+                  SELECT feature_id FROM feature_dependencies
+                  WHERE depends_on_feature_id = ?
+              )
+            RETURNING id
+            """,
+            (now_iso, feature_id),
+        )
+        reverted = [row[0] for row in cursor.fetchall()]
+
+    return reverted
+
+
 def find_orphaned_pending_features(project_id: str) -> list[str]:
     """Return IDs of pending features whose all dependencies are completed.
 
@@ -786,6 +881,38 @@ def find_orphaned_pending_features(project_id: str) -> list[str]:
     with connect() as conn:
         rows = conn.execute(sql, (project_id,)).fetchall()
     return [row[0] for row in rows]
+
+
+def bulk_promote_features_to_ready(feature_ids: list[str]) -> int:
+    """Promote a batch of pending features to 'ready' in a single transaction.
+
+    Replaces the previous N-transaction loop in
+    ``OrchestrationLoop._recover_orphaned_pending_features``. With one UPDATE
+    statement guarded by ``status='pending'`` we get atomicity (all-or-nothing
+    if anything goes wrong) and a single round-trip regardless of batch size.
+
+    Only rows currently in ``status='pending'`` are touched, so the call is
+    safe to retry — and so a feature that has already moved on (e.g. someone
+    flipped it manually between the orphan scan and this promotion) is left
+    alone rather than being yanked back to ``ready``.
+
+    Args:
+        feature_ids: IDs of features to promote. Empty list is a no-op.
+
+    Returns:
+        The number of rows actually updated (i.e. were 'pending' and matched).
+    """
+    if not feature_ids:
+        return 0
+    placeholders = ",".join("?" * len(feature_ids))
+    now = datetime.now().isoformat()
+    with connect() as conn:
+        cur = conn.execute(
+            f"UPDATE features SET status='ready', updated_at=? "
+            f"WHERE id IN ({placeholders}) AND status='pending'",
+            [now, *feature_ids],
+        )
+        return cur.rowcount
 
 
 def assess_feature_confidence(feature_id: str) -> dict[str, float]:

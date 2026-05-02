@@ -92,10 +92,10 @@ class TestInstallationInstructions:
         )
 
     def test_mentions_environment_variables(self, readme_text):
-        """README must mention Ollama configuration (no API keys required)."""
+        """README must mention the local embedding backend (FastEmbed)."""
         lower = readme_text.lower()
-        assert "ollama" in lower, (
-            "README must mention Ollama for Bob3 Memory embeddings"
+        assert "fastembed" in lower, (
+            "README must mention FastEmbed for Bob3 Memory embeddings"
         )
 
 

@@ -840,3 +840,359 @@ class TestDriftCalculations:
         assert result is not None
         assert result["drift"] == pytest.approx(0.15)
         assert result["sample_size"] == 1
+
+
+# ============================================================
+# R4-004: create_or_update_calibration must be CALLED from the
+# orchestrator after every feature execution.
+#
+# Before this fix the calibration_data table was empty in production
+# because nothing in the orchestration loop wrote to it. Drift detection
+# (F050) had no inputs and ``show-calibration`` was vacuous.
+# ============================================================
+
+
+class TestCalibrationWiredIntoOrchestrator:
+    """R4-004: Orchestrator must call create_or_update_calibration."""
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_records_calibration_on_success(self, project):
+        """A feature that lands cleanly must produce a 'passed' calibration row."""
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import (
+            create_feature,
+            get_calibration,
+            get_feature,
+            update_feature,
+        )
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import (
+            OrchestrationLoop,
+            _DEFAULT_TASK_CLASS_FEATURE,
+        )
+
+        f = create_feature(
+            project_id=project.id,
+            name="Calibrated success",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            f.id,
+            conf_spec_understanding=0.85,
+            conf_impl_correctness=0.85,
+            conf_test_adequacy=0.85,
+            readiness_score=0.85,
+        )
+        feature = get_feature(f.id)
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        async def mock_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="done",
+                is_error=False,
+                duration_ms=100,
+                num_turns=1,
+                total_cost_usd=0.05,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        with patch(
+            "bob3.orchestrator.run_loop.spawn_sub_agent",
+            new_callable=AsyncMock,
+            side_effect=mock_spawn,
+        ), patch(
+            "bob3.orchestrator.run_loop.run_verification_checklist",
+            return_value={"passed": True, "summary": "ok", "checks": []},
+        ), patch(
+            "bob3.orchestrator.run_loop.git_commit_feature",
+            return_value="deadbeef",
+        ), patch(
+            "bob3.orchestrator.run_loop.git_get_status",
+            return_value={"sha": "abc123"},
+        ), patch(
+            "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+            return_value=None,  # skip regression detection
+        ):
+            await loop.execute_feature(feature)
+
+        # conf_impl_correctness=0.85 lands in the "0.8-0.9" bucket.
+        cal = get_calibration(
+            project_id=project.id,
+            task_class=_DEFAULT_TASK_CLASS_FEATURE,
+            confidence_bucket="0.8-0.9",
+        )
+        assert cal is not None, (
+            "execute_feature must call create_or_update_calibration on "
+            "every feature; calibration_data table is empty (R4-004 "
+            "wire-up missing)."
+        )
+        assert cal.total_attempts == 1
+        assert cal.total_passes == 1
+        assert cal.total_failures == 0
+        assert cal.empirical_pass_rate == pytest.approx(1.0)
+        assert cal.expected_pass_rate == pytest.approx(0.85)
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_records_calibration_on_verification_failure(
+        self, project
+    ):
+        """A feature whose verification fails must produce a 'failed' row."""
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import (
+            create_feature,
+            get_calibration,
+            get_feature,
+            update_feature,
+        )
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import (
+            OrchestrationLoop,
+            _DEFAULT_TASK_CLASS_FEATURE,
+        )
+
+        f = create_feature(
+            project_id=project.id,
+            name="Calibrated fail",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            f.id,
+            conf_spec_understanding=0.7,
+            conf_impl_correctness=0.7,
+            conf_test_adequacy=0.7,
+            readiness_score=0.85,
+        )
+        feature = get_feature(f.id)
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        async def mock_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="done",
+                is_error=False,
+                duration_ms=100,
+                num_turns=1,
+                total_cost_usd=0.05,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        with patch(
+            "bob3.orchestrator.run_loop.spawn_sub_agent",
+            new_callable=AsyncMock,
+            side_effect=mock_spawn,
+        ), patch(
+            "bob3.orchestrator.run_loop.run_verification_checklist",
+            return_value={
+                "passed": False,
+                "summary": "tests failed",
+                "checks": [],
+            },
+        ), patch(
+            "bob3.orchestrator.run_loop.git_commit_feature",
+            return_value="deadbeef",
+        ), patch(
+            "bob3.orchestrator.run_loop.git_get_status",
+            return_value={"sha": "abc123"},
+        ), patch(
+            "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+            return_value=None,
+        ):
+            await loop.execute_feature(feature)
+
+        # conf_impl_correctness=0.7 lands in the "0.7-0.8" bucket.
+        cal = get_calibration(
+            project_id=project.id,
+            task_class=_DEFAULT_TASK_CLASS_FEATURE,
+            confidence_bucket="0.7-0.8",
+        )
+        assert cal is not None
+        assert cal.total_attempts == 1
+        assert cal.total_passes == 0
+        assert cal.total_failures == 1
+        assert cal.empirical_pass_rate == pytest.approx(0.0)
+        assert cal.expected_pass_rate == pytest.approx(0.7)
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_records_calibration_on_subagent_error(
+        self, project
+    ):
+        """A feature whose sub-agent errors out must still record calibration."""
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import (
+            create_feature,
+            get_calibration,
+            get_feature,
+            update_feature,
+        )
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import (
+            OrchestrationLoop,
+            _DEFAULT_TASK_CLASS_FEATURE,
+        )
+
+        f = create_feature(
+            project_id=project.id,
+            name="Subagent error",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            f.id,
+            conf_spec_understanding=0.6,
+            conf_impl_correctness=0.6,
+            conf_test_adequacy=0.6,
+            readiness_score=0.9,
+        )
+        feature = get_feature(f.id)
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        async def mock_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="",
+                is_error=True,
+                error_message="boom",
+                duration_ms=50,
+                num_turns=1,
+                total_cost_usd=0.01,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        with patch(
+            "bob3.orchestrator.run_loop.spawn_sub_agent",
+            new_callable=AsyncMock,
+            side_effect=mock_spawn,
+        ), patch(
+            "bob3.orchestrator.run_loop.git_get_status",
+            return_value={"sha": "abc123"},
+        ), patch(
+            "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+            return_value=None,
+        ):
+            await loop.execute_feature(feature)
+
+        cal = get_calibration(
+            project_id=project.id,
+            task_class=_DEFAULT_TASK_CLASS_FEATURE,
+            confidence_bucket="0.6-0.7",
+        )
+        assert cal is not None, (
+            "Calibration row must be written even when the sub-agent "
+            "errors; the feature confidence was a wrong prediction."
+        )
+        assert cal.total_failures == 1
+        assert cal.total_passes == 0
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_calibration_accumulates_across_features(
+        self, project
+    ):
+        """Two features in the same bucket should produce one row with two attempts."""
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import (
+            create_feature,
+            get_calibration,
+            get_feature,
+            update_feature,
+        )
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import (
+            OrchestrationLoop,
+            _DEFAULT_TASK_CLASS_FEATURE,
+        )
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        async def mock_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="done",
+                is_error=False,
+                duration_ms=10,
+                num_turns=1,
+                total_cost_usd=0.01,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        for i, vp in enumerate([True, False]):
+            f = create_feature(
+                project_id=project.id,
+                name=f"Feature {i}",
+                status="ready",
+                priority=10,
+                risk_category="medium",
+            )
+            update_feature(
+                f.id,
+                conf_spec_understanding=0.85,
+                conf_impl_correctness=0.85,
+                conf_test_adequacy=0.85,
+                readiness_score=0.85,
+            )
+            feature = get_feature(f.id)
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=mock_spawn,
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                return_value={
+                    "passed": vp,
+                    "summary": "ok" if vp else "bad",
+                    "checks": [],
+                },
+            ), patch(
+                "bob3.orchestrator.run_loop.git_commit_feature",
+                return_value=f"sha{i}",
+            ), patch(
+                "bob3.orchestrator.run_loop.git_get_status",
+                return_value={"sha": f"pre{i}"},
+            ), patch(
+                "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+                return_value=None,
+            ):
+                await loop.execute_feature(feature)
+
+        cal = get_calibration(
+            project_id=project.id,
+            task_class=_DEFAULT_TASK_CLASS_FEATURE,
+            confidence_bucket="0.8-0.9",
+        )
+        assert cal is not None
+        assert cal.total_attempts == 2
+        assert cal.total_passes == 1
+        assert cal.total_failures == 1
+        assert cal.empirical_pass_rate == pytest.approx(0.5)

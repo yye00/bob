@@ -423,8 +423,17 @@ class TestSpawnAgentWithOptions:
         assert "opus" in passed_opts.model
         assert passed_opts.max_turns == 50
 
-    def test_spawn_sub_agent_passes_options(self):
-        """spawn_sub_agent forwards options to stream_query."""
+    def test_spawn_sub_agent_passes_options(self, monkeypatch):
+        """spawn_sub_agent forwards options to stream_query.
+
+        With ``PERPLEXITY_API_KEY`` unset bob3 does not need to merge in
+        any MCP servers, so the original options object should be passed
+        through untouched. (When the key is set, bob3 may build a new
+        ClaudeCodeOptions with an extra mcp_servers entry; that
+        behaviour is covered by the perplexity injection tests.)
+        """
+        monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
+
         from bob3.orchestrator.claude_executor import (
             build_sub_agent_options,
             spawn_sub_agent,

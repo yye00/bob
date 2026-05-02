@@ -531,7 +531,14 @@ class TestEndToEndDecomposition:
     async def test_decomposition_tracks_cost(
         self, tmp_db, project, oversized_feature
     ):
-        """Decomposition cost is tracked in the loop."""
+        """Decomposition cost is tracked.
+
+        R4-002 (2026-04, follow-up): the decomposition cost used to be
+        added ONLY to ``loop.total_cost`` and never to
+        ``project.total_cost_usd`` — so the project budget was blind to
+        decomposition. Fix: route to ``db.update_project_cost`` (atomic,
+        canonical source). The DB total is the right thing to assert on.
+        """
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             loop = OrchestrationLoop(project_id=project.id)
 
@@ -544,8 +551,10 @@ class TestEndToEndDecomposition:
             ):
                 await loop.execute_feature(oversized_feature)
 
-            # Cost should be tracked
-            assert loop.total_cost >= 0.25
+            # Cost is tracked atomically in the DB total (R4-002 fix).
+            from bob3.db import get_project
+            updated_project = get_project(project.id)
+            assert updated_project.total_cost_usd >= 0.25
 
 
 # ============================================================

@@ -31,3 +31,5 @@ build.log
 # Claude session artifacts
 claude-progress.txt
 .claude-memory/
+.bob3.lock
+*.lock

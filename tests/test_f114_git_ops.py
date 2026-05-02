@@ -274,6 +274,101 @@ class TestRevertFeature:
 
 
 # ============================================================
+# R4: revert_feature must reject argument injection via commit_sha
+# ============================================================
+#
+# A previous version passed ``commit_sha`` straight to
+# ``git revert --no-edit <sha>``. Values like ``--abort`` would be
+# interpreted as a flag (silently disabling the rollback), and ref
+# expressions like ``HEAD~5`` would let a compromised caller revert
+# arbitrary commits. ``revert_feature`` now requires a literal hex SHA
+# (7-40 chars) before invoking git.
+
+
+class TestRevertFeatureSHAValidation:
+    """Argument-injection guard: only well-formed git SHAs are accepted."""
+
+    def test_dash_dash_abort_is_rejected(self, git_repo):
+        """``--abort`` would put ``git revert`` into abort mode and
+        silently make rollbacks a no-op. Must be rejected before git
+        is invoked."""
+        from bob3.git_ops import GitCommitError, revert_feature
+
+        with pytest.raises(GitCommitError) as excinfo:
+            revert_feature(
+                feature_id="F001",
+                commit_sha="--abort",
+                workspace=str(git_repo),
+            )
+        msg = str(excinfo.value).lower()
+        assert "well-formed" in msg or "sha" in msg
+        assert "--abort" in str(excinfo.value)
+
+    def test_relative_ref_head_tilde_is_rejected(self, git_repo):
+        """``HEAD~5`` is a ref expression, not a SHA. Refused so a
+        caller can't be tricked into reverting an arbitrary commit."""
+        from bob3.git_ops import GitCommitError, revert_feature
+
+        with pytest.raises(GitCommitError) as excinfo:
+            revert_feature(
+                feature_id="F001",
+                commit_sha="HEAD~5",
+                workspace=str(git_repo),
+            )
+        assert "HEAD~5" in str(excinfo.value)
+
+    def test_empty_sha_is_rejected(self, git_repo):
+        from bob3.git_ops import GitCommitError, revert_feature
+
+        with pytest.raises(GitCommitError):
+            revert_feature(
+                feature_id="F001",
+                commit_sha="",
+                workspace=str(git_repo),
+            )
+
+    def test_caret_ref_is_rejected(self, git_repo):
+        """Ref-walk syntax (``<sha>^``, ``<sha>^2``) is also refused —
+        the validator only accepts pure hex digits."""
+        from bob3.git_ops import GitCommitError, revert_feature
+
+        with pytest.raises(GitCommitError):
+            revert_feature(
+                feature_id="F001",
+                commit_sha="HEAD^",
+                workspace=str(git_repo),
+            )
+
+    def test_well_formed_full_sha_is_accepted(self, git_repo):
+        """A 40-hex-char SHA passes validation. The actual revert may
+        fail (the SHA doesn't exist in this repo) but the regex gate
+        must let it through — return value can be None or raise from
+        git itself, but NOT raise from the validator."""
+        from bob3.git_ops import GitCommitError, revert_feature
+
+        bogus_but_well_formed = "abc123def456abc123def456abc123def4561234"
+        # Should not raise from the validator. Git itself will fail
+        # because the SHA is not a real commit; that's fine — the test
+        # only proves the validator passes the well-formed input through.
+        try:
+            result = revert_feature(
+                feature_id="F099",
+                commit_sha=bogus_but_well_formed,
+                workspace=str(git_repo),
+            )
+        except GitCommitError as exc:
+            # Acceptable: git rejected the unknown SHA. But the message
+            # must NOT be the validator's "not a well-formed git SHA".
+            assert "well-formed" not in str(exc).lower(), (
+                f"validator wrongly rejected a well-formed SHA: {exc}"
+            )
+        else:
+            # Or git returned None (unable to revert). Either way,
+            # validator accepted the input.
+            assert result is None or len(result) == 40
+
+
+# ============================================================
 # Step 4: Implement get_recent_commits(n) for orientation
 # ============================================================
 

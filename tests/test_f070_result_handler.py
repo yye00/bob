@@ -424,11 +424,21 @@ class TestUpdateCostTracking:
             updated_project = get_project(project.id)
             assert updated_project.total_cost_usd == pytest.approx(0.75)
 
-    def test_cost_not_updated_when_none(self, tmp_db, project, feature):
-        """Step 4: Project cost is not updated when result cost is None."""
+    def test_cost_zero_when_no_cost_no_turns(self, tmp_db, project, feature):
+        """Step 4: When cost is None AND num_turns=0, no cost is recorded.
+
+        Renamed from ``test_cost_not_updated_when_none`` to make explicit
+        what this test actually verifies. The original name implied "None
+        cost is never recorded," but the call path is:
+          ``_normalize_cost(None, 0) -> (0.0, "zero")``
+        i.e. zero turns means zero proxy cost. The companion test
+        ``test_cost_uses_proxy_when_only_turns_known`` covers the path
+        where cost is None but ``num_turns > 0`` and the proxy DOES kick
+        in.
+        """
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             result = ExecutionResult(
-                text="OK", is_error=False, total_cost_usd=None
+                text="OK", is_error=False, total_cost_usd=None, num_turns=0
             )
             agent_run = MagicMock()
             agent_run.id = str(uuid.uuid4())
@@ -444,6 +454,47 @@ class TestUpdateCostTracking:
 
             updated_project = get_project(project.id)
             assert updated_project.total_cost_usd == pytest.approx(0.0)
+
+    def test_cost_uses_proxy_when_only_turns_known(
+        self, tmp_db, project, feature, monkeypatch
+    ):
+        """Step 4: When cost is None but ``num_turns > 0`` (Claude Max Pro
+        / OAuth subscription path), the project cost is still recorded
+        using the per-turn proxy.
+
+        This is the actual behaviour the previous test gave a false-pass
+        on. With ``num_turns=5`` and the default proxy of $0.05/turn the
+        recorded cost should be exactly 0.25 USD. We pin the proxy via
+        ``BOB3_COST_PER_TURN_PROXY`` so the assertion is independent of
+        environmental defaults.
+        """
+        # Pin the proxy rate to the documented default so this test is
+        # not at the mercy of environment-level overrides.
+        monkeypatch.setenv("BOB3_COST_PER_TURN_PROXY", "0.05")
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            # Capture the cost BEFORE the call so we are asserting on
+            # the *delta* and not on assumptions about prior state.
+            before = get_project(project.id).total_cost_usd or 0.0
+
+            result = ExecutionResult(
+                text="OK", is_error=False, total_cost_usd=None, num_turns=5
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            spawn_result = SpawnResult(
+                execution_result=result, agent_run=agent_run
+            )
+
+            handle_execution_result(
+                project_id=project.id,
+                feature=feature,
+                spawn_result=spawn_result,
+            )
+
+            after = get_project(project.id).total_cost_usd or 0.0
+            # 5 turns * $0.05/turn = $0.25 proxy charge.
+            assert (after - before) == pytest.approx(0.25)
 
     def test_outcome_dict_returns_cost(self, tmp_db, project, feature):
         """Step 4: The returned outcome dict contains cost information."""
@@ -769,6 +820,144 @@ class TestCompleteFeatureAndCascadeAtomicity:
             # transaction rolled back. Dependent must still be pending.
             assert get_feature(feat_a.id).status == "ready"
             assert get_feature(feat_b.id).status == "pending"
+
+    def _make_three_feature_fanout(self, project):
+        """A → B and A → C (B and C both depend on A).
+
+        A starts in 'ready'; B and C start in 'pending'. The cascade,
+        if it ran to completion, would flip BOTH B and C to 'ready'.
+        """
+        from bob3.db import add_feature_dependency
+
+        feat_a = create_feature(
+            project_id=project.id,
+            name="A",
+            description="upstream",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            feat_a.id,
+            conf_spec_understanding=0.9,
+            conf_impl_correctness=0.9,
+            conf_test_adequacy=0.9,
+            readiness_score=0.9,
+        )
+
+        dependents: list = []
+        for label, prio in [("B", 20), ("C", 30)]:
+            f = create_feature(
+                project_id=project.id,
+                name=label,
+                description=f"downstream {label}",
+                status="pending",
+                priority=prio,
+                risk_category="medium",
+            )
+            update_feature(
+                f.id,
+                conf_spec_understanding=0.9,
+                conf_impl_correctness=0.9,
+                conf_test_adequacy=0.9,
+                readiness_score=0.9,
+            )
+            add_feature_dependency(
+                feature_id=f.id, depends_on_feature_id=feat_a.id
+            )
+            dependents.append(get_feature(f.id))
+        return get_feature(feat_a.id), dependents[0], dependents[1]
+
+    def test_rollback_when_cascade_partway_through_multiple_dependents(
+        self, tmp_db, project
+    ):
+        """Atomicity invariant for multi-dependent cascades.
+
+        The ``_FlakyConn`` test above only exercises a chain with ONE
+        dependent (A → B), and crashes BEFORE any dependent UPDATE has
+        run. That proves "crash before any dependent write rolls back",
+        but does NOT prove the bigger invariant we actually care about:
+
+            "Crash partway through a multi-dependent cascade rolls back
+             ALL writes — including dependents that already had their
+             UPDATE executed before the crash."
+
+        Set up A → B and A → C and crash AFTER one dependent UPDATE has
+        run but BEFORE the other's. The rollback must restore the entire
+        transaction to its pre-call state — A is still 'ready' (NOT
+        'completed'), and BOTH dependents are still 'pending' (the one
+        whose UPDATE already executed must be rolled back too).
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            import bob3.db as db_mod
+
+            feat_a, feat_b, feat_c = self._make_three_feature_fanout(project)
+            assert get_feature(feat_a.id).status == "ready"
+            assert get_feature(feat_b.id).status == "pending"
+            assert get_feature(feat_c.id).status == "pending"
+
+            original_connect = db_mod.connect
+
+            from contextlib import contextmanager
+
+            # Trace every SQL statement so we can crash at a specific
+            # point — namely, AFTER the FIRST dependent UPDATE has run.
+            #
+            # Expected execute() sequence in
+            # ``complete_feature_and_cascade`` for a 2-dependent fanout:
+            #   1. UPDATE features SET status='completed' WHERE id=A
+            #   2. SELECT feature_id, depends_on_feature_id FROM
+            #      feature_dependencies WHERE depends_on_feature_id=A
+            #      (returns 2 rows: one for B, one for C)
+            #   3. SELECT all-deps lookup for first dependent
+            #   4. UPDATE features SET status='ready' for first dependent
+            #   5. SELECT all-deps lookup for second dependent
+            #   6. UPDATE features SET status='ready' for second dependent
+            #
+            # We crash on call 5 — after the first dependent's UPDATE
+            # has hit the connection but before the second dependent's
+            # UPDATE has even been considered. Rollback must undo the
+            # call-1 UPDATE (A) AND the call-4 UPDATE (first dependent).
+            class _CrashAfterFirstDependentUpdate:
+                def __init__(self, real_conn):
+                    self._real = real_conn
+                    self._calls = 0
+
+                def execute(self, sql, *a, **kw):
+                    self._calls += 1
+                    if self._calls == 5:
+                        raise RuntimeError(
+                            "simulated crash after first dependent UPDATE"
+                        )
+                    return self._real.execute(sql, *a, **kw)
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+            @contextmanager
+            def flaky_connect(**kwargs):
+                with original_connect(**kwargs) as real_conn:
+                    yield _CrashAfterFirstDependentUpdate(real_conn)
+
+            with patch.object(db_mod, "connect", flaky_connect):
+                with pytest.raises(RuntimeError, match="simulated crash"):
+                    db_mod.complete_feature_and_cascade(feat_a.id)
+
+            # The atomic invariant: A is still 'ready' (its 'completed'
+            # write was rolled back), AND BOTH dependents are still
+            # 'pending'. The dependent whose UPDATE *did* execute on
+            # the live connection must have been rolled back along with
+            # the rest of the transaction; otherwise we'd have a
+            # partial cascade — exactly the bug this helper exists to
+            # prevent.
+            assert get_feature(feat_a.id).status == "ready"
+            assert get_feature(feat_b.id).status == "pending", (
+                "feat_b must be pending after rollback (rollback failed "
+                "to undo the first dependent UPDATE)"
+            )
+            assert get_feature(feat_c.id).status == "pending", (
+                "feat_c must be pending after rollback"
+            )
 
     def test_handle_execution_result_uses_atomic_helper(
         self, tmp_db, project, feature
@@ -1210,3 +1399,249 @@ class TestGitHookFailureHandling:
             assert updated.status == "completed"
             assert loop.features_completed == 1
             assert loop.features_failed == 0
+
+
+# ============================================================
+# Atomicity: rollback_feature_cascade rolls back as a single transaction
+# (regression test for R4-003 — analog of R2-009 but on the rollback path)
+# ============================================================
+
+
+class TestRollbackFeatureCascadeAtomicity:
+    """When a git hook rejection forces a previously-cascaded feature back to
+    ``needs_human``, the rollback of the feature status AND the dependent-
+    cascade revert must happen atomically. A multi-step Python loop calling
+    update_feature per dependent leaves a partial-state window: a crash
+    mid-loop strands some dependents at 'ready' and others at 'pending'.
+    """
+
+    def _make_diamond_top(self, project):
+        """Set up A → B and A → C, with A 'completed' and B+C 'ready'."""
+        from bob3.db import add_feature_dependency
+
+        feat_a = create_feature(
+            project_id=project.id,
+            name="A",
+            description="upstream",
+            status="completed",
+            priority=10,
+            risk_category="medium",
+        )
+        feat_b = create_feature(
+            project_id=project.id,
+            name="B",
+            description="downstream-1",
+            status="ready",
+            priority=20,
+            risk_category="medium",
+        )
+        feat_c = create_feature(
+            project_id=project.id,
+            name="C",
+            description="downstream-2",
+            status="ready",
+            priority=20,
+            risk_category="medium",
+        )
+        add_feature_dependency(
+            feature_id=feat_b.id, depends_on_feature_id=feat_a.id
+        )
+        add_feature_dependency(
+            feature_id=feat_c.id, depends_on_feature_id=feat_a.id
+        )
+        return (
+            get_feature(feat_a.id),
+            get_feature(feat_b.id),
+            get_feature(feat_c.id),
+        )
+
+    def test_happy_path_reverts_feature_and_all_dependents(
+        self, tmp_db, project
+    ):
+        """Sanity: the atomic helper resets A to needs_human and flips
+        every ready dependent back to pending."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import rollback_feature_cascade
+
+            feat_a, feat_b, feat_c = self._make_diamond_top(project)
+            reverted = rollback_feature_cascade(
+                feat_a.id, target_status="needs_human"
+            )
+
+            assert get_feature(feat_a.id).status == "needs_human"
+            assert get_feature(feat_b.id).status == "pending"
+            assert get_feature(feat_c.id).status == "pending"
+            assert sorted(reverted) == sorted([feat_b.id, feat_c.id])
+
+    def test_rollback_is_atomic_no_partial_state_on_crash(
+        self, tmp_db, project
+    ):
+        """The load-bearing invariant: if any SQL inside the rollback raises,
+        the whole transaction rolls back. A and B and C all stay where they
+        were before the rollback call. We never see a partial-state world
+        where, say, B was reset but C wasn't.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            import bob3.db as db_mod
+
+            feat_a, feat_b, feat_c = self._make_diamond_top(project)
+
+            # Wrap the connection so its second execute() raises. The first
+            # execute is the feature-status UPDATE; the second is the
+            # dependent-revert UPDATE. By failing the second call we simulate
+            # a crash AFTER the feature row is touched but BEFORE the
+            # dependents are updated. With proper atomicity, the outer
+            # context manager rolls back BOTH.
+            original_connect = db_mod.connect
+
+            from contextlib import contextmanager
+
+            class _FlakyConn:
+                def __init__(self, real_conn):
+                    self._real = real_conn
+                    self._calls = 0
+
+                def execute(self, sql, *a, **kw):
+                    self._calls += 1
+                    if self._calls == 2:
+                        raise RuntimeError("simulated crash mid-rollback")
+                    return self._real.execute(sql, *a, **kw)
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+            @contextmanager
+            def flaky_connect(**kwargs):
+                with original_connect(**kwargs) as real_conn:
+                    yield _FlakyConn(real_conn)
+
+            with patch.object(db_mod, "connect", flaky_connect):
+                with pytest.raises(RuntimeError, match="simulated crash"):
+                    db_mod.rollback_feature_cascade(
+                        feat_a.id, target_status="needs_human"
+                    )
+
+            # Atomic invariant: nothing changed. A is still 'completed' (the
+            # state before rollback), and BOTH dependents are still 'ready'.
+            # No half-rolled-back state with B 'pending' but C 'ready'.
+            assert get_feature(feat_a.id).status == "completed"
+            assert get_feature(feat_b.id).status == "ready"
+            assert get_feature(feat_c.id).status == "ready"
+
+    def test_target_status_is_applied_to_feature(self, tmp_db, project):
+        """A.status must equal the requested target_status after a
+        successful rollback (here: needs_human)."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import rollback_feature_cascade
+
+            feat_a, feat_b, feat_c = self._make_diamond_top(project)
+            rollback_feature_cascade(feat_a.id, target_status="needs_human")
+            assert get_feature(feat_a.id).status == "needs_human"
+
+    def test_dependents_in_non_ready_states_are_left_alone(
+        self, tmp_db, project
+    ):
+        """If a dependent has already advanced past 'ready' (e.g. it is
+        currently 'in_progress' or even 'completed'), the rollback must not
+        flip it back to 'pending' — that would corrupt running/finished
+        work. Only 'ready' dependents are reverted."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import rollback_feature_cascade
+
+            feat_a, feat_b, feat_c = self._make_diamond_top(project)
+            # Advance C to 'in_progress' to simulate a worker having
+            # already picked it up before we discovered A's hook failure.
+            update_feature(feat_c.id, status="in_progress")
+
+            rollback_feature_cascade(feat_a.id, target_status="needs_human")
+
+            assert get_feature(feat_a.id).status == "needs_human"
+            assert get_feature(feat_b.id).status == "pending"
+            # C must NOT be reverted; it's already running.
+            assert get_feature(feat_c.id).status == "in_progress"
+
+    @pytest.mark.asyncio
+    async def test_execute_feature_uses_atomic_rollback_on_hook_failure(
+        self, tmp_db
+    ):
+        """End-to-end: on a git hook rejection in execute_feature, the
+        rollback must go through the new atomic db.rollback_feature_cascade
+        rather than the old multi-step update_feature loop."""
+        from bob3.db import add_feature_dependency
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            workspace = _make_git_workspace(pathlib.Path(tmp_db).parent)
+            proj = create_project(
+                name="atomic-rollback",
+                workspace_path=str(workspace),
+                max_cost_usd=100.0,
+            )
+            feat_a = create_feature(
+                project_id=proj.id,
+                name="A",
+                description="will be hook-blocked",
+                status="ready",
+                priority=10,
+                risk_category="medium",
+            )
+            update_feature(
+                feat_a.id,
+                conf_spec_understanding=0.9,
+                conf_impl_correctness=0.9,
+                conf_test_adequacy=0.9,
+                readiness_score=0.9,
+            )
+            feat_b = create_feature(
+                project_id=proj.id,
+                name="B",
+                description="downstream",
+                status="pending",
+                priority=20,
+                risk_category="medium",
+            )
+            add_feature_dependency(
+                feature_id=feat_b.id, depends_on_feature_id=feat_a.id,
+            )
+            (workspace / "code.py").write_text("# implementation\n")
+            _install_rejecting_pre_commit_hook(workspace)
+
+            mock_result = ExecutionResult(
+                text="Done", is_error=False, duration_ms=1000,
+                num_turns=2, total_cost_usd=0.10,
+            )
+            mock_agent_run = MagicMock()
+            mock_agent_run.id = str(uuid.uuid4())
+
+            loop = OrchestrationLoop(
+                project_id=proj.id, workspace=str(workspace),
+            )
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                return_value=SpawnResult(
+                    execution_result=mock_result, agent_run=mock_agent_run,
+                ),
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                return_value={"passed": True, "summary": "ok", "checks": []},
+            ), patch(
+                "bob3.orchestrator.run_loop.db.rollback_feature_cascade",
+                wraps=__import__("bob3").db.rollback_feature_cascade,
+            ) as spy:
+                feat_a_obj = get_feature(feat_a.id)
+                await loop.execute_feature(feat_a_obj)
+
+                # The atomic helper must have been called exactly once with
+                # the hook-blocked feature and the needs_human target.
+                assert spy.call_count == 1
+                args, kwargs = spy.call_args
+                assert (args and args[0] == feat_a.id) or (
+                    kwargs.get("feature_id") == feat_a.id
+                )
+                assert kwargs.get("target_status") == "needs_human"
+
+            # And the end state matches: A=needs_human, B=pending. No
+            # partial state.
+            assert get_feature(feat_a.id).status == "needs_human"
+            assert get_feature(feat_b.id).status == "pending"

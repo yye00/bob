@@ -233,8 +233,19 @@ class TestUsesClaudeSDK:
         assert "Implementation done" in result.execution_result.text
 
     @pytest.mark.asyncio
-    async def test_forwards_options(self, project):
-        """spawn_sub_agent forwards ClaudeCodeOptions to the SDK."""
+    async def test_forwards_options(self, project, monkeypatch):
+        """spawn_sub_agent forwards ClaudeCodeOptions to the SDK.
+
+        The SDK call may receive a *new* ClaudeCodeOptions when bob3
+        merges in MCP servers (e.g. auto-injecting Perplexity when
+        ``PERPLEXITY_API_KEY`` is set). The contract is that the user's
+        salient fields (model, max_turns, system_prompt, etc.) are
+        preserved on whatever ClaudeCodeOptions reaches the SDK.
+        """
+        # Disable the Perplexity auto-inject path so we can assert
+        # identity in the simple no-MCP case.
+        monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
+
         from bob3.orchestrator.claude_executor import spawn_sub_agent, build_sub_agent_options
         from claude_code_sdk import ResultMessage
 
@@ -258,7 +269,9 @@ class TestUsesClaudeSDK:
                 options=opts,
             )
 
-        assert captured_options["options"] is opts
+        passed = captured_options["options"]
+        # When no MCP injection happens, identity should be preserved.
+        assert passed is opts
 
 
 # ===================================================================

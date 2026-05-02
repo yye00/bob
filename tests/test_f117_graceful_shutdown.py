@@ -725,3 +725,147 @@ class TestSignalHandlerIsAsyncSignalSafe:
         # The polling caller (main loop) sees the new value at the next
         # safe point.
         assert handler.shutdown_requested is True
+
+
+# ============================================================
+# Step 10b: The ACTUAL signal handler installed by the production
+# orchestration loop is async-signal-safe.
+# ============================================================
+
+
+class TestOrchestrationLoopSignalHandlerIsAsyncSignalSafe:
+    """``OrchestrationLoop._install_signal_handlers`` installs an inline
+    closure as the SIGINT/SIGTERM handler — NOT the
+    ``GracefulShutdownHandler`` class exercised by
+    :class:`TestSignalHandlerIsAsyncSignalSafe`.
+
+    The ``GracefulShutdownHandler`` tests above gave false confidence
+    that the production signal path is async-signal-safe, because
+    nothing in production actually installs that class. This test
+    class instead inspects the handler that ``_install_signal_handlers``
+    *actually* puts into ``signal.getsignal``, calls it directly with
+    a synthetic signum/frame, and verifies that:
+
+      1. it does NOT touch any DB function or DB-touching helper;
+      2. it does NOT touch the MCP subprocess machinery;
+      3. it sets ``loop.shutdown_requested = True`` afterwards (the
+         flag the polling main-loop reads at safe points).
+
+    This is the "test what production calls, not the handler API
+    surface" invariant called out in the signal-safety recurring
+    pattern.
+    """
+
+    def _install_and_get_real_handler(self, project):
+        """Create a loop, install handlers, and return (loop, handler).
+
+        Restoring SIGINT/SIGTERM is handled by the autouse fixture in
+        ``conftest.py`` (it captures and restores them around every
+        test), so we don't need to do it ourselves.
+        """
+        loop = OrchestrationLoop(project_id=project.id)
+        loop._install_signal_handlers()
+
+        installed_sigint = signal.getsignal(signal.SIGINT)
+        installed_sigterm = signal.getsignal(signal.SIGTERM)
+
+        # Sanity: the loop installed something (not the default int
+        # handler, not SIG_DFL/SIG_IGN, not None).
+        assert installed_sigint is not None
+        assert callable(installed_sigint), (
+            "_install_signal_handlers should install a callable for SIGINT"
+        )
+        assert callable(installed_sigterm), (
+            "_install_signal_handlers should install a callable for SIGTERM"
+        )
+        # And what it installed is the same callable for both signals
+        # (the inline closure inside ``_install_signal_handlers``).
+        assert installed_sigint is installed_sigterm, (
+            "Both SIGINT and SIGTERM should map to the same closure"
+        )
+        return loop, installed_sigint
+
+    def test_installed_handler_does_not_touch_db_or_mcp(self, tmp_db, project):
+        """The actual installed SIGINT closure must be async-signal-safe.
+
+        We patch every DB and subprocess surface the handler could
+        plausibly reach for and verify zero calls land on any of them
+        when the handler is invoked. This pins the contract that the
+        handler ONLY sets a flag.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop, handler = self._install_and_get_real_handler(project)
+
+            # Pre-state: the loop has not been told to shut down.
+            assert loop.shutdown_requested is False
+
+            with patch(
+                "bob3.db.create_checkpoint"
+            ) as create_cp, patch(
+                "bob3.db.update_feature"
+            ) as upd_feat, patch(
+                "bob3.db.update_project_cost"
+            ) as upd_cost, patch(
+                "bob3.mcp_lifecycle.stop_mcp_server"
+            ) as stop_mcp:
+                # Call the actual production handler with a synthetic
+                # signum/frame. SIGINT (vs SIGTERM) doesn't matter for
+                # the contract; either signal must satisfy it.
+                handler(signal.SIGINT, None)
+
+            # The flag must flip — that is the entire job of the
+            # handler, and the only piece of "real work" it is allowed
+            # to do.
+            assert loop.shutdown_requested is True
+
+            # And NO I/O must have happened from the handler.
+            create_cp.assert_not_called()
+            upd_feat.assert_not_called()
+            upd_cost.assert_not_called()
+            stop_mcp.assert_not_called()
+
+    def test_installed_handler_handles_sigterm_same_way(self, tmp_db, project):
+        """SIGTERM must behave identically to SIGINT.
+
+        The closure conditions on ``signum`` only for the log message;
+        the contract (set flag, no I/O) must hold for both signals.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop, handler = self._install_and_get_real_handler(project)
+
+            with patch(
+                "bob3.db.create_checkpoint"
+            ) as create_cp, patch(
+                "bob3.db.update_feature"
+            ) as upd_feat, patch(
+                "bob3.mcp_lifecycle.stop_mcp_server"
+            ) as stop_mcp:
+                handler(signal.SIGTERM, None)
+
+            assert loop.shutdown_requested is True
+            create_cp.assert_not_called()
+            upd_feat.assert_not_called()
+            stop_mcp.assert_not_called()
+
+    def test_installed_handler_second_signal_forces_systemexit(
+        self, tmp_db, project
+    ):
+        """A second signal during shutdown must force-exit.
+
+        Production behaviour: first Ctrl-C requests graceful shutdown,
+        second Ctrl-C raises SystemExit so the user can escape a stuck
+        sub-agent. We verify on the *installed* handler.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop, handler = self._install_and_get_real_handler(project)
+
+            # First signal: sets the flag, returns normally.
+            handler(signal.SIGINT, None)
+            assert loop.shutdown_requested is True
+
+            # Second signal: must raise SystemExit. We don't pin the
+            # exact code because that's a documented detail of the
+            # closure, but it must propagate as SystemExit (not
+            # SystemError, not RuntimeError).
+            with pytest.raises(SystemExit):
+                handler(signal.SIGINT, None)

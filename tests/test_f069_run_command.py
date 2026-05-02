@@ -717,3 +717,388 @@ class TestRunFeatureScoping:
             # Target stayed pending; dep stayed pending.
             assert get_feature(target.id).status == "pending"
             assert get_feature(dep.id).status == "pending"
+
+
+# ============================================================
+# Concurrency: per-project file lock prevents two concurrent
+# bob3 run invocations from racing on the same project.
+# ============================================================
+
+
+class TestRunLockConcurrency:
+    """Step: only one ``bob3 run`` at a time per project.
+
+    With WAL + busy_timeout, two concurrent runs would no longer crash
+    with ``database is locked``, but they'd interleave: both processes
+    would pick "ready" features, both would write status='executing',
+    and the resulting cascade order is whatever the OS scheduler
+    decides. The fix is an exclusive advisory ``flock`` on
+    ``<workspace>/.bob3.lock``; the second invocation must fail fast
+    with :class:`AlreadyRunningError` and exit with code 1.
+    """
+
+    def test_acquire_run_lock_returns_handle(self, tmp_path):
+        """First acquisition succeeds and creates the lock file."""
+        from bob3.orchestrator.run_loop import (
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        handle = acquire_run_lock(tmp_path)
+        try:
+            assert handle is not None
+            assert (tmp_path / ".bob3.lock").exists()
+        finally:
+            release_run_lock(handle)
+
+    def test_second_concurrent_acquire_raises(self, tmp_path):
+        """A second acquire while the lock is held raises AlreadyRunningError."""
+        from bob3.orchestrator.run_loop import (
+            AlreadyRunningError,
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        first = acquire_run_lock(tmp_path)
+        try:
+            with pytest.raises(AlreadyRunningError) as exc_info:
+                acquire_run_lock(tmp_path)
+            # Error message must be actionable for the user.
+            msg = str(exc_info.value)
+            assert "already in progress" in msg.lower()
+            assert "refusing to start" in msg.lower()
+        finally:
+            release_run_lock(first)
+
+    def test_lock_released_after_run_finishes(self, tmp_path):
+        """Releasing the lock allows a fresh acquisition.
+
+        Simulates: first ``bob3 run`` finishes (lock released), then a
+        second ``bob3 run`` can proceed.
+        """
+        from bob3.orchestrator.run_loop import (
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        h1 = acquire_run_lock(tmp_path)
+        release_run_lock(h1)
+        h2 = acquire_run_lock(tmp_path)
+        try:
+            assert h2 is not None
+        finally:
+            release_run_lock(h2)
+
+    def test_lock_released_via_subprocess_after_exit(self, tmp_path):
+        """If the lock-holding process exits, the lock is freed.
+
+        ``flock`` is held by the file descriptor; when the process dies
+        the kernel cleans up its open files, dropping the lock. We
+        simulate this by acquiring the lock in a child Python process
+        that exits cleanly, and then verifying the parent can acquire.
+        """
+        import subprocess
+        import sys
+        import textwrap
+
+        # Spawn a subprocess that acquires + releases (clean exit).
+        script = textwrap.dedent(f"""
+            import sys
+            sys.path.insert(0, {repr(str(pathlib_root := __import__('pathlib').Path(__file__).resolve().parent.parent / 'src'))})
+            from bob3.orchestrator.run_loop import acquire_run_lock
+            h = acquire_run_lock({repr(str(tmp_path))})
+            # Hold briefly, then exit (closes fd, releases lock).
+        """)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        assert result.returncode == 0, result.stderr
+
+        # Now the parent can acquire.
+        from bob3.orchestrator.run_loop import (
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        handle = acquire_run_lock(tmp_path)
+        try:
+            assert handle is not None
+        finally:
+            release_run_lock(handle)
+
+    @pytest.mark.asyncio
+    async def test_orchestration_loop_run_acquires_and_releases(
+        self, tmp_db, project, ready_features, tmp_path
+    ):
+        """``OrchestrationLoop.run()`` must acquire-then-release the lock.
+
+        Verifies the integration: after ``run()`` returns, the lock file
+        should exist (created by the run) AND a fresh acquire from the
+        same workspace must succeed (proving release happened).
+        """
+        from bob3.orchestrator.run_loop import (
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(
+                project_id=project.id,
+                workspace=str(workspace),
+            )
+
+            async def mock_spawn(*args, **kwargs):
+                res = ExecutionResult(
+                    text="ok",
+                    is_error=False,
+                    duration_ms=1000,
+                    num_turns=5,
+                    total_cost_usd=0.01,
+                )
+                agent_run = MagicMock()
+                agent_run.id = str(uuid.uuid4())
+                return SpawnResult(execution_result=res, agent_run=agent_run)
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=mock_spawn,
+            ):
+                await loop.run()
+
+        # Lock file should exist (created during run).
+        assert (workspace / ".bob3.lock").exists()
+        # And we should be able to re-acquire (proves release happened).
+        handle = acquire_run_lock(workspace)
+        try:
+            assert handle is not None
+        finally:
+            release_run_lock(handle)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_run_rejected_when_lock_held(
+        self, tmp_db, project, ready_features, tmp_path
+    ):
+        """Second ``OrchestrationLoop.run()`` is rejected while first holds lock."""
+        from bob3.orchestrator.run_loop import (
+            AlreadyRunningError,
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        # Pre-acquire the lock to simulate "another bob3 run already
+        # holds it". We don't release it inside the with-block.
+        external_holder = acquire_run_lock(workspace)
+        try:
+            with patch("bob3.db.get_database_path", return_value=tmp_db):
+                loop = OrchestrationLoop(
+                    project_id=project.id,
+                    workspace=str(workspace),
+                )
+                with pytest.raises(AlreadyRunningError):
+                    await loop.run()
+        finally:
+            release_run_lock(external_holder)
+
+
+# ============================================================
+# Performance: budget_exceeded() must NOT re-fetch the project
+# from the DB on every loop iteration.
+# ============================================================
+
+
+class TestBudgetExceededCachesProjectCost:
+    """``budget_exceeded`` is checked once per loop iteration. Reading
+    the project row out of SQLite each time is wasteful: with 200+
+    features × N retries it adds 1000+ throwaway connections to the
+    hot path. The fix caches ``total_cost_usd`` and refreshes only
+    after a cost-mutating call.
+    """
+
+    def test_repeated_budget_check_uses_one_db_read(self, tmp_db, project):
+        """100 budget_exceeded() calls must hit get_project at most once.
+
+        The single allowed read is the cache priming inside
+        ``__init__``; subsequent calls should be served entirely from
+        the cached values.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.orchestrator import run_loop as run_loop_mod
+
+            loop = OrchestrationLoop(project_id=project.id, max_cost=100.0)
+
+            # Now wrap db.get_project to count post-init reads only.
+            real_get_project = run_loop_mod.db.get_project
+            calls = {"n": 0}
+
+            def counting_get_project(pid):
+                calls["n"] += 1
+                return real_get_project(pid)
+
+            with patch.object(
+                run_loop_mod.db, "get_project", side_effect=counting_get_project
+            ):
+                for _ in range(100):
+                    loop.budget_exceeded()
+
+            # budget_exceeded should NOT fetch the project each time.
+            assert calls["n"] == 0, (
+                f"budget_exceeded triggered {calls['n']} get_project calls "
+                f"over 100 iterations; expected 0 (cache hit only)"
+            )
+
+    @pytest.mark.asyncio
+    async def test_cost_cache_refreshed_after_execute_feature(
+        self, tmp_db, project, ready_features
+    ):
+        """After ``execute_feature`` returns, ``budget_exceeded`` must see
+        the latest project total without forcing the caller to refresh
+        manually. This is the production contract: the loop refreshes
+        the cache itself right after ``handle_execution_result``.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id, max_cost=100.0)
+            assert loop._project_total_cost == 0.0
+
+            async def mock_spawn(*args, **kwargs):
+                res = ExecutionResult(
+                    text="ok",
+                    is_error=False,
+                    duration_ms=1000,
+                    num_turns=5,
+                    total_cost_usd=2.50,
+                )
+                agent_run = MagicMock()
+                agent_run.id = str(uuid.uuid4())
+                return SpawnResult(execution_result=res, agent_run=agent_run)
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=mock_spawn,
+            ):
+                await loop.execute_feature(ready_features[0])
+
+            # The cache must reflect the project's new total.
+            assert loop._project_total_cost == pytest.approx(2.50)
+
+
+# ============================================================
+# Reliability: sub-agent execution wall-clock timeout
+# ============================================================
+
+
+class TestSubAgentWallClockTimeout:
+    """A stuck sub-agent (e.g. hung Puppeteer call) must NOT park the
+    orchestrator forever. ``execute_feature`` wraps ``spawn_sub_agent``
+    with ``asyncio.wait_for`` using ``BOB3_FEATURE_TIMEOUT_SECONDS``
+    (default 3600s).
+    """
+
+    @pytest.mark.asyncio
+    async def test_timeout_marks_feature_interrupted(
+        self, tmp_db, project, ready_features, monkeypatch
+    ):
+        """On timeout the feature is marked 'interrupted', not 'failed'.
+
+        This puts it on the F116 auto-resume path on the next ``bob3 run``
+        rather than burning a refinement attempt on what is almost
+        certainly an infrastructure-level hang.
+        """
+        # Ridiculously short timeout so the test never blocks.
+        monkeypatch.setenv("BOB3_FEATURE_TIMEOUT_SECONDS", "0.05")
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(project_id=project.id)
+
+            async def hanging_spawn(*args, **kwargs):
+                # Sleep longer than the timeout to force wait_for() to fire.
+                await asyncio.sleep(5)
+                raise AssertionError("should never reach here")
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=hanging_spawn,
+            ):
+                spawn_result = await loop.execute_feature(ready_features[0])
+
+            # Feature must be 'interrupted' (not 'failed' or 'completed').
+            updated = get_feature(ready_features[0].id)
+            assert updated.status == "interrupted", (
+                f"timed-out feature ended in status={updated.status!r}; "
+                f"expected 'interrupted' so F116 auto-resume picks it up"
+            )
+
+            # Synthetic SpawnResult must surface the timeout.
+            assert spawn_result.execution_result.is_error is True
+            assert "timed out" in spawn_result.execution_result.error_message.lower()
+
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_cascade_dependents(
+        self, tmp_db, project, monkeypatch
+    ):
+        """A timed-out feature must NOT cascade dependents to 'ready'.
+
+        Otherwise a stuck implementation could unlock its downstream
+        peers as if it had succeeded.
+        """
+        from bob3.db import add_feature_dependency, create_feature
+
+        monkeypatch.setenv("BOB3_FEATURE_TIMEOUT_SECONDS", "0.05")
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            parent = create_feature(
+                project_id=project.id,
+                name="parent",
+                description="parent feature that will time out",
+                status="ready",
+                priority=10,
+                risk_category="medium",
+            )
+            update_feature(
+                parent.id,
+                conf_spec_understanding=0.9,
+                conf_impl_correctness=0.9,
+                conf_test_adequacy=0.9,
+                readiness_score=0.9,
+            )
+            child = create_feature(
+                project_id=project.id,
+                name="child",
+                description="child depends on parent",
+                status="pending",
+                priority=20,
+                risk_category="medium",
+            )
+            add_feature_dependency(
+                feature_id=child.id, depends_on_feature_id=parent.id
+            )
+
+            parent = get_feature(parent.id)
+
+            loop = OrchestrationLoop(project_id=project.id)
+
+            async def hanging_spawn(*args, **kwargs):
+                await asyncio.sleep(5)
+                raise AssertionError("unreachable")
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=hanging_spawn,
+            ):
+                await loop.execute_feature(parent)
+
+            # Parent timed out -> child must stay 'pending'.
+            assert get_feature(parent.id).status == "interrupted"
+            assert get_feature(child.id).status == "pending"

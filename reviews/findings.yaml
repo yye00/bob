@@ -1,0 +1,1454 @@
+schema_version: 1
+findings:
+- id: R1-001
+  title: 'Dead code with NameError: SubAgentResult, time, start_time'
+  pattern: verification-failed branch references undefined names
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: critical
+  status: fixed
+  tags:
+  - dead-code
+  - dead-code-tested-path
+  - name-error
+  - broad-except-swallow
+  fixed_in: 8a4a48b
+  notes: 'Verification-failed branch built a synthetic SubAgentResult using
+
+    undefined names. Outer broad except swallowed the resulting NameError
+
+    at DEBUG level so the bug was invisible.
+
+    '
+- id: R1-002
+  title: Features marked completed before verification runs
+  pattern: 'non-atomic state machine: status update + cascade before validation'
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: critical
+  status: fixed
+  tags:
+  - state-machine
+  - ordering
+  - premature-cascade
+  fixed_in: 8a4a48b
+  related:
+  - R1-008
+  notes: 'handle_execution_result wrote status=completed AND cascaded dependents
+
+    to ready BEFORE verification ran. When verification subsequently failed,
+
+    the rollback to needs_human happened but the cascade had already fired.
+
+    '
+- id: R1-003
+  title: Non-atomic cost tracking via read-modify-write
+  pattern: in-memory counter + DB column updated separately
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: critical
+  status: fixed
+  tags:
+  - non-atomic-counter
+  - race
+  - budget-bypass
+  fixed_in: 8a4a48b
+  related:
+  - R1-014
+- id: R1-004
+  title: SQLite connection leak in _run_orchestration_loop
+  pattern: get_connection() without with/close()
+  files:
+  - src/bob3/cli.py
+  severity: high
+  status: fixed
+  tags:
+  - resource-leak
+  - missing-context-manager
+  fixed_in: 8a4a48b
+- id: R1-005
+  title: Verification checklist soft-passes vague criteria
+  pattern: default catch-all returns True for unknown criterion shapes
+  files:
+  - src/bob3/enhanced_verification.py
+  severity: high
+  status: fixed
+  tags:
+  - permissive-default
+  - gaming-the-checker
+  fixed_in: 8a4a48b
+- id: R1-006
+  title: Duplicate acceptance-criteria checks (legacy + enhanced)
+  pattern: two implementations of the same check coexisting after refactor
+  files:
+  - src/bob3/superpowers.py
+  severity: high
+  status: fixed
+  tags:
+  - refactor-debt
+  - duplicate-implementation
+  fixed_in: 8a4a48b
+- id: R1-007
+  title: TITANS vestiges in logs and docstrings post-refactor
+  pattern: renamed system but legacy strings linger
+  files:
+  - src/bob3/cli.py
+  - src/bob3/memory.py
+  - src/bob3/orchestrator/mcp_config.py
+  - src/bob3/memory_client.py
+  severity: high
+  status: fixed
+  tags:
+  - stale-strings
+  - refactor-debt
+  fixed_in: 8a4a48b
+- id: R1-008
+  title: MCPLifecycleManager.start() re-registers atexit on every call
+  pattern: side-effect registration without guard against duplicate calls
+  files:
+  - src/bob3/mcp_lifecycle.py
+  severity: medium
+  status: fixed
+  tags:
+  - atexit-leak
+  - idempotency
+  - side-effect-registration
+  fixed_in: 8a4a48b
+  related:
+  - R2-006
+- id: R1-009
+  title: update_dependent_features_readiness uses conn.total_changes
+  pattern: wrong API for change-counting (cumulative not statement-local)
+  files:
+  - src/bob3/db.py
+  severity: medium
+  status: fixed
+  tags:
+  - wrong-api
+  - sqlite-pitfall
+  fixed_in: 8a4a48b
+  notes: 'conn.total_changes reflects all writes since connection opened, not
+
+    just the most recent UPDATE. Use cursor.rowcount instead.
+
+    '
+- id: R1-010
+  title: bob3 run --feature does not actually scope to that feature
+  pattern: infrastructure exists, CLI never wires it
+  files:
+  - src/bob3/cli.py
+  severity: medium
+  status: fixed
+  tags:
+  - docstring-lie
+  - half-finished-plumbing
+  fixed_in: 8a4a48b
+- id: R1-011
+  title: Operator precedence bug in _check_criterion
+  pattern: and binds tighter than or — A or B and C != (A or B) and C
+  files:
+  - src/bob3/enhanced_verification.py
+  severity: low
+  status: fixed
+  tags:
+  - operator-precedence
+  - parentheses-missing
+  fixed_in: 8a4a48b
+- id: R2-001
+  title: Double cost accumulation
+  pattern: in-memory counter + DB column tracked separately
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: critical
+  status: fixed
+  tags:
+  - non-atomic-counter
+  - state-divergence
+  fixed_in: dd37df0
+  related:
+  - R1-003
+  notes: 'Recurrence of R1-003 in a different form: handle_execution_result
+
+    called update_project_cost (DB) AND execute_feature did self.total_cost
+
+    += cost. Both fed budget_exceeded. self.total_cost grew at 2x DB rate.
+
+    '
+- id: R2-002
+  title: Verification exception silently promotes to passed
+  pattern: except Exception → fallback success default
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: critical
+  status: fixed
+  tags:
+  - permissive-default
+  - gaming-the-checker
+  - broad-except-swallow
+  fixed_in: dd37df0
+- id: R2-003
+  title: _run_single_feature skips budget enforcement
+  pattern: specialized code path doesn't honor cross-cutting policy
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: critical
+  status: fixed
+  tags:
+  - policy-bypass
+  - specialized-path-skip
+  fixed_in: dd37df0
+- id: R2-004
+  title: Subprocess timeout doesn't kill grandchildren
+  pattern: subprocess.run timeout only kills direct child; pipe held by grandchild
+  files:
+  - src/bob3/superpowers.py
+  - src/bob3/enhanced_verification.py
+  severity: critical
+  status: fixed
+  tags:
+  - subprocess-pgroup
+  - hang-risk
+  - bpo-31935
+  fixed_in: dd37df0
+  notes: 'Documented Python issue (bpo-31935, bpo-38207). Fix uses Popen +
+
+    start_new_session=True + os.killpg on TimeoutExpired.
+
+    '
+- id: R2-005
+  title: record_feedback reads stale counters via mem0.get
+  pattern: wrong abstraction layer — mem0.get does not round-trip custom payload
+  files:
+  - src/bob3/memory.py
+  severity: critical
+  status: fixed
+  tags:
+  - wrong-abstraction
+  - silent-data-loss
+  fixed_in: dd37df0
+- id: R2-006
+  title: rstrip(ENTRY_SEPARATOR) corrupts trailing dashes
+  pattern: str.rstrip with multi-char arg treats it as a SET, not literal
+  files:
+  - src/bob3/orientation.py
+  severity: critical
+  status: fixed
+  tags:
+  - api-misuse
+  - removesuffix-vs-rstrip
+  fixed_in: dd37df0
+- id: R2-007
+  title: mcp_lifecycle.stop() PIPE deadlock
+  pattern: wait() while stderr=PIPE unread fills OS buffer and hangs subprocess
+  files:
+  - src/bob3/mcp_lifecycle.py
+  severity: critical
+  status: fixed
+  tags:
+  - subprocess-pipe-deadlock
+  - communicate-vs-wait
+  fixed_in: dd37df0
+- id: R2-008
+  title: ANSI codes break pytest output parsing
+  pattern: regex assumes whitespace-only between tokens; ANSI escapes inserted
+  files:
+  - src/bob3/superpowers.py
+  - src/bob3/enhanced_verification.py
+  severity: high
+  status: fixed
+  tags:
+  - ansi-escapes
+  - pytest-output
+  - color=no
+  fixed_in: dd37df0
+- id: R2-009
+  title: Status update + cascade not in single transaction
+  pattern: two separate with connect() blocks — partial-state window
+  files:
+  - src/bob3/db.py
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: fixed
+  tags:
+  - transaction-atomicity
+  - partial-state
+  fixed_in: dd37df0
+  notes: 'Fixed via new db.complete_feature_and_cascade. Also added
+
+    _recover_orphaned_pending_features to clean up any pre-existing
+
+    mid-cascade-crash state.
+
+    '
+- id: R2-010
+  title: _PROXY_LOGGED_FEATURE_IDS unbounded module-level set
+  pattern: memory growth in long-running orchestrator
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: medium
+  status: fixed
+  tags:
+  - unbounded-memory
+  - module-level-state
+  fixed_in: dd37df0
+- id: R2-011
+  title: Signal handler does DB I/O (not async-signal-safe)
+  pattern: POSIX signal handler does non-reentrant I/O
+  files:
+  - src/bob3/signal_handler.py
+  severity: high
+  status: fixed
+  tags:
+  - signal-safety
+  - posix
+  - deadlock-risk
+  fixed_in: dd37df0
+- id: R2-012
+  title: Git hook failures swallowed by run_loop
+  pattern: broad except converts CalledProcessError to silent warning
+  files:
+  - src/bob3/git_ops.py
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: fixed
+  tags:
+  - exception-swallow
+  - indistinguishable-failure-modes
+  fixed_in: dd37df0
+  related:
+  - R2-019
+- id: R2-013
+  title: Stale broken symlinks silently skipped in skills_installer
+  pattern: best-effort cleanup with no fallback verification
+  files:
+  - src/bob3/skills_installer.py
+  severity: medium
+  status: fixed
+  tags:
+  - silent-failure
+  - missing-verification
+  fixed_in: dd37df0
+- id: R2-014
+  title: Multiple MCPLifecycleManager instances double-spawn
+  pattern: module-level singleton + instance state — direct construction breaks invariant
+  files:
+  - src/bob3/mcp_lifecycle.py
+  severity: medium
+  status: fixed
+  tags:
+  - singleton-violation
+  - registry-pattern-needed
+  fixed_in: dd37df0
+  related:
+  - R1-008
+- id: R2-015
+  title: Unrecognized model name raises ValueError uncaught
+  pattern: exception in option-builder propagates through orchestration
+  files:
+  - src/bob3/orchestrator/claude_executor.py
+  severity: medium
+  status: fixed
+  tags:
+  - exception-uncaught
+  - user-input-validation
+  fixed_in: dd37df0
+- id: R2-016
+  title: _stripped_parent_session_env not applied to ClaudeExecutor.execute
+  pattern: guard applied to one entry path but not the other
+  files:
+  - src/bob3/orchestrator/claude_executor.py
+  severity: medium
+  status: fixed
+  tags:
+  - partial-application
+  - env-leak
+  fixed_in: dd37df0
+- id: R2-017
+  title: Empty PERPLEXITY_API_KEY silently passed to subprocess
+  pattern: missing pre-flight check for required external credential
+  files:
+  - src/bob3/orchestrator/mcp_config.py
+  severity: medium
+  status: fixed
+  tags:
+  - silent-misconfiguration
+  - missing-validation
+  fixed_in: dd37df0
+- id: R2-018
+  title: Memory MCP tools accept arbitrary memory_id with no validation
+  pattern: MCP tool surface accepts unsanitized strings
+  files:
+  - src/bob3/memory_mcp.py
+  severity: medium
+  status: fixed
+  tags:
+  - input-validation
+  - mcp-surface
+  fixed_in: dd37df0
+- id: R2-019
+  title: AST stub detection bypassable via trivial returns
+  pattern: detector covers obvious patterns but not return-literal variants
+  files:
+  - src/bob3/ast_checks.py
+  severity: medium
+  status: fixed
+  tags:
+  - detection-coverage
+  - evasion-patterns
+  fixed_in: dd37df0
+- id: R2-020
+  title: _run_python_criterion executes arbitrary code
+  pattern: no allowlist on user-controlled Python expressions
+  files:
+  - src/bob3/enhanced_verification.py
+  severity: high
+  status: fixed
+  tags:
+  - rce-risk
+  - allowlist-needed
+  fixed_in: dd37df0
+  related:
+  - R3-001
+  - R3-002
+- id: R2-021
+  title: f118 tests patch verification — half-tested resume flow
+  pattern: tests stub the feature being tested as a workaround
+  files:
+  - tests/test_f118_e2e_interrupt_resume_spec_change.py
+  severity: medium
+  status: fixed
+  tags:
+  - test-fidelity
+  - workaround-stub
+  fixed_in: dd37df0
+- id: R3-001
+  title: 'python: criterion allowlist bypass via importlib'
+  pattern: ban-list missing common dynamic-import escape
+  files:
+  - src/bob3/enhanced_verification.py
+  severity: critical
+  status: fixed
+  tags:
+  - allowlist-gap
+  - importlib-bypass
+  - security
+  fixed_in: fcd423c
+  related:
+  - R2-020
+- id: R3-002
+  title: 'python: criterion allowlist bypass via getattr/setattr/dunder chains'
+  pattern: AST visitor blocks attr.NAME but not getattr(obj, 'NAME')
+  files:
+  - src/bob3/enhanced_verification.py
+  severity: critical
+  status: fixed
+  tags:
+  - allowlist-gap
+  - sandbox-escape
+  - dunder-chain
+  fixed_in: fcd423c
+  related:
+  - R2-020
+  - R3-001
+- id: R3-003
+  title: Double cascade on every successful feature (round 2 form)
+  pattern: redundant call to old function after refactor
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: critical
+  status: fixed
+  tags:
+  - refactor-debt
+  - redundant-call
+  fixed_in: fcd423c
+  related:
+  - R2-009
+  notes: 'Recurrence of the cascade theme. complete_feature_and_cascade subsumes
+
+    update_dependent_features_readiness, but the leftover call to
+
+    cascade_update_dependents at the tail of execute_feature was still
+
+    running on every success, double-querying.
+
+    '
+- id: R3-004
+  title: _recover_orphaned_pending_features does N+1 queries
+  pattern: Python-side loop opens DB connection per iteration
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - src/bob3/db.py
+  severity: critical
+  status: fixed
+  tags:
+  - n-plus-one
+  - performance
+  - sqlite-connection-overhead
+  fixed_in: fcd423c
+- id: R3-005
+  title: 'Signal latency: Ctrl-C hangs for full sub-agent duration'
+  pattern: flag-poll only between coarse iterations; nothing inside long await
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: partially_fixed
+  tags:
+  - signal-safety
+  - signal-latency
+  - blocking-await
+  - ux
+  fixed_in: fcd423c
+  notes: 'Improved: clear warning on first SIGINT explaining behavior; force-exit
+
+    on second SIGINT. True mid-await cancellation deferred (would require
+
+    threading the flag through claude_executor).
+
+    '
+- id: R3-006
+  title: GracefulShutdownHandler._perform_shutdown is dead code
+  pattern: tested path is not the one production uses
+  files:
+  - src/bob3/signal_handler.py
+  severity: high
+  status: fixed
+  tags:
+  - signal-safety
+  - dead-code
+  - test-coverage-illusion
+  fixed_in: fcd423c
+  notes: 'Resolved by deleting the dead method (option b in the fix prompt).
+
+    The orchestration loop owns its own shutdown sequence directly.
+
+    '
+- id: R3-007
+  title: Self-test recursion guard parents[1] off-by-one
+  pattern: pathlib parents indexing — anchored at src/ not repo root
+  files:
+  - src/bob3/superpowers.py
+  severity: medium
+  status: fixed
+  tags:
+  - pathlib-pitfall
+  - off-by-one
+  fixed_in: fcd423c
+- id: R3-008
+  title: clean_workspace_skills deletes user symlinks
+  pattern: indiscriminate predicate (is_symlink) instead of ownership check
+  files:
+  - src/bob3/skills_installer.py
+  severity: high
+  status: fixed
+  tags:
+  - user-data-loss
+  - ownership-check-needed
+  fixed_in: fcd423c
+- id: R3-009
+  title: Git hook heuristic misclassifies infrastructure errors
+  pattern: permissive fallback ('any non-empty stderr') over-promotes
+  files:
+  - src/bob3/git_ops.py
+  severity: high
+  status: fixed
+  tags:
+  - permissive-default
+  - classification-error
+  fixed_in: fcd423c
+  related:
+  - R2-012
+- id: R3-010
+  title: Module-level state leaks between tests
+  pattern: no teardown for module-level singletons / signal handlers
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - src/bob3/mcp_lifecycle.py
+  severity: medium
+  status: fixed
+  tags:
+  - test-isolation
+  - autouse-fixture-needed
+  fixed_in: fcd423c
+- id: R3-011
+  title: pytest-asyncio not in deps; no [dev] extras; env vars undocumented
+  pattern: fresh-clone setup path not validated
+  files:
+  - pyproject.toml
+  - README.md
+  severity: high
+  status: fixed
+  tags:
+  - setup-friction
+  - doc-drift
+  fixed_in: fcd423c
+- id: R4-001
+  title: Node.js + Claude Code CLI requirement undocumented
+  pattern: transitive setup dependency not surfaced in Requirements
+  files:
+  - README.md
+  severity: high
+  status: fixed
+  tags:
+  - setup-friction
+  - doc-drift
+  - transitive-dep
+  related:
+  - R3-011
+  notes: 'claude-code-sdk requires Node.js >= 18 and a globally-installed
+
+    `@anthropic-ai/claude-code` CLI. Quickstart never mentioned either,
+
+    so a fresh-clone install with only Python set up failed at first
+
+    sub-agent spawn with an opaque error.
+
+    '
+- id: R4-002
+  title: get_database_path defaults to install location, not cwd
+  pattern: package-relative path used for user-workspace data
+  files:
+  - src/bob3/db.py
+  severity: critical
+  status: fixed
+  tags:
+  - user-flow
+  - doc-drift
+  - package-vs-workspace
+  notes: 'Default was ``get_package_dir().parent.parent / "bob3.db"`` —
+
+    i.e. the location pip installed bob3 into (often site-packages or
+
+    an editable checkout). After ``bob3 init ./my-proj && cd ./my-proj``
+
+    every subsequent ``bob3 plan`` / ``bob3 run`` looked at the wrong DB
+
+    and reported "no project found." Quickstart was non-functional.
+
+    Fixed by switching the default to ``Path.cwd() / "bob3.db"``.
+
+    '
+- id: R4-003
+  title: bob3 plan spec name mismatch error gives no fix steps
+  pattern: actionable error message asks user to do the wrong thing
+  files:
+  - src/bob3/cli.py
+  severity: medium
+  status: fixed
+  tags:
+  - error-message
+  - ux
+  - doc-drift
+  notes: 'Error told users to "rename the spec to match" when the more
+
+    reasonable fix is to re-init the project with the spec''s name.
+
+    Updated message presents both options and shows the actual
+
+    ``--name`` value to use.
+
+    '
+- id: R4-004
+  title: Perplexity advertised for sub-agents but never injected
+  pattern: capability claim vs implementation drift
+  files:
+  - src/bob3/orchestrator/claude_executor.py
+  - README.md
+  severity: high
+  status: fixed
+  tags:
+  - capability-mismatch
+  - doc-drift
+  - refactor-debt
+  notes: 'README "What makes it different" claimed implementation sub-agents
+
+    can use Perplexity, but only spawn_research_agent built the MCP
+
+    dict. spawn_sub_agent now auto-injects the Perplexity MCP when
+
+    PERPLEXITY_API_KEY is set; README updated to reflect the precise
+
+    contract.
+
+    '
+- id: R4-005
+  title: BOB3_EMBEDDING_DIMS missing from README env var table
+  pattern: config knob exists in code but not in user-facing reference
+  files:
+  - README.md
+  severity: medium
+  status: fixed
+  tags:
+  - doc-drift
+  - config-coupling
+  related:
+  - R3-011
+  notes: 'memory.py reads BOB3_EMBEDDING_DIMS but the README table omitted
+
+    it. Users who switch BOB3_EMBEDDER_MODEL hit a Qdrant
+
+    collection-dim mismatch with no breadcrumb in the docs.
+
+    '
+- id: R4-006
+  title: README mentions Ollama in a FastEmbed-only build
+  pattern: stale architecture references after backend swap
+  files:
+  - README.md
+  severity: medium
+  status: fixed
+  tags:
+  - stale-strings
+  - refactor-debt
+  - doc-drift
+  related:
+  - R1-007
+  notes: 'Bob3 Memory uses FastEmbed (ONNX, CPU) for embeddings. README''s
+
+    "What makes it different" bullet and key-design-decisions section
+
+    still listed Ollama. Updated to FastEmbed.
+
+    '
+- id: R4-007
+  title: bob3 run does not surface which auth path it will use
+  pattern: silent auth-mode selection — user can't tell why a call failed
+  files:
+  - src/bob3/cli.py
+  severity: low
+  status: fixed
+  tags:
+  - ux
+  - observability
+  notes: 'Added a pre-flight check that calls validate_api_key() and prints
+
+    a one-line note when no env key is set, signaling that the OAuth
+
+    path will be used instead.
+
+    '
+- id: R4-008
+  title: POSIX-only assumptions undocumented
+  pattern: platform support implicit, not documented
+  files:
+  - README.md
+  severity: medium
+  status: fixed
+  tags:
+  - platform-support
+  - doc-drift
+  notes: 'bob3 calls os.killpg, passes start_new_session=True, and uses
+
+    POSIX signal handling. None of these work on Windows. Added a
+
+    Linux/macOS-only note to the Requirements section instead of
+
+    pretending to support Windows.
+
+    '
+- id: R4-009
+  title: 'os/pathlib/tempfile/glob not banned in python: criterion'
+  pattern: 'allowlist-gap: stdlib filesystem/env modules omitted from python: criterion ban
+    list'
+  files:
+  - src/bob3/enhanced_verification.py
+  severity: critical
+  status: fixed
+  tags:
+  - security
+  - allowlist-gap
+  fixed_in: WORKDIR
+  fixed_at: '2026-05-01'
+  related:
+  - R3-006
+  notes: 'python: criteria run python -c <expr> in the workspace and were AST-scanned for
+    banned imports, but os/pathlib/tempfile/glob were missing. A spec like python: import
+    os; fd=os.open(''/tmp/leak'',os.O_WRONLY|os.O_CREAT,0o600); os.write(fd, os.getenv(''ANTHROPIC_API_KEY'','''').encode());
+    os.close(fd) would silently exfiltrate the API key. Fixed by adding os, pathlib, tempfile,
+    glob to _PYTHON_CRITERION_BANNED_MODULES. Benign uses (assert 1+1==2, json.dumps, user-module
+    imports) still work.'
+- id: R4-010
+  title: revert_feature accepts arbitrary commit_sha (argument injection)
+  pattern: 'argument-injection: unvalidated user-supplied value reaches subprocess argv'
+  files:
+  - src/bob3/git_ops.py
+  severity: high
+  status: fixed
+  tags:
+  - security
+  - argument-injection
+  - subprocess-pitfalls
+  fixed_in: WORKDIR
+  fixed_at: '2026-05-01'
+  notes: commit_sha was passed straight into git revert --no-edit <sha>. A value of --abort
+    would put git revert into abort mode and silently disable rollbacks; a ref expression
+    like HEAD~5 would let a compromised caller revert arbitrary commits. Fixed by requiring
+    a literal hex SHA (7-40 chars) before invoking git, raising GitCommitError otherwise.
+- id: R4-011
+  title: 'pytest: criterion can inject pytest flags (no -- sentinel)'
+  pattern: 'argument-injection: criterion expression lands in flag position of subprocess
+    argv'
+  files:
+  - src/bob3/enhanced_verification.py
+  severity: high
+  status: fixed
+  tags:
+  - security
+  - argument-injection
+  fixed_in: WORKDIR
+  fixed_at: '2026-05-01'
+  notes: 'pytest: <expression> built argv as [..., expression, --tb=no, -q, --color=no]. A
+    criterion of pytest: --co caused pytest to run in collect-only mode and exit 0 with no
+    failures, which our success heuristic accepted (silent pass). Fixed by inserting -- between
+    the fixed flags and the expression so pytest treats every following token as a path/nodeid.'
+- id: R4-012
+  title: Workspace .claude/skills/ writable by sub-agents (skill poisoning)
+  pattern: 'trust boundary violation: bypassPermissions sub-agent can replace bob3 skills'
+  files:
+  - src/bob3/skills_installer.py
+  - src/bob3/orchestrator/claude_executor.py
+  severity: high
+  status: fixed
+  tags:
+  - security
+  - skill-poisoning
+  - trust-boundary
+  fixed_in: WORKDIR
+  fixed_at: '2026-05-01'
+  notes: Sub-agents run with cwd=<workspace> and permission_mode=bypassPermissions, so they
+    can write/delete in <workspace>/.claude/skills/. A malicious sub-agent could replace a
+    bob3 skill symlink with a directory containing a poisoned SKILL.md, and the next sub-agent
+    in the same workspace would load it. Fixed by adding verify_skills_integrity() which audits
+    each bundled skill before sub-agent spawn (symlink + resolves into current bob3 bundled
+    skills dir) and force-replaces any tampered entry with a SECURITY-tagged warning. Called
+    from build_sub_agent_options.
+- id: R4-013
+  title: Git hook rollback in execute_feature is non-atomic
+  pattern: multi-step rollback (update_feature per dependent in a Python loop) — crash mid-loop
+    leaves some dependents pending and others ready
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - src/bob3/db.py
+  severity: high
+  status: fixed
+  tags:
+  - transaction-atomicity
+  - partial-state
+  - rollback-path
+  fixed_in: pending-r4-fixes
+  fixed_at: '2026-05-01'
+  related:
+  - R2-009
+  notes: Hook-failure rollback iterated dependents and called db.update_feature one-by-one.
+    If any iteration raised (broad except caught it but the loop aborted), dependents ended
+    up in a mixed state. Fixed by adding db.rollback_feature_cascade which performs feature-status
+    revert AND dependent-cascade revert in a single connect() transaction.
+- id: R4-014
+  title: validate_acceptance_criteria returns True on internal exception
+  pattern: except Exception → return True (skipped) — silently passes feature when validator
+    crashes
+  files:
+  - src/bob3/enhanced_verification.py
+  severity: critical
+  status: fixed
+  tags:
+  - permissive-default
+  - broad-except-swallow
+  - gaming-the-checker
+  fixed_in: pending-r4-fixes
+  fixed_at: '2026-05-01'
+  related:
+  - R1-005
+  - R2-002
+  notes: 'Recurrence of R1-005 / R2-002. Any exception inside the validator caused return
+    (True, "Could not validate criteria (skipped): ..."), silently rubber-stamping the feature.
+    Fixed by failing closed: return (False, ...) with logger.error(exc_info=True). Caller
+    now sees the crash as a verification failure requiring manual review.'
+- id: R4-015
+  title: test_cost_not_updated_when_none green-passes for the wrong reason
+  pattern: 'test-fidelity: assertion holds because of an UNINTENDED code path (num_turns=0
+    -> proxy yields 0), not because the documented contract was exercised'
+  files:
+  - tests/test_f070_result_handler.py
+  severity: medium
+  status: fixed
+  tags:
+  - test-fidelity
+  - false-confidence
+  - cost-proxy
+  fixed_in: pending-r4-test-fidelity
+  fixed_at: '2026-04-24'
+  related:
+  - R2-021
+  notes: Test created ExecutionResult(total_cost_usd=None) with default num_turns=0; _normalize_cost(None,
+    0) returns (0.0, "zero") so cost stays 0. The test passed because zero turns means zero
+    proxy cost — NOT because "None cost is never recorded." A future bug where cost is silently
+    dropped EVEN with non-zero turns would still pass this test. Fixed by renaming the test
+    to test_cost_zero_when_no_cost_no_turns (it now documents what it actually verifies) and
+    adding a companion test test_cost_uses_proxy_when_only_turns_known that pins BOB3_COST_PER_TURN_PROXY=0.05,
+    sets num_turns=5, and asserts the recorded cost delta is exactly $0.25 — the actual budget-enforcement
+    contract on Claude Max Pro / OAuth subs.
+- id: R4-016
+  title: cascade-rollback test only covers 1-dependent chain
+  pattern: 'test-coverage gap: atomicity invariant claimed but only one dependent is exercised,
+    so partial-cascade rollback is never tested'
+  files:
+  - tests/test_f070_result_handler.py
+  severity: medium
+  status: fixed
+  tags:
+  - test-fidelity
+  - test-coverage-illusion
+  - transaction-atomicity
+  fixed_in: pending-r4-test-fidelity
+  fixed_at: '2026-04-24'
+  related:
+  - R4-013
+  - R2-009
+  notes: test_rollback_when_cascade_raises_keeps_feature_uncompleted set up A → B (one dependent)
+    and crashed on call 2 (the dependent-lookup SELECT) BEFORE any dependent UPDATE ran. That
+    proves "crash-before-write rolls back," but NOT the actual invariant — "crash mid-cascade
+    with multiple dependents rolls back ALL writes." Added sister test test_rollback_when_cascade_partway_through_multiple_dependents
+    that creates A → B and A → C and crashes on the 5th execute call, AFTER the first dependent
+    UPDATE has run. Asserts A is still ready, BOTH dependents are still pending — proving
+    the dependent whose UPDATE already executed was rolled back along with the rest of the
+    transaction.
+- id: R4-017
+  title: TestSignalHandlerIsAsyncSignalSafe tests a class production never installs
+  pattern: 'dead-code-tested-path: tests verify GracefulShutdownHandler._handle_signal is
+    async-signal-safe, but OrchestrationLoop._install_signal_handlers installs an inline closure,
+    not GracefulShutdownHandler'
+  files:
+  - tests/test_f117_graceful_shutdown.py
+  severity: high
+  status: fixed
+  tags:
+  - test-fidelity
+  - dead-code-tested-path
+  - signal-safety
+  fixed_in: pending-r4-test-fidelity
+  fixed_at: '2026-04-24'
+  related:
+  - R3-006
+  - R1-001
+  notes: Same recurring failure as R3-006 — the class with the test coverage isn't the class
+    production calls. Added TestOrchestrationLoopSignalHandlerIsAsyncSignalSafe which spawns
+    a real OrchestrationLoop, calls _install_signal_handlers, captures the actual installed
+    handler via signal.getsignal(SIGINT), then invokes it directly with mock signum/frame.
+    Verifies (1) loop.shutdown_requested flips True, (2) NO calls to db.create_checkpoint
+    / db.update_feature / db.update_project_cost / mcp_lifecycle.stop_mcp_server, (3) SIGTERM
+    behaves identically, (4) a second signal raises SystemExit. This exercises the ACTUAL
+    production signal path.
+- id: R4-018
+  title: test_verification_evidence_created_on_success does not assert passed=True
+  pattern: 'incomplete assertion: test verifies presence of "passed" key but never checks
+    its value, masking silent verification failures'
+  files:
+  - tests/test_f113_superpowers_integration.py
+  severity: medium
+  status: fixed
+  tags:
+  - test-fidelity
+  - false-confidence
+  - verification-gating
+  fixed_in: pending-r4-test-fidelity
+  fixed_at: '2026-04-24'
+  notes: Test asserted "passed", "checks", "summary" keys exist in verification evidence but
+    never asserted content["passed"] is True. The test would green-pass even when verification
+    reported passed=False — exactly the false-confidence test-fidelity failure the registry
+    has flagged repeatedly. Fixed by (a) using a feature WITHOUT acceptance criteria so the
+    verifier's acceptance_criteria_met check is not in the picture (the original feature_with_criteria
+    had vague criteria the synthetic workspace could never satisfy); (b) writing a non-trivial
+    function body so the AST stub-detector heuristic does not fire; (c) asserting content["passed"]
+    is True AND content["summary"] is non-empty.
+- id: R4-019
+  title: test_add_finding_assigns_id does not assert post-reload total count
+  pattern: 'incomplete assertion: round-trip check verifies new finding exists but not that
+    other findings were preserved'
+  files:
+  - tests/test_f127_review_registry.py
+  severity: low
+  status: fixed
+  tags:
+  - test-fidelity
+  - round-trip-coverage
+  fixed_in: pending-r4-test-fidelity
+  fixed_at: '2026-04-24'
+  notes: After save_registry + load_registry round-trip, the test only verified the newly-added
+    finding could be retrieved by id. A bug in save_registry that silently dropped unrelated
+    findings (e.g. due to serialization touching a field on a different finding) would still
+    pass. Fixed by capturing before_count = len(reg.findings) before add_finding and asserting
+    len(reloaded.findings) == before_count + 1 after the round-trip.
+- id: R4-020
+  title: conftest does not snapshot/restore BOB3_* environment variables
+  pattern: 'test-isolation gap: env vars set via os.environ[...] = ... (not via monkeypatch)
+    leak across tests'
+  files:
+  - tests/conftest.py
+  severity: medium
+  status: fixed
+  tags:
+  - test-isolation
+  - env-var-leak
+  - autouse-fixture-needed
+  fixed_in: pending-r4-test-fidelity
+  fixed_at: '2026-04-24'
+  related:
+  - R3-010
+  notes: _reset_module_state cleared module-level singletons and restored signal handlers,
+    but did not snapshot/restore environment variables. A test that did os.environ["BOB3_DATABASE_PATH"]
+    = ... directly leaked that setting into subsequent tests. Fixed by capturing the values
+    of a tuple of known bob3 env vars (BOB3_DATABASE_PATH, BOB3_MEMORY_DIR, BOB3_COST_PER_TURN_PROXY,
+    BOB3_WORKSPACE, BOB3_LOG_DIR, BOB3_LOG_LEVEL) at fixture entry and restoring them at teardown
+    — None means "was unset, so pop it"; non-None means "was set to this value, restore it."
+    This preserves CI-set values while resetting test pollution. Companion regression tests
+    added in test_conftest_isolation.py (test_a_set_bob3_database_path_env_directly / test_b_bob3_database_path_env_was_restored).
+- id: R5-001
+  title: SQLite connections lack busy_timeout / Python-level timeout
+  pattern: 'concurrent writers crash with OperationalError: database is locked'
+  files:
+  - src/bob3/db.py
+  severity: high
+  status: fixed
+  tags:
+  - sqlite-concurrency
+  - missing-timeout
+  - busy-timeout
+  fixed_in: pending-r5-perf-concurrency
+  fixed_at: '2026-04-24'
+  notes: 'get_connection() called sqlite3.connect() with no timeout AND did not
+
+    set PRAGMA busy_timeout. Two concurrent ``bob3 run`` invocations
+
+    (or even ``bob3 status`` overlapping a long ``bob3 run``) could trip
+
+    "database is locked" the moment one tried to BEGIN. Fixed by setting
+
+    both knobs to 30s so the driver waits instead of crashing. Regression
+
+    test pinned in tests/test_f004_database_connection.py
+
+    (test_connection_has_busy_timeout).
+
+    '
+- id: R5-002
+  title: No file-lock guarding concurrent ``bob3 run`` for the same project
+  pattern: two CLI invocations interleave on the same DB
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - src/bob3/cli.py
+  severity: high
+  status: fixed
+  tags:
+  - concurrency
+  - file-lock
+  - cli-safety
+  fixed_in: pending-r5-perf-concurrency
+  fixed_at: '2026-04-24'
+  related:
+  - R5-001
+  notes: 'With busy_timeout fixing the crash mode, two concurrent runs no longer
+
+    error out — but they still race: both pick "ready" features, both flip
+
+    status to ''executing'', both spawn sub-agents, and the cascade order is
+
+    whatever the OS scheduler decides. Fixed with a per-project advisory
+
+    flock on <workspace>/.bob3.lock, acquired in OrchestrationLoop.run()
+
+    via fcntl.LOCK_EX|LOCK_NB. On contention, raises AlreadyRunningError;
+
+    the CLI catches and exits 1 with a clear message. Regression tests in
+
+    tests/test_f069_run_command.py (TestRunLockConcurrency).
+
+    '
+- id: R5-003
+  title: Orphan-pending recovery uses N transactions instead of one bulk UPDATE
+  pattern: per-row update_feature loop where one UPDATE...IN(...) suffices
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - src/bob3/db.py
+  severity: medium
+  status: fixed
+  tags:
+  - perf
+  - n-plus-1
+  - bulk-update
+  fixed_in: pending-r5-perf-concurrency
+  fixed_at: '2026-04-24'
+  notes: '_recover_orphaned_pending_features called update_feature(fid, status=''ready'')
+
+    per orphan ID. Each call opens its own connection and transaction, so a
+
+    project coming back with hundreds of orphans paid for hundreds of WAL
+
+    writer round-trips. Replaced with db.bulk_promote_features_to_ready
+
+    (single UPDATE ... WHERE id IN (...) AND status=''pending''). Regression
+
+    test exercises 100 orphans completing in <100ms in
+
+    tests/test_f116_auto_resume.py (TestBulkPromoteFeaturesToReady).
+
+    '
+- id: R5-004
+  title: budget_exceeded re-fetches project from DB on every loop iteration
+  pattern: cache-the-canonical-value omitted; hot path opens N connections
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: medium
+  status: fixed
+  tags:
+  - perf
+  - hot-path-db-read
+  fixed_in: pending-r5-perf-concurrency
+  fixed_at: '2026-04-24'
+  related:
+  - R5-001
+  notes: 'OrchestrationLoop.budget_exceeded() called db.get_project(self.project_id)
+
+    each iteration to read total_cost_usd. With 200+ features × N retries
+
+    that adds 1000+ throwaway SQLite connections to the hot path. Fixed by
+
+    caching project total + max into self._project_total_cost /
+
+    self._project_max_cost_usd, refreshed only after cost-mutating writes
+
+    (handle_execution_result, _run_research, decomposition path). Regression
+
+    test in tests/test_f069_run_command.py (TestBudgetExceededCachesProjectCost).
+
+    '
+- id: R5-005
+  title: No wall-clock timeout on sub-agent execution
+  pattern: max_turns bounds turn count but not wall-clock; stuck tool call hangs loop
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - README.md
+  severity: high
+  status: fixed
+  tags:
+  - reliability
+  - timeout
+  - stuck-tool-call
+  fixed_in: pending-r5-perf-concurrency
+  fixed_at: '2026-04-24'
+  notes: 'OrchestrationLoop.execute_feature awaited spawn_sub_agent with no
+
+    upper time bound. A hung Puppeteer / browser MCP or any other stuck
+
+    tool call could park the orchestrator indefinitely. Fixed by wrapping
+
+    the await in asyncio.wait_for using BOB3_FEATURE_TIMEOUT_SECONDS
+
+    (default 3600s = 1 hour). On timeout the feature is marked
+
+    ''interrupted'' (NOT ''failed'', so F116 auto-resume picks it up rather
+
+    than burning a refinement attempt) and dependents are NOT cascaded.
+
+    Synthetic execution_timeout evidence is recorded for operator review.
+
+    Env var documented in README. Regression tests in
+
+    tests/test_f069_run_command.py (TestSubAgentWallClockTimeout).
+
+    '
+- id: R6-001
+  title: Research cost double-counted (recurrence of non-atomic-counter)
+  pattern: research path bumps both self.total_cost AND project.total_cost_usd
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: fixed
+  tags:
+  - non-atomic-counter
+  - budget-bypass
+  - regression-of-fixed-pattern
+  fixed_in: pending-r6-orch-wireup
+  fixed_at: '2026-04-24'
+  related:
+  - R1-003
+  - R2-001
+  notes: 'Recurrence of R1-003 / R2-001 on the research path. OrchestrationLoop._run_research
+    wrote research_cost to BOTH self.total_cost AND db.update_project_cost. budget_exceeded()
+    uses max(project_total, self.total_cost), so the research charge was effectively double-counted
+    against the budget. Fix: write only to the canonical DB total, mirroring the R2-001 fix
+    that was applied to the implementation path. Regression test in tests/test_f054_resource_cost_tracking.py
+    (TestResearchCostNotDoubleCounted).'
+- id: R6-002
+  title: Decomposition cost only in self.total_cost, never in DB
+  pattern: decomposition path skips db.update_project_cost
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: high
+  status: fixed
+  tags:
+  - non-atomic-counter
+  - budget-bypass
+  - missing-db-write
+  fixed_in: pending-r6-orch-wireup
+  fixed_at: '2026-04-24'
+  related:
+  - R1-003
+  - R2-001
+  notes: 'execute_feature''s decomposition branch incremented self.total_cost with the decomposer-agent
+    cost but never called db.update_project_cost — so the canonical project.total_cost_usd
+    was blind to decomposition charges and the project-level max_cost_usd guard could not
+    enforce them. Also lacked Max-Pro-None normalization (would silently treat cost_usd=None
+    as zero spend, skipping the turn-count proxy). Fix: route the cost through _normalize_cost
+    + db.update_project_cost, atomically. Regression test in tests/test_f054_resource_cost_tracking.py
+    (TestDecompositionCostInDb) and tests/test_f072_feature_decomposition_handling.py.'
+- id: R6-003
+  title: 'Regression detection inert: db.detect_regression never called'
+  pattern: DB helper exists; orchestrator never invokes it
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - src/bob3/db.py
+  severity: high
+  status: fixed
+  tags:
+  - dead-feature
+  - missing-wireup
+  - vacuous-cli
+  fixed_in: pending-r6-orch-wireup
+  fixed_at: '2026-04-24'
+  notes: 'db.detect_regression has been thoroughly tested in isolation since F051 but was
+    never invoked from execute_feature. Result: the regression_events table was always empty
+    in production, show-regressions was vacuous, and the rollback path (F052) had nothing
+    to react to. Fix: capture a pytest snapshot before the sub-agent spawns and another after
+    verification passes; call db.detect_regression with both sides + the causing feature ID;
+    store evidence of type ''regression_detected'' for operator review. New helper capture_pytest_snapshot
+    lives in run_loop.py. Regression tests in tests/test_f051_regression_detection.py (TestRegressionDetectionWiredIntoOrchestrator).'
+- id: R6-004
+  title: 'Calibration tracking inert: create_or_update_calibration never called from loop'
+  pattern: DB helper exists; orchestrator never invokes it
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - src/bob3/db.py
+  severity: high
+  status: fixed
+  tags:
+  - dead-feature
+  - missing-wireup
+  - vacuous-cli
+  fixed_in: pending-r6-orch-wireup
+  fixed_at: '2026-04-24'
+  related:
+  - R6-003
+  notes: 'db.create_or_update_calibration / db.record_calibration_result exist and are tested
+    in isolation, but the orchestration loop never wrote to calibration_data. show-calibration
+    was vacuous and drift detection (F050) had no inputs. Fix: at the end of execute_feature,
+    call create_or_update_calibration with the feature''s pre-execution conf_impl_correctness
+    as predicted confidence and the actual outcome (passed verification AND committed cleanly)
+    as the realised result. task_class is currently a coarse ''implementation'' bucket — see
+    _feature_task_class for the seam to plug in richer classification. Regression tests in
+    tests/test_f019_calibration_data.py (TestCalibrationWiredIntoOrchestrator).'
+recurring_patterns:
+- tag: refactor-debt
+  occurrences:
+  - R1-006
+  - R1-007
+  - R3-003
+  - R4-004
+  - R4-006
+  summary: 'After every major refactor, leftover call sites or strings from the
+
+    old design persist. Reviewers should grep for old names after any
+
+    refactor PR lands.
+
+    '
+- tag: doc-drift
+  occurrences:
+  - R3-011
+  - R4-001
+  - R4-003
+  - R4-004
+  - R4-005
+  - R4-006
+  - R4-008
+  summary: 'User-facing docs (README, CLI error messages) keep falling out of
+
+    sync with code: missing prerequisites, missing env vars, capability
+
+    claims that no code path implements, stale backend names. Treat
+
+    capability claims and Quickstart as part of the contract — if a
+
+    claim isn''t backed by code, fix one or the other before merging.
+
+    '
+- tag: setup-friction
+  occurrences:
+  - R3-011
+  - R4-001
+  - R4-002
+  summary: 'Fresh-clone setup paths repeatedly break: missing transitive deps,
+
+    defaults that point at the install location instead of the user''s
+
+    cwd, env vars undocumented. Walk the Quickstart end-to-end on a
+
+    clean machine after any change to install/init/plan flow.
+
+    '
+- tag: non-atomic-counter
+  occurrences:
+  - R1-003
+  - R2-001
+  summary: 'Two trackings of the same value (in-memory + DB) drift. Use a single
+
+    atomic source of truth.
+
+    '
+- tag: allowlist-gap
+  occurrences:
+  - R2-020
+  - R3-001
+  - R3-002
+  summary: 'Sandboxes built from ban-lists are bypassable. Future agents adding
+
+    sandboxing should default to allowlist (positive-only) where possible.
+
+    '
+- tag: broad-except-swallow
+  occurrences:
+  - R1-001
+  - R2-002
+  - R2-012
+  - R4-014
+  summary: '`except Exception:` followed by a permissive default is a recurring
+
+    vector for hiding bugs. Catch specific exceptions; fail loud on
+
+    unexpected ones.
+
+    '
+- tag: state-machine-ordering
+  occurrences:
+  - R1-002
+  - R2-009
+  summary: 'Multi-step state transitions need explicit ordering and rollback.
+
+    Don''t write success state before validation completes.
+
+    '
+- tag: subprocess-pitfalls
+  occurrences:
+  - R2-004
+  - R2-007
+  summary: 'subprocess timeout + PIPE has well-known footguns. Use Popen +
+
+    communicate + start_new_session + killpg consistently across the
+
+    codebase.
+
+    '
+- tag: signal-safety
+  occurrences:
+  - R2-011
+  - R3-005
+  - R3-006
+  - R4-017
+  summary: 'POSIX signal handlers must be async-signal-safe. Set flags only;
+
+    do real work at safe points in the main loop. Test what production
+
+    actually calls, not what the handler API exposes.
+
+    '
+- tag: dead-code-tested-path
+  occurrences:
+  - R1-001
+  - R3-006
+  - R4-017
+  summary: 'Tests can pass green for code that production never executes.
+
+    Verify that test fixtures call the same code paths as the live
+
+    orchestration flow.
+
+    '
+- tag: test-fidelity
+  occurrences:
+  - R2-021
+  - R4-015
+  - R4-016
+  - R4-017
+  - R4-018
+  - R4-019
+  summary: 'Tests pass green but do not actually verify the documented contract: assertions
+    hold for unintended reasons (default values triggering an unrelated code path), one-element
+    fixtures fail to exercise the bigger invariant the helper exists to protect, presence-of-key
+    checks substitute for value checks, or production code paths are not exercised at all.
+    Each adversarial review should re-derive what the test would still pass for and confirm
+    the assertion fails when the invariant fails.
+
+    '
+- tag: test-isolation
+  occurrences:
+  - R3-010
+  - R4-020
+  summary: 'Tests share an interpreter; module-level state, signal handlers, and process-wide
+    environment variables leak across test boundaries. Every newly introduced shared-state
+    surface needs a corresponding teardown in the autouse fixture in tests/conftest.py.
+
+    '
+- tag: permissive-default
+  occurrences:
+  - R1-005
+  - R2-002
+  - R3-009
+  - R4-014
+  summary: Permissive defaults (return True/skip on unknown / on exception) silently let features
+    pass that should have failed. Every verification path must FAIL CLOSED on unexpected input
+    or internal errors; True must require positive evidence, never absence of evidence.
+- tag: hot-path-db-read
+  occurrences:
+  - R5-003
+  - R5-004
+  summary: 'Per-iteration / per-row DB round-trips on hot paths quietly
+
+    dominate runtime once features × retries × dependencies multiply.
+
+    Reviewers should ask, for any code in run_loop.py / cascade / scan
+
+    code: "is this opening a new SQLite connection inside a loop?".
+
+    Cache canonical values and refresh only on mutations; collapse
+
+    per-row updates into bulk UPDATE ... IN (...) where possible.
+
+    '
+- tag: missing-timeout
+  occurrences:
+  - R5-001
+  - R5-005
+  summary: 'Long-running operations without explicit timeouts (DB BEGIN, sub-agent
+
+    spawn, subprocess) are a recurring source of "the loop just hangs"
+
+    bug reports. Every blocking call in the orchestration path needs an
+
+    explicit upper bound, configurable via env var, with a clearly
+
+    distinguishable post-timeout state (''interrupted'', NOT ''failed'').
+
+    '
+- tag: cli-concurrency
+  occurrences:
+  - R5-002
+  summary: 'Two concurrent CLI invocations of the same long-running command
+
+    (``bob3 run``) on the same project are almost never what the user
+
+    wanted. Use a per-project advisory file lock at the top of the
+
+    command and exit with a clear message on contention rather than
+
+    racing on the database.
+
+    '

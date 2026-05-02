@@ -6,7 +6,7 @@ Bob3 reads a spec describing the project you want built, decomposes it into feat
 
 ## What makes it different
 
-- **MCP plugin integration** — Sub-agents can use Perplexity (web research), Puppeteer (browser automation), and Bob3 Memory (local semantic memory backed by mem0ai + Ollama + Qdrant).
+- **MCP plugin integration** — Research-mode sub-agents have access to Perplexity (web research). Implementation sub-agents have access to Bob3 Memory (local semantic memory backed by mem0ai + FastEmbed + Qdrant) and, when `PERPLEXITY_API_KEY` is set, Perplexity as well. Puppeteer (browser automation) is enabled per-feature when needed.
 - **Semantic verification** — Completed features are checked against acceptance criteria with stub/mock detection, not just "did tests pass."
 - **Research fallback** — Stuck features automatically trigger a research agent that queries the web before another implementation attempt.
 - **Feature decomposition** — Oversized features are split into sub-features on demand.
@@ -15,7 +15,11 @@ Bob3 reads a spec describing the project you want built, decomposes it into feat
 
 ## Requirements
 
+- Linux or macOS. Windows is not currently supported (bob3 uses POSIX-only signal/process-group APIs such as `os.killpg` and `start_new_session=True`).
 - Python >= 3.11
+- Node.js >= 18 (required by `claude-code-sdk`)
+- Claude Code CLI: `npm install -g @anthropic-ai/claude-code`
+- Then: `claude` (or sign in to Claude Code Max Pro)
 - A Claude Code OAuth subscription (e.g. Max Pro) **or** `ANTHROPIC_API_KEY` set in your environment — either works, you do not need both.
 
 Bob3 Memory is fully local and in-process: it uses [FastEmbed](https://github.com/qdrant/fastembed) (ONNX, CPU) for text embeddings and [Qdrant](https://qdrant.tech/) on-disk for the vector store. The default embedding model (`BAAI/bge-small-en-v1.5`, ~90 MB) downloads automatically on first use. No external embedding API, no background daemon, no `OPENAI_API_KEY` required.
@@ -40,6 +44,7 @@ bob3 --help
 | Variable | Required | Purpose |
 |---|---|---|
 | `BOB3_EMBEDDER_MODEL` | No | Override the FastEmbed model (default: `BAAI/bge-small-en-v1.5`) |
+| `BOB3_EMBEDDING_DIMS` | No | Embedding vector dimensionality used by the Qdrant collection (default: `384`, matching `BAAI/bge-small-en-v1.5`). Must match `BOB3_EMBEDDER_MODEL`; if you change the model, change this too. |
 | `BOB3_MEMORY_DIR` | No | Override the on-disk path where Qdrant stores the bob3 memory collection (default: `~/.local/share/bob3`) |
 | `PERPLEXITY_API_KEY` | No | Enables the Perplexity research MCP |
 | `ANTHROPIC_API_KEY` | Conditional | Required only if you do not have a Claude Code OAuth subscription. With an OAuth subscription (e.g. Max Pro), the SDK uses your existing credentials and this variable is unused. `CLAUDE_API_KEY` is also accepted as an alias. |
@@ -47,6 +52,7 @@ bob3 --help
 | `BOB3_COST_PER_TURN_PROXY` | No | Per-turn cost proxy in USD used when the Claude Code SDK returns `total_cost_usd=None` (typical for Max Pro / OAuth subscriptions). Default: `0.05`. |
 | `BOB3_CRITERION_EXEC_TIMEOUT` | No | Timeout in seconds for executable acceptance criteria (`pytest:` and `python:` prefixed criteria) evaluated by the enhanced verification layer. Default: `60`. |
 | `BOB3_TEST_RUN_TIMEOUT` | No | Timeout in seconds for the auto-pytest run executed during the verification superpowers checklist. Default: `300`. |
+| `BOB3_FEATURE_TIMEOUT_SECONDS` | No | Wall-clock timeout in seconds for a single feature's sub-agent execution. If exceeded the feature is marked `interrupted` (no cascade), and the next `bob3 run` resumes it via the F116 auto-resume path. Use to bound runaway tool calls (e.g. a hung Puppeteer / browser MCP). Default: `3600` (1 hour). |
 
 Add to your shell profile if needed:
 
@@ -71,9 +77,12 @@ Each spec is a complete project description with features, acceptance criteria, 
 
 ### 2. Initialize a new project
 
+The project name must match the `name:` field in the spec you intend to load.
+For `01_geomech_simulator_spec.yaml` (name: `geomech-sim`):
+
 ```bash
-bob3 init ./my-geomech --name "geomech-sim"
-cd ./my-geomech
+bob3 init ./geomech-sim --name geomech-sim
+cd ./geomech-sim
 ```
 
 This creates a workspace directory and a SQLite database (`bob3.db`) for tracking state.
@@ -85,6 +94,8 @@ bob3 plan /path/to/bob3/examples/01_geomech_simulator_spec.yaml --create
 ```
 
 This parses the spec and persists its features to the database. Drop `--create` to just preview.
+
+If the spec's `name:` field doesn't match the project name from `bob3 init`, the command will exit with a "Spec name mismatch" error. Re-initialize the project with the matching name and try again.
 
 ### 4. Check what's planned
 
@@ -200,7 +211,7 @@ src/bob3/
 ├── mcp_lifecycle.py                # MCP server start/stop
 ├── orientation.py                  # Sub-agent orientation protocol
 ├── pdf_utils.py                    # PDF extraction
-├── memory.py                       # Bob3 Memory backend (mem0 + Ollama + Qdrant)
+├── memory.py                       # Bob3 Memory backend (mem0 + FastEmbed + Qdrant)
 ├── memory_client.py                # Async in-process memory client
 ├── memory_mcp.py                   # Memory MCP server for sub-agents
 ├── superpowers.py                  # Verification checklist + TDD detection
@@ -253,7 +264,7 @@ bob3 plan --create   ─▶   features table (SQLite)
 
 - **Claude Code SDK only** — All Claude interactions go through `claude-code-sdk`. No subprocess CLI calls, no direct `anthropic` SDK usage.
 - **SQLite for state** — Project state (features, tasks, evidence, agent runs, costs) lives in `bob3.db`.
-- **Bob3 Memory for knowledge** — Lessons, facts, and cross-session context live in the local Qdrant store (via mem0ai + Ollama), not the local DB.
+- **Bob3 Memory for knowledge** — Lessons, facts, and cross-session context live in the local Qdrant store (via mem0ai + FastEmbed, all in-process), not the local DB.
 - **Feature-level git commits** — Each completed feature gets its own commit for easy rollback.
 - **Graceful shutdown** — SIGINT/SIGTERM checkpoints state so `bob3 run` resumes cleanly.
 

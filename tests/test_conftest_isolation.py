@@ -88,3 +88,25 @@ def test_b_signal_handler_was_restored():
     # interpreter's original (default int handler or whatever pytest
     # had installed).
     assert getattr(current, "__name__", "") != "custom_handler"
+
+
+def test_a_set_bob3_database_path_env_directly():
+    """Set ``BOB3_DATABASE_PATH`` via ``os.environ`` (NOT via
+    ``monkeypatch.setenv``). The autouse fixture should snapshot the
+    pre-test value and restore it on teardown, so the next test
+    cannot observe this leak.
+    """
+    import os
+
+    os.environ["BOB3_DATABASE_PATH"] = "/tmp/leaked-from-prior-test.db"
+    assert os.environ.get("BOB3_DATABASE_PATH") == "/tmp/leaked-from-prior-test.db"
+
+
+def test_b_bob3_database_path_env_was_restored():
+    """The autouse fixture should restore the ``BOB3_DATABASE_PATH``
+    env var to whatever it was before ``test_a_*`` ran. In particular
+    it MUST NOT be the bogus path the previous test wrote.
+    """
+    import os
+
+    assert os.environ.get("BOB3_DATABASE_PATH") != "/tmp/leaked-from-prior-test.db"

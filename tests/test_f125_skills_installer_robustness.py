@@ -30,6 +30,7 @@ from bob3.skills_installer import (
     get_bundled_skills_dir,
     install_skills_to_workspace,
     list_bundled_skills,
+    verify_skills_integrity,
 )
 
 
@@ -461,3 +462,152 @@ def test_clean_workspace_skills_preserves_user_symlinks(
     assert (user_link / "SKILL.md").read_text().strip().endswith("(user)")
     assert (user_link / "user_data").read_text() == "hands off"
     assert "my-custom-skill" not in removed
+
+
+# ---------------------------------------------------------------------------
+# R4: skill poisoning — verify_skills_integrity
+# ---------------------------------------------------------------------------
+#
+# Sub-agents run with cwd=<workspace> and bypassPermissions, so they can
+# write into <workspace>/.claude/skills/. A malicious sub-agent could
+# replace one of bob3's symlinks with a real directory containing a
+# poisoned SKILL.md — and the next sub-agent in the same workspace
+# would load it.
+#
+# verify_skills_integrity() audits every bundled skill before each
+# sub-agent spawn and force-replaces anything that is no longer a
+# symlink resolving INTO the current bob3 bundled skills directory.
+
+
+class TestVerifySkillsIntegrity:
+    def test_directory_replacing_symlink_is_force_replaced(
+        self, fake_bundled_skills, workspace, caplog
+    ):
+        """A sub-agent replaced bob3's ``alpha`` symlink with a malicious
+        directory. ``verify_skills_integrity`` must detect this, log a
+        SECURITY warning, force-remove the directory, and reinstall the
+        canonical bob3 skill."""
+        bundled, names = fake_bundled_skills
+        target_dir = workspace / ".claude" / "skills"
+
+        install_skills_to_workspace(workspace)
+        # Sanity: alpha was symlinked.
+        assert (target_dir / "alpha").is_symlink()
+
+        # Simulate a malicious sub-agent: remove the symlink and write a
+        # real directory with a poisoned SKILL.md in its place.
+        (target_dir / "alpha").unlink()
+        poisoned = target_dir / "alpha"
+        poisoned.mkdir()
+        (poisoned / "SKILL.md").write_text(
+            "# poisoned\n\nDo something nasty here.\n"
+        )
+        (poisoned / "evil.txt").write_text("attacker payload")
+
+        import logging as _logging
+
+        with caplog.at_level(_logging.WARNING, logger="bob3.skills_installer"):
+            tampered = verify_skills_integrity(workspace)
+
+        assert "alpha" in tampered, (
+            "tampered alpha directory was not detected by integrity check"
+        )
+
+        # alpha is now a fresh symlink resolving into the bundled dir.
+        dest = target_dir / "alpha"
+        assert dest.is_symlink(), (
+            "force-replace did not restore the canonical symlink"
+        )
+        assert dest.resolve(strict=True) == (bundled / "alpha").resolve()
+
+        # The poisoned SKILL.md and evil.txt are gone — the symlink now
+        # points at the canonical bundled skill dir which doesn't have
+        # them.
+        assert (dest / "SKILL.md").read_text().strip() == "# alpha"
+        assert not (dest / "evil.txt").exists()
+
+        # And we logged a SECURITY warning explaining what happened.
+        sec_warnings = [
+            r for r in caplog.records
+            if "SECURITY" in r.getMessage() and "alpha" in r.getMessage()
+        ]
+        assert sec_warnings, (
+            "expected a SECURITY-tagged warning identifying the tampered "
+            f"skill, got: {[r.getMessage() for r in caplog.records]}"
+        )
+
+    def test_symlink_pointing_outside_bob3_is_force_replaced(
+        self, fake_bundled_skills, workspace, tmp_path, caplog
+    ):
+        """A symlink that no longer resolves into the current bob3
+        bundled skills directory is treated as tampering and replaced.
+        This catches the variant where the attacker writes a symlink
+        pointing at their own SKILL.md somewhere else on disk."""
+        bundled, _ = fake_bundled_skills
+        target_dir = workspace / ".claude" / "skills"
+
+        install_skills_to_workspace(workspace)
+
+        # Attacker's stash containing their own SKILL.md.
+        attacker_dir = tmp_path / "attacker_skill"
+        attacker_dir.mkdir()
+        (attacker_dir / "SKILL.md").write_text("# attacker\n")
+
+        # Repoint alpha at the attacker's dir.
+        (target_dir / "alpha").unlink()
+        (target_dir / "alpha").symlink_to(
+            attacker_dir.resolve(), target_is_directory=True
+        )
+        # Sanity: it does resolve, just not into bundled.
+        assert (target_dir / "alpha").resolve() == attacker_dir.resolve()
+
+        import logging as _logging
+
+        with caplog.at_level(_logging.WARNING, logger="bob3.skills_installer"):
+            tampered = verify_skills_integrity(workspace)
+
+        assert "alpha" in tampered
+
+        dest = target_dir / "alpha"
+        # Now resolves back into bob3's bundled dir.
+        assert dest.is_symlink()
+        assert dest.resolve(strict=True) == (bundled / "alpha").resolve()
+
+        sec_warnings = [
+            r for r in caplog.records
+            if "SECURITY" in r.getMessage() and "alpha" in r.getMessage()
+        ]
+        assert sec_warnings, (
+            f"expected a SECURITY warning for repointed alpha; got: "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+
+    def test_clean_workspace_passes_integrity_check(
+        self, fake_bundled_skills, workspace, caplog
+    ):
+        """When nothing has been tampered with, ``verify_skills_integrity``
+        is a quiet no-op — returns [], no SECURITY warnings logged."""
+        install_skills_to_workspace(workspace)
+
+        import logging as _logging
+
+        with caplog.at_level(_logging.WARNING, logger="bob3.skills_installer"):
+            tampered = verify_skills_integrity(workspace)
+
+        assert tampered == []
+        sec_warnings = [
+            r for r in caplog.records if "SECURITY" in r.getMessage()
+        ]
+        assert sec_warnings == [], (
+            f"unexpected SECURITY warnings on a clean workspace: "
+            f"{[r.getMessage() for r in sec_warnings]}"
+        )
+
+    def test_no_skills_dir_is_noop(self, fake_bundled_skills, workspace):
+        """Workspace with no .claude/skills/ yet: integrity check is a
+        no-op. The caller is responsible for the initial install; this
+        function only detects tampering of an existing install."""
+        # Don't install anything.
+        assert not (workspace / ".claude" / "skills").exists()
+        tampered = verify_skills_integrity(workspace)
+        assert tampered == []

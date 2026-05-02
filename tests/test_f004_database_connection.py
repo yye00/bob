@@ -11,14 +11,39 @@ SCHEMA_PATH = WORKSPACE / "src" / "bob3" / "schema.sql"
 
 
 class TestGetDatabasePath:
-    """Step 2: get_database_path() returns workspace/bob3.db or BOB3_DATABASE_PATH."""
+    """Step 2: get_database_path() returns Path.cwd()/bob3.db or BOB3_DATABASE_PATH."""
 
-    def test_default_path_is_workspace_bob3_db(self, monkeypatch):
+    def test_default_path_is_cwd_bob3_db(self, monkeypatch, tmp_path):
+        """Default uses Path.cwd(), not the package install location.
+
+        Regression: previously the default was derived from
+        ``get_package_dir().parent.parent`` which pointed at the install
+        directory, breaking the documented Quickstart flow where users
+        ``cd`` into a freshly-initialized project workspace.
+        """
         monkeypatch.delenv("BOB3_DATABASE_PATH", raising=False)
+        monkeypatch.chdir(tmp_path)
+
         from bob3.db import get_database_path
 
         result = get_database_path()
-        assert result == pathlib.Path(WORKSPACE) / "bob3.db"
+        assert result == tmp_path / "bob3.db"
+
+    def test_default_uses_cwd_not_install_dir(self, monkeypatch, tmp_path):
+        """Default must not point at the package install location."""
+        monkeypatch.delenv("BOB3_DATABASE_PATH", raising=False)
+        monkeypatch.chdir(tmp_path)
+
+        from bob3 import get_package_dir
+        from bob3.db import get_database_path
+
+        result = get_database_path()
+        install_default = get_package_dir().parent.parent / "bob3.db"
+        # Only assert difference when cwd != install location (which is
+        # the realistic user scenario). If they happen to match in CI we
+        # have nothing to assert.
+        if tmp_path.resolve() != install_default.parent.resolve():
+            assert result != install_default
 
     def test_env_var_overrides_default(self, monkeypatch, tmp_path):
         custom_path = str(tmp_path / "custom.db")
@@ -28,8 +53,23 @@ class TestGetDatabasePath:
         result = get_database_path()
         assert result == pathlib.Path(custom_path)
 
-    def test_returns_pathlib_path(self, monkeypatch):
+    def test_env_var_overrides_cwd(self, monkeypatch, tmp_path):
+        """BOB3_DATABASE_PATH wins even when cwd is something else."""
+        cwd_dir = tmp_path / "elsewhere"
+        cwd_dir.mkdir()
+        custom_path = tmp_path / "custom.db"
+        monkeypatch.chdir(cwd_dir)
+        monkeypatch.setenv("BOB3_DATABASE_PATH", str(custom_path))
+
+        from bob3.db import get_database_path
+
+        result = get_database_path()
+        assert result == custom_path
+        assert result != cwd_dir / "bob3.db"
+
+    def test_returns_pathlib_path(self, monkeypatch, tmp_path):
         monkeypatch.delenv("BOB3_DATABASE_PATH", raising=False)
+        monkeypatch.chdir(tmp_path)
         from bob3.db import get_database_path
 
         result = get_database_path()
@@ -71,6 +111,34 @@ class TestGetConnection:
         try:
             cursor = conn.execute("PRAGMA journal_mode")
             assert cursor.fetchone()[0] == "wal"
+        finally:
+            conn.close()
+
+    def test_connection_has_busy_timeout(self, tmp_path, monkeypatch):
+        """Connections must set ``PRAGMA busy_timeout`` so that concurrent
+        ``bob3 run`` invocations and overlapping ``bob3 status`` queries
+        wait instead of crashing with ``database is locked``.
+
+        Without this, a long-running write transaction inside one process
+        could trip every reader in another process the moment it tried to
+        BEGIN. The fix sets a 30s busy_timeout (matching the Python-level
+        ``timeout``); we assert >= 1 second here to leave headroom for
+        the value to be tuned without breaking the test.
+        """
+        db_path = str(tmp_path / "test.db")
+        monkeypatch.setenv("BOB3_DATABASE_PATH", db_path)
+        from bob3.db import get_connection
+
+        conn = get_connection()
+        try:
+            cursor = conn.execute("PRAGMA busy_timeout")
+            value_ms = cursor.fetchone()[0]
+            # Value is in milliseconds; require at least 1 second so the
+            # default of 0 (no timeout) clearly fails this test.
+            assert value_ms >= 1000, (
+                f"busy_timeout={value_ms}ms; expected at least 1000ms "
+                f"to prevent 'database is locked' under contention"
+            )
         finally:
             conn.close()
 

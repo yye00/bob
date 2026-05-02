@@ -817,3 +817,95 @@ class TestOrphanedPendingRecoveryPerformance:
                 f"orphan recovery took {elapsed_ms:.1f}ms — likely "
                 f"regressed back to N+1 query loop"
             )
+
+
+class TestBulkPromoteFeaturesToReady:
+    """``db.bulk_promote_features_to_ready`` is the single-transaction
+    equivalent of looping ``update_feature(fid, status='ready')`` over
+    every orphan ID. It must be:
+
+    * Correct: only flips rows currently in ``status='pending'``.
+    * Fast: 100 features promoted in well under 100ms (single UPDATE).
+    """
+
+    def test_promotes_only_pending_rows(self, tmp_db, project):
+        """Rows already in non-pending status are NOT yanked back."""
+        from bob3.db import (
+            bulk_promote_features_to_ready,
+            create_feature,
+            update_feature,
+        )
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            pending_ids = []
+            for i in range(5):
+                f = create_feature(
+                    project_id=project.id,
+                    name=f"pending-{i}",
+                    status="ready",
+                    priority=1,
+                )
+                update_feature(f.id, status="pending")
+                pending_ids.append(f.id)
+
+            # One feature deliberately in 'completed' — should not flip.
+            completed = create_feature(
+                project_id=project.id,
+                name="completed",
+                status="ready",
+                priority=1,
+            )
+            update_feature(completed.id, status="completed")
+
+            ids = pending_ids + [completed.id]
+            promoted = bulk_promote_features_to_ready(ids)
+
+            assert promoted == 5
+            for fid in pending_ids:
+                assert get_feature(fid).status == "ready"
+            assert get_feature(completed.id).status == "completed"
+
+    def test_empty_input_is_noop(self, tmp_db, project):
+        """Passing an empty list returns 0 and does not error."""
+        from bob3.db import bulk_promote_features_to_ready
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            assert bulk_promote_features_to_ready([]) == 0
+
+    def test_100_features_promoted_in_under_100ms(self, tmp_db, project):
+        """100 orphans must promote in <100ms on commodity hardware.
+
+        With the bulk single-UPDATE implementation this typically runs in
+        a handful of milliseconds; the 100ms ceiling fires only if we
+        regress back to per-row update transactions.
+        """
+        import time
+
+        from bob3.db import (
+            bulk_promote_features_to_ready,
+            create_feature,
+            update_feature,
+        )
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            ids = []
+            for i in range(100):
+                f = create_feature(
+                    project_id=project.id,
+                    name=f"orphan-{i}",
+                    status="ready",
+                    priority=1,
+                )
+                update_feature(f.id, status="pending")
+                ids.append(f.id)
+
+            start = time.monotonic()
+            promoted = bulk_promote_features_to_ready(ids)
+            elapsed_ms = (time.monotonic() - start) * 1000
+
+            assert promoted == 100
+            assert elapsed_ms < 100, (
+                f"bulk_promote_features_to_ready took {elapsed_ms:.1f}ms "
+                f"for 100 features; expected <100ms (likely regressed "
+                f"to per-row transactions)"
+            )

@@ -474,6 +474,14 @@ class TestOrchestrationLoopStops:
             # Push cost over max via update_project_cost
             update_project_cost(project_id=project.id, cost_usd=55.0)
 
+            # ``budget_exceeded`` reads a cached project total to avoid
+            # opening a fresh SQLite connection on every loop iteration;
+            # the cache is refreshed in production immediately after each
+            # cost-mutating write by the loop. This test calls the bare
+            # ``db.update_project_cost`` from outside the loop, so we
+            # replicate the refresh by hand here.
+            loop._refresh_project_cost_cache()
+
             # Now budget_exceeded should return True
             assert loop.budget_exceeded() is True
 

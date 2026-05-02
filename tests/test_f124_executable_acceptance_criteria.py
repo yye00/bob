@@ -23,6 +23,8 @@ import textwrap
 
 import pytest
 
+from unittest.mock import patch
+
 from bob3.enhanced_verification import (
     _check_criterion,
     _check_criterion_with_details,
@@ -836,3 +838,241 @@ class TestPythonCriterionAllowlist:
         )
         assert passed is True, f"benign sum criterion incorrectly refused: {details!r}"
         assert details == ""
+
+    # ------------------------------------------------------------------
+    # R4: ``os`` / ``pathlib`` / ``tempfile`` / ``glob`` ban (filesystem
+    # and environment access). Closes the bypass:
+    #   ``python: import os; fd=os.open(...,os.O_WRONLY|os.O_CREAT,0o600);
+    #     os.write(fd, os.getenv('ANTHROPIC_API_KEY','').encode())``
+    # ------------------------------------------------------------------
+
+    def test_os_import_is_refused(self, tmp_path):
+        """A bare ``import os`` is refused — closes the API-key
+        exfiltration bypass that read ``os.getenv`` and wrote with
+        ``os.open``/``os.write``."""
+        passed, details = _check_criterion_with_details(
+            criterion="python: import os; os.getenv('FOO')",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "os" in details.lower()
+
+    def test_pathlib_is_refused(self, tmp_path):
+        """``pathlib`` provides equivalent filesystem primitives
+        (``Path.read_text``, ``Path.write_text``) so it must also be
+        banned. Closes the ``import pathlib; pathlib.Path('/etc/passwd')
+        .read_text()`` bypass."""
+        passed, details = _check_criterion_with_details(
+            criterion="python: import pathlib; pathlib.Path('/etc/passwd').read_text()",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "pathlib" in details.lower()
+
+    def test_tempfile_is_refused(self, tmp_path):
+        passed, details = _check_criterion_with_details(
+            criterion="python: import tempfile; tempfile.mkstemp()",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "tempfile" in details.lower()
+
+    def test_glob_is_refused(self, tmp_path):
+        passed, details = _check_criterion_with_details(
+            criterion="python: import glob; glob.glob('/etc/*')",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        assert "refused" in details.lower()
+        assert "glob" in details.lower()
+
+    def test_simple_arithmetic_assertion_still_works(self, tmp_path):
+        """``python: assert 1+1 == 2`` — the simplest possible passing
+        criterion. No imports, no false positives."""
+        passed, details = _check_criterion_with_details(
+            criterion="python: assert 1+1 == 2",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, f"benign arithmetic criterion refused: {details!r}"
+        assert details == ""
+
+    def test_json_dumps_empty_list_still_works(self, tmp_path):
+        """``import json; assert json.dumps([]) == '[]'`` — common form
+        for testing serialization, must not be refused."""
+        passed, details = _check_criterion_with_details(
+            criterion="python: import json; assert json.dumps([]) == '[]'",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, f"json.dumps criterion refused: {details!r}"
+        assert details == ""
+
+    def test_user_module_compute_assertion_still_works(self, tmp_path):
+        """``from <user-module> import compute; assert compute() == 42``
+        — the canonical use of the python: form. Must not be refused
+        even with the expanded ban list (only stdlib filesystem/network
+        modules are banned)."""
+        (tmp_path / "mymodule.py").write_text(
+            "def compute():\n    return 42\n"
+        )
+        passed, details = _check_criterion_with_details(
+            criterion="python: from mymodule import compute; assert compute() == 42",
+            workspace=tmp_path,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, f"user-module compute criterion refused: {details!r}"
+        assert details == ""
+
+
+# ---------------------------------------------------------------------------
+# R4: pytest argument-injection — ``--`` sentinel
+# ---------------------------------------------------------------------------
+#
+# A criterion ``pytest: --co tests/`` used to land ``--co`` in the flag
+# position of pytest's argv. ``--co`` makes pytest collect-only and exit
+# 0 with no failures, which our success heuristic happily accepted. The
+# fix inserts a ``--`` sentinel between the fixed flags and the criterion
+# expression so pytest treats every following token as a path/nodeid.
+
+
+class TestPytestArgumentInjection:
+    def test_co_flag_in_expression_is_treated_as_path(
+        self, workspace_with_passing_test
+    ):
+        """``pytest: --co`` must not silently pass.
+
+        With the ``--`` sentinel, ``--co`` is treated as a literal path
+        which does not exist, so pytest's collection step fails.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion="pytest: --co",
+            workspace=workspace_with_passing_test,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False, (
+            "regression: '--co' criterion silently passed — "
+            "argument-injection sentinel '--' is missing"
+        )
+
+    def test_normal_pytest_node_still_works(
+        self, workspace_with_passing_test
+    ):
+        """Regression: normal ``pytest: <path>::<nodeid>`` invocations
+        must continue to pass after inserting the ``--`` sentinel."""
+        passed, details = _check_criterion_with_details(
+            criterion="pytest: tests/test_real.py::test_passes",
+            workspace=workspace_with_passing_test,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, (
+            f"regression: normal pytest node failed after sentinel "
+            f"insertion: {details!r}"
+        )
+        assert details == ""
+
+
+# ---------------------------------------------------------------------------
+# R4-004 regression: validator must FAIL CLOSED on internal exceptions
+# ---------------------------------------------------------------------------
+
+
+class TestValidatorFailsClosedOnException:
+    """Recurrence guard for the R1-005 / R2-002 permissive-default pattern.
+
+    If anything inside ``validate_acceptance_criteria`` raises (including
+    bugs in ``_check_criterion_with_details``), the function MUST return
+    ``(False, ...)`` — not ``(True, "skipped")``. Returning True on a
+    crash silently rubber-stamps every feature whose validator hits an
+    exception, which is the exact failure mode that bit us twice before.
+    """
+
+    def test_returns_false_when_check_criterion_raises(self, tmp_path):
+        """Patching the per-criterion check to raise must surface as a
+        FAILURE from the aggregator — never a permissive pass."""
+        with patch(
+            "bob3.enhanced_verification._check_criterion_with_details",
+            side_effect=RuntimeError("simulated validator crash"),
+        ):
+            passed, details = validate_acceptance_criteria(
+                workspace=tmp_path,
+                acceptance_criteria=["pytest: tests/test_real.py::test_x"],
+                is_python_project=True,
+            )
+
+        assert passed is False, (
+            "Validator crashed; must NOT return True (recurrence of "
+            "R1-005/R2-002 permissive default)"
+        )
+        assert "crashed" in details.lower() or "manual review" in details.lower(), (
+            f"Expected crash-explaining details, got: {details!r}"
+        )
+        assert "simulated validator crash" in details
+
+    def test_returns_false_when_criteria_list_iteration_raises(self, tmp_path):
+        """Even an exception that isn't from the per-criterion check —
+        e.g. raised while parsing the criteria list — must still fail
+        closed. We simulate it via a custom iterable whose __iter__ blows
+        up; the function should catch it and return False."""
+
+        class _Boom:
+            def __iter__(self):
+                raise RuntimeError("kaboom-during-iter")
+
+        # Pass an object that triggers the exception inside the try-block.
+        # Note: we bypass the str-parse path by passing an object that
+        # is_str check (False), then enters the loop and raises on iter.
+        passed, details = validate_acceptance_criteria(
+            workspace=tmp_path,
+            acceptance_criteria=_Boom(),  # type: ignore[arg-type]
+            is_python_project=True,
+        )
+        assert passed is False
+        assert "kaboom-during-iter" in details
+
+    def test_does_not_return_skipped_pass(self, tmp_path):
+        """The OLD behaviour returned True with a 'skipped' message. The
+        new behaviour must NOT include that string AND must not return
+        True on exception. Verifies both halves of the contract."""
+        with patch(
+            "bob3.enhanced_verification._check_criterion_with_details",
+            side_effect=ValueError("something broke"),
+        ):
+            passed, details = validate_acceptance_criteria(
+                workspace=tmp_path,
+                acceptance_criteria=["pytest: tests/test_x.py::test_y"],
+                is_python_project=True,
+            )
+        assert passed is False, (
+            "MUST be False on exception; True is the bug we're guarding "
+            "against."
+        )
+        assert "skipped" not in details.lower(), (
+            f"Old permissive language leaked into new fail-closed path: "
+            f"{details!r}"
+        )

@@ -98,11 +98,14 @@ observed, telling the user roughly how long they might have to wait.
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import enum
+import fcntl
 import json
 import logging
 import os
+import pathlib
 import re
 import signal
 from typing import Any
@@ -174,6 +177,109 @@ class LoopTermination(enum.Enum):
 
 
 # ---------------------------------------------------------------
+# Per-project advisory file lock
+# ---------------------------------------------------------------
+#
+# Two concurrent ``bob3 run --all`` invocations from the same project
+# would race on the database. ``busy_timeout`` keeps them from crashing,
+# but the resulting interleaving is unpredictable: both processes would
+# pick "ready" features, both would write status='executing', both would
+# spawn sub-agents, and the eventual cascade order is whatever the OS
+# scheduler decides. To prevent that we acquire an exclusive advisory
+# lock on ``<workspace>/.bob3.lock`` at startup. If another process
+# already holds the lock the second invocation prints a clear error and
+# exits with code 1.
+
+_BOB3_LOCK_FILENAME = ".bob3.lock"
+
+
+class AlreadyRunningError(RuntimeError):
+    """Raised when another ``bob3 run`` is already in progress.
+
+    The CLI catches this and prints a friendly message before exiting
+    with status 1. The exception message is suitable for direct display
+    to the user.
+    """
+
+
+def acquire_run_lock(workspace: str | pathlib.Path) -> Any:
+    """Acquire a non-blocking exclusive advisory lock for ``bob3 run``.
+
+    Opens (creates if necessary) ``<workspace>/.bob3.lock`` and tries to
+    place an exclusive flock on it. On success, returns the open file
+    handle — the caller MUST keep this handle alive for the duration of
+    the run; closing it (or letting it be garbage collected) releases
+    the lock. On contention raises ``AlreadyRunningError``.
+
+    POSIX-only (uses ``fcntl.flock``). Bob3 explicitly does not support
+    Windows in production, so we don't bother with an msvcrt fallback.
+
+    Args:
+        workspace: The project workspace directory (where ``.bob3.lock``
+            lives). The directory must already exist; we don't try to
+            create the workspace itself here, only the lock file inside
+            it.
+
+    Returns:
+        The open file object holding the lock. Keep it alive — when the
+        file is closed (explicitly or via GC) the lock is released.
+
+    Raises:
+        AlreadyRunningError: another process holds the lock.
+        OSError: any other I/O failure opening the lock file.
+    """
+    workspace_path = pathlib.Path(workspace) if workspace else pathlib.Path.cwd()
+    # If the workspace directory doesn't exist, fall back to cwd so we
+    # never crash with FileNotFoundError just because the project's
+    # recorded workspace_path is bogus or hasn't been created yet
+    # (common in tests and on the first ``bob3 run`` after a manual
+    # workspace_path edit). The lock is still scoped per-process via the
+    # filesystem, just rooted at cwd instead of an unreachable path.
+    if not workspace_path.is_dir():
+        logger.debug(
+            "Lock workspace %s does not exist; falling back to cwd for .bob3.lock",
+            workspace_path,
+        )
+        workspace_path = pathlib.Path.cwd()
+    lock_path = workspace_path / _BOB3_LOCK_FILENAME
+    # Open in append-binary mode so we don't truncate any prior contents
+    # (we don't write to it; the file is purely a flock anchor).
+    fh = open(lock_path, "ab")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        fh.close()
+        raise AlreadyRunningError(
+            f"Another `bob3 run` is already in progress for this project. "
+            f"Refusing to start. (lock: {lock_path})"
+        ) from exc
+    except OSError:
+        fh.close()
+        raise
+    return fh
+
+
+def release_run_lock(lock_handle: Any) -> None:
+    """Release a lock acquired by :func:`acquire_run_lock`.
+
+    Best-effort: any errors are swallowed since by the time we are
+    releasing the lock the run is over. Closing the file is what
+    actually drops the flock; the explicit ``LOCK_UN`` is just a
+    courtesy for clarity.
+    """
+    if lock_handle is None:
+        return
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        logger.debug("flock LOCK_UN failed during release", exc_info=True)
+    try:
+        lock_handle.close()
+    except Exception:
+        logger.debug("lock file close failed during release", exc_info=True)
+
+
+# ---------------------------------------------------------------
 # Cost normalization (Max Pro / OAuth subscription handling)
 # ---------------------------------------------------------------
 #
@@ -188,6 +294,53 @@ class LoopTermination(enum.Enum):
 # it via the BOB3_COST_PER_TURN_PROXY environment variable.
 
 _DEFAULT_COST_PER_TURN_PROXY = 0.05
+
+
+# ---------------------------------------------------------------
+# Sub-agent execution wall-clock timeout
+# ---------------------------------------------------------------
+#
+# ``max_turns=25`` bounds how many model turns a sub-agent will take, but
+# does not bound wall-clock time: a single turn that hangs in a tool call
+# (e.g. a stuck Puppeteer / browser MCP, an unresponsive subprocess) will
+# park the orchestration loop indefinitely. We wrap the ``await
+# spawn_sub_agent(...)`` call in ``execute_feature`` with
+# ``asyncio.wait_for`` using this timeout so the loop can recover. On
+# timeout the feature is marked ``interrupted`` and dependents are NOT
+# cascaded; the next ``bob3 run`` resumes through the normal interrupted-
+# work path.
+
+_DEFAULT_FEATURE_TIMEOUT_SECONDS = 3600  # 1 hour
+
+
+def _resolve_feature_timeout_seconds() -> float:
+    """Read ``BOB3_FEATURE_TIMEOUT_SECONDS`` from the environment.
+
+    Returns the configured timeout in seconds, falling back to
+    ``_DEFAULT_FEATURE_TIMEOUT_SECONDS`` (3600) on any parse error or
+    non-positive value. Kept as a small helper so tests can monkeypatch
+    the env var per-test without poking at module-level constants.
+    """
+    raw = os.environ.get("BOB3_FEATURE_TIMEOUT_SECONDS")
+    if raw is None:
+        return float(_DEFAULT_FEATURE_TIMEOUT_SECONDS)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid BOB3_FEATURE_TIMEOUT_SECONDS=%r; using default %ss",
+            raw,
+            _DEFAULT_FEATURE_TIMEOUT_SECONDS,
+        )
+        return float(_DEFAULT_FEATURE_TIMEOUT_SECONDS)
+    if value <= 0:
+        logger.warning(
+            "Non-positive BOB3_FEATURE_TIMEOUT_SECONDS=%r; using default %ss",
+            raw,
+            _DEFAULT_FEATURE_TIMEOUT_SECONDS,
+        )
+        return float(_DEFAULT_FEATURE_TIMEOUT_SECONDS)
+    return value
 
 
 def _normalize_cost(cost_usd: float | None, num_turns: int | None = None) -> tuple[float, str]:
@@ -280,6 +433,226 @@ class _BoundedFeatureIdSet:
 
 
 _PROXY_LOGGED_FEATURE_IDS: _BoundedFeatureIdSet = _BoundedFeatureIdSet()
+
+
+# ---------------------------------------------------------------
+# Pytest snapshot helpers (for regression detection — F051)
+# ---------------------------------------------------------------
+#
+# A "snapshot" is a mapping ``test_nodeid -> bool`` (True == passed). We
+# capture one snapshot BEFORE a feature's implementation lands and
+# another AFTER verification passes; comparing the two via
+# ``db.detect_regression`` reveals tests that used to pass and now fail.
+#
+# Implementation notes:
+# - Uses ``-v --tb=no -q`` and parses per-test verdict lines from
+#   pytest's verbose output. When pytest is unavailable, the workspace
+#   is missing, or no verdict lines parse, we return ``None`` — callers
+#   must treat None as "snapshot not available; skip regression detection".
+# - We deliberately do NOT use ``--collect-only`` separately because it
+#   doubles the runtime; we already learn the test list from the run.
+# - Pytest verbose output looks like:
+#       tests/test_foo.py::test_bar PASSED
+#       tests/test_foo.py::test_baz FAILED
+#   We parse those.
+_PYTEST_VERDICT_RE = re.compile(
+    r"^(?P<nodeid>\S+::[^\s]+)\s+(?P<verdict>PASSED|FAILED|ERROR|XFAIL|XPASS|SKIPPED)\b"
+)
+
+_DEFAULT_SNAPSHOT_TIMEOUT_S = 300
+
+
+def _snapshot_timeout_s() -> int:
+    """Return the per-snapshot pytest timeout (seconds).
+
+    Honors ``BOB3_SNAPSHOT_TIMEOUT`` if set; falls back to
+    ``BOB3_TEST_RUN_TIMEOUT`` (the same env used by the verification
+    pytest call), then to a 300s default.
+    """
+    for env_name in ("BOB3_SNAPSHOT_TIMEOUT", "BOB3_TEST_RUN_TIMEOUT"):
+        raw = os.environ.get(env_name)
+        if not raw:
+            continue
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return _DEFAULT_SNAPSHOT_TIMEOUT_S
+
+
+def capture_pytest_snapshot(
+    workspace: str | None,
+    *,
+    test_dir: str = "tests",
+) -> dict[str, bool] | None:
+    """Run pytest in the workspace and return a per-test pass/fail snapshot.
+
+    Args:
+        workspace: Path to the project workspace. If empty / None, returns
+            None (no snapshot possible).
+        test_dir: Directory under workspace to test (defaults to "tests").
+
+    Returns:
+        ``dict[test_nodeid, passed_bool]`` on success, or ``None`` if the
+        snapshot could not be captured (workspace missing, pytest absent,
+        timeout, or no recognisable verdict lines).
+
+    A test is "passed" when its verdict line is ``PASSED`` / ``XFAIL``
+    / ``SKIPPED`` / ``XPASS``; only ``FAILED`` and ``ERROR`` count as
+    failures (skips aren't regressions; xpass is unusual but not a
+    regression).
+    """
+    if not workspace:
+        return None
+    import pathlib  # local import to avoid bringing pathlib into module top
+    import subprocess
+
+    ws = pathlib.Path(workspace)
+    if not ws.exists() or not ws.is_dir():
+        return None
+
+    # Recursion guard: skip when workspace IS the bob3 repo itself, to
+    # mirror the behaviour of superpowers._check_tests_pass.
+    try:
+        import bob3
+        bob3_root = pathlib.Path(bob3.__file__).resolve().parents[2]
+        ws_resolved = ws.resolve()
+        if ws_resolved == bob3_root or bob3_root in ws_resolved.parents:
+            logger.debug(
+                "Skipping pytest snapshot: workspace is bob3 itself "
+                "(self-test recursion guard)"
+            )
+            return None
+    except Exception:
+        logger.debug("snapshot recursion guard skipped", exc_info=True)
+
+    target = ws / test_dir
+    if not target.exists() or not target.is_dir():
+        # No test directory — empty snapshot is not useful for
+        # detect_regression. Return None so the caller skips.
+        return None
+
+    cmd = [
+        "python",
+        "-m",
+        "pytest",
+        target.relative_to(ws).as_posix(),
+        "-v",
+        "--tb=no",
+        "--no-header",
+        "--color=no",
+        "-p",
+        "no:cacheprovider",
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(ws),
+            capture_output=True,
+            text=True,
+            timeout=_snapshot_timeout_s(),
+            check=False,
+        )
+    except FileNotFoundError:
+        logger.debug("pytest snapshot skipped: python interpreter missing")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "pytest snapshot timed out in %s after %ss",
+            ws, _snapshot_timeout_s(),
+        )
+        return None
+    except (OSError, ValueError) as exc:
+        logger.debug("pytest snapshot invocation failed: %s", exc)
+        return None
+
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    if (
+        "No module named pytest" in stderr
+        or "No module named 'pytest'" in stderr
+    ):
+        logger.debug("pytest snapshot skipped: pytest not installed")
+        return None
+
+    snapshot: dict[str, bool] = {}
+    for line in stdout.splitlines():
+        m = _PYTEST_VERDICT_RE.match(line)
+        if not m:
+            continue
+        nodeid = m.group("nodeid")
+        verdict = m.group("verdict")
+        snapshot[nodeid] = verdict in ("PASSED", "XFAIL", "SKIPPED", "XPASS")
+
+    if not snapshot:
+        return None
+    return snapshot
+
+
+# ---------------------------------------------------------------
+# Calibration tracking helpers (F019)
+# ---------------------------------------------------------------
+#
+# Bob3 calibration tracks predicted confidence (pre-execution) vs actual
+# outcome (passed verification or not) per ``task_class + confidence_bucket``.
+# Issue R4-004 was that ``db.create_or_update_calibration`` was never
+# called from the orchestrator — the ``calibration_data`` table stayed
+# empty in production so ``show-calibration`` was vacuous and drift
+# detection had no inputs.
+#
+# ``task_class`` assignment: feature-level execution doesn't carry an
+# explicit task_class today (it is a per-task concept). We pick a stable
+# coarse default of ``"implementation"`` since ``execute_feature`` spawns
+# an implementation sub-agent. The function ``_feature_task_class`` is
+# the seam where richer classification (e.g. "refactor" / "bug_fix" /
+# "greenfield_impl" derived from the feature description) can be wired
+# in later. Returning a single value today is intentional: the important
+# property is that ``calibration_data`` starts getting rows so drift
+# detection has data to work with.
+_DEFAULT_TASK_CLASS_FEATURE = "implementation"
+
+
+def _feature_task_class(feature: Feature) -> str:
+    """Derive a calibration task_class label from a feature.
+
+    Currently a stable coarse bucket: ``"implementation"``. See the module
+    block-comment above for rationale. TODO(F019+): plug in a real
+    classifier here.
+    """
+    return _DEFAULT_TASK_CLASS_FEATURE
+
+
+def _record_feature_calibration(
+    *,
+    project_id: str,
+    feature: Feature,
+    passed: bool,
+) -> None:
+    """Record a calibration data point for a feature execution.
+
+    Wraps :func:`db.create_or_update_calibration` so a single failure
+    here cannot abort the loop. The ``expected_pass_rate`` is the
+    feature's ``conf_impl_correctness`` at the time of execution.
+    """
+    try:
+        confidence = float(feature.conf_impl_correctness or 0.0)
+        bucket = db._confidence_to_bucket(confidence)
+        db.create_or_update_calibration(
+            project_id=project_id,
+            task_class=_feature_task_class(feature),
+            confidence_bucket=bucket,
+            passed=passed,
+            expected_pass_rate=confidence,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to record calibration data for feature %s",
+            feature.id,
+            exc_info=True,
+        )
 
 
 def cascade_update_dependents(feature_id: str) -> list[str]:
@@ -426,6 +799,10 @@ async def handle_decomposition(
         "success": False,
         "children_created": 0,
         "cost_usd": result.total_cost_usd,
+        # Surface num_turns so the caller can run cost normalization (the
+        # turn-count proxy is needed when total_cost_usd is None on Max Pro
+        # / OAuth subscriptions).
+        "num_turns": result.num_turns,
         "error_message": None,
     }
 
@@ -780,6 +1157,17 @@ class OrchestrationLoop:
         # turn-count proxy.
         self._cost_proxy_active: bool = False
         self._cost_proxy_warning_emitted: bool = False
+        # Cached project cost values, used by ``budget_exceeded`` to avoid
+        # opening a fresh SQLite connection on every loop iteration just to
+        # read ``total_cost_usd``. The values are populated from the DB once
+        # at startup (see ``_refresh_project_cost_cache``) and refreshed
+        # after every cost-mutating call so the budget check sees the
+        # latest total. With 200+ features × N retries the per-iteration
+        # ``db.get_project`` was the loop's hottest read; caching collapses
+        # it to one connection per cost write.
+        self._project_total_cost: float = 0.0
+        self._project_max_cost_usd: float | None = None
+        self._refresh_project_cost_cache()
 
     def request_shutdown(self) -> None:
         """Request graceful shutdown of the loop."""
@@ -817,16 +1205,44 @@ class OrchestrationLoop:
         )
         self._cost_proxy_warning_emitted = True
 
+    def _refresh_project_cost_cache(self) -> None:
+        """Reload cached project cost values from the DB.
+
+        Call this exactly when something has, or might have, mutated the
+        project's ``total_cost_usd``. Specifically: after every successful
+        ``db.update_project_cost`` issued by ``handle_execution_result``,
+        the research path, and the decomposition path. ``budget_exceeded``
+        reads the cache rather than re-fetching the project, which keeps
+        the per-iteration overhead at zero new SQLite connections.
+
+        On a missing project the cache stays at the previous values; this
+        is safe because the loop simply will not advance past the next
+        ``find_next_ready_feature`` if the project has been deleted out
+        from under it.
+        """
+        project = db.get_project(self.project_id)
+        if project is None:
+            return
+        total = project.total_cost_usd
+        if total is None:
+            logger.warning(
+                "Project %s has total_cost_usd=None; treating as 0.0 for budget check",
+                self.project_id,
+            )
+            total = 0.0
+        self._project_total_cost = float(total)
+        self._project_max_cost_usd = project.max_cost_usd
+
     def budget_exceeded(self) -> bool:
         """Check if the budget has been exceeded.
 
-        Reads the canonical project total (``project.total_cost_usd``) from
-        the DB and compares it to BOTH the loop-level ``self.max_cost`` and
-        the project-level ``project.max_cost_usd``. Cost is tracked
-        atomically via ``db.update_project_cost`` (called from
-        ``handle_execution_result``) so the DB total is the single source of
-        truth — we no longer keep a separate in-memory accumulator that
-        could drift from it.
+        Reads the cached project total (``self._project_total_cost``) and
+        compares it to BOTH the loop-level ``self.max_cost`` and the
+        project-level ``self._project_max_cost_usd`` ceiling. Cost is
+        tracked atomically via ``db.update_project_cost`` (called from
+        ``handle_execution_result``) and the cache is refreshed on every
+        write — so the cache is the single source of truth for the loop,
+        without paying for a fresh SQLite connection every iteration.
 
         Defensively coerces a missing/None project total to 0.0 — if cost
         normalization is bypassed somewhere and None lands in the DB, the
@@ -835,16 +1251,7 @@ class OrchestrationLoop:
         (e.g. by tests that bypass the DB), it is OR'd into the loop-level
         check.
         """
-        project = db.get_project(self.project_id)
-        project_total = 0.0
-        if project is not None:
-            project_total = project.total_cost_usd
-            if project_total is None:
-                logger.warning(
-                    "Project %s has total_cost_usd=None; treating as 0.0 for budget check",
-                    self.project_id,
-                )
-                project_total = 0.0
+        project_total = self._project_total_cost or 0.0
 
         # Check loop-level budget against the DB-tracked project total.
         # Tests may set self.total_cost directly (bypassing the DB write),
@@ -855,8 +1262,8 @@ class OrchestrationLoop:
                 return True
 
         # Check project-level budget against the project's own max.
-        if project is not None and project.max_cost_usd:
-            if project_total >= project.max_cost_usd:
+        if self._project_max_cost_usd:
+            if project_total >= self._project_max_cost_usd:
                 return True
 
         return False
@@ -952,11 +1359,19 @@ class OrchestrationLoop:
             # Even when num_turns==0 (zero source), surface that cost data is absent.
             self._cost_proxy_active = True
         if research_cost > 0:
-            self.total_cost += research_cost
+            # R4-001 fix: only update the canonical DB total. Previously
+            # this also did ``self.total_cost += research_cost`` while
+            # ``budget_exceeded()`` takes ``max(project_total, self.total_cost)``,
+            # so the in-memory accumulator drifted above the DB total and the
+            # research charge was effectively counted twice against the
+            # budget. The feature execution path was already fixed under
+            # R2-001; this is the same pattern recurring on the research
+            # path. Keep DB update only — it is the single source of truth.
             db.update_project_cost(
                 project_id=self.project_id,
                 cost_usd=research_cost,
             )
+            self._refresh_project_cost_cache()
 
         # Store research results in DB (even if research failed, record the attempt)
         findings = research_exec.text if not research_exec.is_error else None
@@ -1045,9 +1460,32 @@ class OrchestrationLoop:
                 feature=feature,
             )
 
-            # Track decomposition cost
-            if decomp_result.get("cost_usd") is not None:
-                self.total_cost += decomp_result["cost_usd"]
+            # R4-002 fix: route decomposition cost to the canonical project
+            # total via db.update_project_cost (atomic) rather than the
+            # in-memory accumulator. Previously this only incremented
+            # ``self.total_cost`` so the project's ``total_cost_usd`` never
+            # reflected decomposition charges and project-level
+            # ``max_cost_usd`` enforcement was blind to them. Normalize so
+            # Max Pro / OAuth subscriptions (which return cost_usd=None)
+            # still consume budget via the turn-count proxy.
+            decomp_cost_raw = decomp_result.get("cost_usd")
+            decomp_num_turns = decomp_result.get("num_turns")
+            decomp_normalized, decomp_cost_source = _normalize_cost(
+                decomp_cost_raw, decomp_num_turns
+            )
+            if decomp_cost_source == "turn_proxy":
+                self._cost_proxy_active = True
+            elif decomp_cost_raw is None:
+                # SDK reported no cost AND no usable turn proxy — still flag
+                # so downstream consumers (CLI status / budget warnings)
+                # know cost data is absent on this path.
+                self._cost_proxy_active = True
+            if decomp_normalized > 0:
+                db.update_project_cost(
+                    project_id=self.project_id,
+                    cost_usd=decomp_normalized,
+                )
+                self._refresh_project_cost_cache()
 
             if decomp_result["success"]:
                 logger.info(
@@ -1085,6 +1523,17 @@ class OrchestrationLoop:
                 commit_before = pre_status.get("sha") or None
             except Exception:
                 logger.debug("Could not capture pre-execution git state")
+
+        # F051 / R4-003: Capture a pre-execution test snapshot so that, after
+        # verification passes, we can compare the test verdicts and detect
+        # newly-failing tests caused by THIS feature. ``capture_pytest_snapshot``
+        # returns None when pytest can't be run (no workspace, no test dir,
+        # pytest not installed, timeout, etc.); the post-execution code
+        # only calls ``db.detect_regression`` when both before and after
+        # snapshots are available.
+        before_snapshot: dict[str, bool] | None = capture_pytest_snapshot(
+            self.workspace or None
+        )
 
         # F109: Run research phase if needed
         await self._run_research(feature)
@@ -1141,15 +1590,74 @@ class OrchestrationLoop:
             max_turns=25,
         )
 
-        # Spawn the sub-agent
-        spawn_result = await spawn_sub_agent(
-            project_id=self.project_id,
-            purpose="implement_feature",
-            prompt=prompt,
-            target_type="feature",
-            target_id=feature.id,
-            options=options,
-        )
+        # Spawn the sub-agent, bounded by a wall-clock timeout so a stuck
+        # tool call (e.g. a hung Puppeteer browser session) cannot park
+        # the orchestration loop forever. Configurable via
+        # ``BOB3_FEATURE_TIMEOUT_SECONDS``; default 1 hour.
+        feature_timeout = _resolve_feature_timeout_seconds()
+        try:
+            spawn_result = await asyncio.wait_for(
+                spawn_sub_agent(
+                    project_id=self.project_id,
+                    purpose="implement_feature",
+                    prompt=prompt,
+                    target_type="feature",
+                    target_id=feature.id,
+                    options=options,
+                ),
+                timeout=feature_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "Feature %s exceeded BOB3_FEATURE_TIMEOUT_SECONDS=%ss; "
+                "marking 'interrupted' and NOT cascading dependents",
+                feature.id,
+                feature_timeout,
+            )
+            # Persist a synthetic evidence artifact so the operator can
+            # tell the difference between "sub-agent crashed" and
+            # "sub-agent ran past the timeout". Best-effort — never let an
+            # evidence-write failure derail the timeout handling itself.
+            try:
+                db.create_evidence(
+                    project_id=self.project_id,
+                    feature_id=feature.id,
+                    type="execution_timeout",
+                    content=json.dumps({
+                        "status": "interrupted",
+                        "reason": "feature_wall_clock_timeout",
+                        "timeout_seconds": feature_timeout,
+                        "feature_id": feature.id,
+                    }),
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to record execution_timeout evidence for feature %s",
+                    feature.id,
+                    exc_info=True,
+                )
+            # Mark the feature 'interrupted' (not 'failed') so the F116
+            # auto-resume path picks it up cleanly on the next run rather
+            # than burning a refinement attempt on what is almost
+            # certainly an infrastructure-level hang. Do NOT cascade
+            # dependents — a timed-out feature has not produced verified
+            # work, so its downstream peers must stay 'pending'.
+            db.update_feature(feature.id, status="interrupted")
+            self.features_failed += 1
+            self._current_feature = None
+            timeout_exec = ExecutionResult(
+                text="",
+                is_error=True,
+                error_message=(
+                    f"Feature timed out after {feature_timeout}s "
+                    f"(BOB3_FEATURE_TIMEOUT_SECONDS)"
+                ),
+                duration_ms=int(feature_timeout * 1000),
+                num_turns=0,
+                total_cost_usd=None,
+            )
+            agent_run = type("_FakeRun", (), {"id": None})()
+            return SpawnResult(execution_result=timeout_exec, agent_run=agent_run)
 
         # F113: Run verification BEFORE marking the feature completed so
         # that a verification failure does NOT cascade 'ready' status to
@@ -1220,6 +1728,11 @@ class OrchestrationLoop:
             verification_passed=verification_passed,
             verification_summary=verification_summary,
         )
+        # Refresh the cached project cost after handle_execution_result —
+        # it issues db.update_project_cost on the success path, so the
+        # next budget_exceeded() must see the updated total without
+        # re-fetching the project from disk.
+        self._refresh_project_cost_cache()
 
         # Store verification_checklist evidence only when verification
         # actually ran (i.e. sub-agent succeeded and workspace is set).
@@ -1329,22 +1842,22 @@ class OrchestrationLoop:
                     # Override the 'completed' status that
                     # handle_execution_result wrote earlier — verification
                     # passed but we couldn't get the change committed, so
-                    # this needs human attention. Do NOT cascade dependents.
-                    db.update_feature(feature.id, status="needs_human")
-                    # handle_execution_result already ran the F123 cascade
-                    # which may have flipped dependents from 'pending' to
-                    # 'ready'. Roll those back so a hook-blocked feature
-                    # cannot unlock its downstream peers.
+                    # this needs human attention. handle_execution_result
+                    # already ran the F123 cascade which may have flipped
+                    # dependents from 'pending' to 'ready'; we need to roll
+                    # those back too. Both writes happen atomically in a
+                    # single transaction (db.rollback_feature_cascade) so a
+                    # crash during rollback can never leave the project in
+                    # a half-rolled-back state (some dependents back to
+                    # 'pending', others stuck at 'ready').
                     try:
-                        dependents = db.get_feature_dependents(feature.id)
-                        for dep in dependents:
-                            dep_feature = db.get_feature(dep.feature_id)
-                            if dep_feature is not None and dep_feature.status == "ready":
-                                db.update_feature(dep.feature_id, status="pending")
+                        db.rollback_feature_cascade(
+                            feature.id, target_status="needs_human"
+                        )
                     except Exception:
-                        logger.warning(
-                            "Failed to roll back dependent cascade for "
-                            "feature %s after git hook failure",
+                        logger.error(
+                            "Failed to roll back cascade for feature %s "
+                            "after git hook failure",
                             feature.id,
                             exc_info=True,
                         )
@@ -1451,6 +1964,92 @@ class OrchestrationLoop:
                     feature.id,
                     exc_info=True,
                 )
+
+        # F051 / R4-003: Regression detection.
+        #
+        # If verification passed AND the feature was committed without a
+        # hook rejection, capture an "after" pytest snapshot and compare it
+        # to the pre-execution snapshot. Any test that was passing before
+        # this feature ran but is failing now is, by definition, a regression
+        # caused by THIS feature. ``db.detect_regression`` records the event
+        # in the ``regression_events`` table so ``show-regressions`` and the
+        # rollback path (F052) actually see something.
+        #
+        # We deliberately gate this on the success path (verification passed
+        # AND no git hook rejection) — if the feature didn't really land,
+        # there's no causing-feature to attribute regressions to.
+        feature_landed = (
+            (not result.is_error)
+            and verification_passed
+            and not git_hook_failed
+        )
+        if feature_landed and before_snapshot is not None:
+            after_snapshot = capture_pytest_snapshot(self.workspace or None)
+            if after_snapshot is not None:
+                try:
+                    event = db.detect_regression(
+                        project_id=self.project_id,
+                        causing_feature_id=feature.id,
+                        before_results=before_snapshot,
+                        after_results=after_snapshot,
+                    )
+                    if event is not None:
+                        logger.warning(
+                            "Regression detected after feature %s: "
+                            "affected_feature=%s, affected_tests=%s",
+                            feature.id,
+                            event.affected_feature_id,
+                            event.affected_tests,
+                        )
+                        try:
+                            db.create_evidence(
+                                project_id=self.project_id,
+                                feature_id=feature.id,
+                                type="regression_detected",
+                                content=json.dumps({
+                                    "regression_event_id": event.id,
+                                    "causing_feature_id": feature.id,
+                                    "affected_feature_id": event.affected_feature_id,
+                                    "affected_tests": event.affected_tests,
+                                }),
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to record regression_detected evidence "
+                                "for feature %s",
+                                feature.id,
+                                exc_info=True,
+                            )
+                except Exception:
+                    # Detection / DB error must not abort the loop.
+                    logger.warning(
+                        "detect_regression raised for feature %s; "
+                        "continuing without regression record",
+                        feature.id,
+                        exc_info=True,
+                    )
+
+        # F019 / R4-004: Record a calibration data point for this feature.
+        #
+        # We log predicted confidence (pre-execution ``conf_impl_correctness``)
+        # vs actual outcome (passed verification or not). This populates the
+        # ``calibration_data`` table that ``show-calibration`` reads and that
+        # drift-detection (F050) consumes; previously the table was always
+        # empty in production.
+        #
+        # ``passed`` for calibration purposes means "the feature actually
+        # landed cleanly": sub-agent didn't error, verification passed, AND
+        # no git hook rejection. Anything else is treated as a failed
+        # prediction, regardless of which step blew up. This may
+        # over-report failures (a git hook rejection isn't really a
+        # confidence-calibration failure of the implementation), but
+        # under-reporting them would let buggy work erode the calibration
+        # signal silently. Choice intentional; revisit if it skews drift.
+        _record_feature_calibration(
+            project_id=self.project_id,
+            feature=feature,
+            passed=feature_landed,
+        )
 
         # Clear current feature tracking
         self._current_feature = None
@@ -1698,23 +2297,24 @@ class OrchestrationLoop:
         repair it.
 
         Implementation note: orphan detection is a single indexed SQL query
-        in ``db.find_orphaned_pending_features`` rather than the prior
-        N+1-style fetch-and-loop. This keeps recovery cheap on projects
-        with thousands of pending features (one ``SELECT`` plus N small
-        ``UPDATE`` calls, instead of 1 + 2N round-trips).
+        in ``db.find_orphaned_pending_features``, and the promotion itself
+        is a single bulk ``UPDATE ... WHERE id IN (...) AND status='pending'``
+        in ``db.bulk_promote_features_to_ready``. The previous implementation
+        called ``update_feature`` once per orphan, opening N transactions and
+        serializing on the WAL writer — fine for a handful of orphans, but
+        visibly slow when a project comes back with hundreds of stale
+        'pending' rows after a crash.
         """
         orphaned_ids = db.find_orphaned_pending_features(self.project_id)
         if not orphaned_ids:
             return
 
-        for fid in orphaned_ids:
-            db.update_feature(feature_id=fid, status="ready")
-            logger.warning("Recovered orphaned pending feature %s -> ready", fid)
+        promoted = db.bulk_promote_features_to_ready(orphaned_ids)
 
         logger.info(
             "Mid-cascade crash recovery: promoted %d orphaned pending "
             "feature(s) to 'ready': %s",
-            len(orphaned_ids),
+            promoted,
             ", ".join(p[:8] for p in orphaned_ids),
         )
 
@@ -1836,9 +2436,26 @@ class OrchestrationLoop:
         When ``target_feature_id`` is set, runs only that single feature and
         exits after one iteration regardless of outcome.
 
+        Concurrency: this method acquires an exclusive advisory file lock
+        on ``<workspace>/.bob3.lock`` for the duration of the run. A
+        second concurrent ``bob3 run`` for the same project will fail
+        fast with :class:`AlreadyRunningError`.
+
         Returns:
             The reason the loop terminated.
         """
+        # Acquire the per-project run lock. If another bob3 run is in
+        # flight we want to bail out BEFORE installing signal handlers
+        # or doing any DB writes — the second invocation should be a
+        # no-op from the project's point of view.
+        lock_handle = acquire_run_lock(self.workspace or os.getcwd())
+        try:
+            return await self._run_locked()
+        finally:
+            release_run_lock(lock_handle)
+
+    async def _run_locked(self) -> LoopTermination:
+        """Body of :meth:`run` executed while the project lock is held."""
         self._install_signal_handlers()
         logger.info("Starting orchestration loop for project %s", self.project_id)
 

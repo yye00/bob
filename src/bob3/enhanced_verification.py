@@ -64,6 +64,22 @@ _PYTHON_CRITERION_BANNED_MODULES: frozenset[str] = frozenset(
         "pty",
         "pickle",
         "marshal",
+        # Filesystem / environment access. ``os`` was the most glaring
+        # gap: ``import os; os.open(..., os.O_WRONLY|os.O_CREAT)`` writes
+        # arbitrary files, ``os.getenv`` reads secrets like
+        # ``ANTHROPIC_API_KEY``, and ``os.read``/``os.write`` operate on
+        # raw file descriptors below the ``open(..., "w")`` allowlist.
+        # ``pathlib`` provides equivalent fs primitives
+        # (``Path.read_text``, ``Path.write_text``, ``Path.unlink``).
+        # ``tempfile`` and ``glob`` enable file creation / information
+        # disclosure (listing dirs to find sensitive files). All four
+        # belong on the ban-list. Specs that genuinely need to touch the
+        # filesystem should use the ``pytest:`` form, which is sandboxed
+        # by the test framework.
+        "os",
+        "pathlib",
+        "tempfile",
+        "glob",
         # Dynamic-import escape hatches: each provides a way to load and
         # execute another module by name, sidestepping the static ``import``
         # check above. ``importlib.import_module("os")`` is the canonical
@@ -400,11 +416,19 @@ def _run_pytest_criterion(
     if not expression:
         return False, "pytest criterion is empty"
 
+    # The ``--`` sentinel separates pytest's own flags from positional
+    # arguments. Without it, an attacker-controlled criterion like
+    # ``pytest: --co tests/`` would land in the flag-position of the
+    # argv and reconfigure pytest (``--co`` makes pytest collect-only,
+    # which exits 0 without running any test — a silent pass). After
+    # ``--``, pytest treats every following token as a path/nodeid
+    # regardless of leading dashes, so the worst an injected flag can
+    # do is fail the collection step (which we already report as a
+    # criterion failure).
     cmd = [
         sys.executable,
         "-m",
         "pytest",
-        expression,
         "--tb=no",
         "-q",
         # Force plain output. Without this, FORCE_COLOR=1 / PY_COLORS=1 or
@@ -413,6 +437,8 @@ def _run_pytest_criterion(
         # ``"passed" in stdout`` check below in some pytest builds and
         # confuses the summary regex in superpowers._parse_pytest_counts.
         "--color=no",
+        "--",
+        expression,
     ]
     try:
         stdout, stderr, exit_code, timed_out = _run_with_pgroup_timeout(
@@ -634,8 +660,17 @@ def validate_acceptance_criteria(
             return False, f"Failed {len(failed)}/{total} criteria: {failed_str}"
 
     except Exception as e:
-        logger.warning("Error validating acceptance criteria: %s", e)
-        return True, f"Could not validate criteria (skipped): {e}"
+        # Recurrence guard for R1-005 / R2-002: a crash inside the validator
+        # MUST NOT silently promote the feature to passed. Failing closed
+        # forces human review and surfaces the underlying bug instead of
+        # rubber-stamping it.
+        logger.error(
+            "Error validating acceptance criteria: %s", e, exc_info=True
+        )
+        return False, (
+            f"Verification crashed: {e}; treating as failure "
+            f"(manual review needed)"
+        )
 
 
 def _check_criterion(

@@ -174,9 +174,19 @@ def build_sub_agent_options(
         # the sub-agent can discover them. Idempotent — only re-links on
         # bob3 upgrades. Non-fatal on failure (skills are advisory).
         try:
-            from bob3.skills_installer import install_skills_to_workspace
+            from bob3.skills_installer import (
+                install_skills_to_workspace,
+                verify_skills_integrity,
+            )
 
             install_skills_to_workspace(cwd)
+            # Defense-in-depth: a previous sub-agent (running with
+            # bypassPermissions in the same workspace) could have
+            # replaced a bob3 skill symlink with a malicious directory.
+            # Audit and force-replace any tampered entries before the
+            # next sub-agent loads skills. Logged at WARNING when
+            # anything is replaced. Non-fatal on internal failure.
+            verify_skills_integrity(cwd)
         except Exception as exc:
             logger.debug("Skill installation skipped: %s", exc)
 
@@ -500,49 +510,63 @@ async def spawn_sub_agent(
         SpawnResult containing the execution result and the agent run record.
     """
     from bob3 import db
-    from bob3.orchestrator.mcp_config import build_puppeteer_mcp_dict
+    from bob3.orchestrator.mcp_config import (
+        build_perplexity_mcp_dict,
+        build_puppeteer_mcp_dict,
+    )
+
+    def _merge_mcp(opts: ClaudeCodeOptions | None, extra: dict[str, Any]) -> ClaudeCodeOptions:
+        """Return a new ClaudeCodeOptions with ``extra`` merged into mcp_servers."""
+        if opts is None:
+            return build_sub_agent_options(mcp_servers=extra)
+        existing_servers = dict(opts.mcp_servers) if opts.mcp_servers else {}
+        existing_servers.update(extra)
+        kwargs: dict[str, Any] = {}
+        if opts.cwd is not None:
+            kwargs["cwd"] = opts.cwd
+        if opts.model is not None:
+            kwargs["model"] = opts.model
+        if opts.max_turns is not None:
+            kwargs["max_turns"] = opts.max_turns
+        if opts.system_prompt is not None:
+            kwargs["system_prompt"] = opts.system_prompt
+        if opts.append_system_prompt is not None:
+            kwargs["append_system_prompt"] = opts.append_system_prompt
+        if opts.allowed_tools is not None:
+            kwargs["allowed_tools"] = list(opts.allowed_tools)
+        if opts.disallowed_tools is not None:
+            kwargs["disallowed_tools"] = list(opts.disallowed_tools)
+        if opts.permission_mode is not None:
+            kwargs["permission_mode"] = opts.permission_mode
+        if opts.env is not None:
+            kwargs["env"] = dict(opts.env)
+        kwargs["mcp_servers"] = existing_servers
+        return ClaudeCodeOptions(**kwargs)
+
+    if mcp_enabled is not None:
+        mcp_list = json.loads(mcp_enabled)
+    else:
+        mcp_list = []
 
     # F105: Merge Puppeteer MCP into options when enabled
     if enable_puppeteer:
-        puppeteer_mcp = build_puppeteer_mcp_dict()
-
-        if options is not None:
-            # Merge Puppeteer MCP into existing options
-            existing_servers = dict(options.mcp_servers) if options.mcp_servers else {}
-            existing_servers.update(puppeteer_mcp)
-            # Build new options with merged MCP servers
-            kwargs: dict[str, Any] = {}
-            if options.cwd is not None:
-                kwargs["cwd"] = options.cwd
-            if options.model is not None:
-                kwargs["model"] = options.model
-            if options.max_turns is not None:
-                kwargs["max_turns"] = options.max_turns
-            if options.system_prompt is not None:
-                kwargs["system_prompt"] = options.system_prompt
-            if options.append_system_prompt is not None:
-                kwargs["append_system_prompt"] = options.append_system_prompt
-            if options.allowed_tools is not None:
-                kwargs["allowed_tools"] = list(options.allowed_tools)
-            if options.disallowed_tools is not None:
-                kwargs["disallowed_tools"] = list(options.disallowed_tools)
-            if options.permission_mode is not None:
-                kwargs["permission_mode"] = options.permission_mode
-            if options.env is not None:
-                kwargs["env"] = dict(options.env)
-            kwargs["mcp_servers"] = existing_servers
-            options = ClaudeCodeOptions(**kwargs)
-        else:
-            options = build_sub_agent_options(mcp_servers=puppeteer_mcp)
-
-        # Track Puppeteer in mcp_enabled
-        if mcp_enabled is not None:
-            mcp_list = json.loads(mcp_enabled)
-        else:
-            mcp_list = []
+        options = _merge_mcp(options, build_puppeteer_mcp_dict())
         if "puppeteer" not in mcp_list:
             mcp_list.append("puppeteer")
-        mcp_enabled = json.dumps(mcp_list)
+
+    # Auto-inject Perplexity MCP for implementation sub-agents when an API
+    # key is configured. The README advertises that sub-agents can use
+    # Perplexity; without this branch only spawn_research_agent honored
+    # that. Skipped silently when PERPLEXITY_API_KEY is unset so projects
+    # without a Perplexity subscription continue to work unchanged.
+    if os.environ.get("PERPLEXITY_API_KEY", "").strip():
+        existing_servers = dict(options.mcp_servers) if options and options.mcp_servers else {}
+        if "perplexity" not in existing_servers:
+            options = _merge_mcp(options, build_perplexity_mcp_dict())
+            if "perplexity" not in mcp_list:
+                mcp_list.append("perplexity")
+
+    mcp_enabled = json.dumps(mcp_list) if mcp_list else mcp_enabled
 
     # Truncate prompt for summary (first 200 chars)
     prompt_summary = prompt[:200] if len(prompt) > 200 else prompt

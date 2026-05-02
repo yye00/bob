@@ -504,3 +504,310 @@ class TestRegressionEventLinksBCauseAAffected:
             )
             count = cursor.fetchone()[0]
         assert count == 1
+
+
+# ============================================================
+# R4-003: Regression detection must be WIRED IN to the orchestrator.
+#
+# Before this fix, ``db.detect_regression`` existed and was thoroughly
+# tested in isolation but was NEVER called by the orchestrator's
+# ``execute_feature``. As a result the ``regression_events`` table was
+# always empty in production and ``show-regressions`` was vacuous.
+#
+# These tests drive the orchestrator end-to-end (with mocked sub-agents
+# and a controllable pytest snapshot helper) and verify that:
+#   1. capture_pytest_snapshot is called before AND after the sub-agent.
+#   2. db.detect_regression is invoked with both snapshots and the
+#      causing feature ID.
+#   3. When a regression is found, an evidence row of type
+#      ``regression_detected`` is written.
+# ============================================================
+
+
+class TestRegressionDetectionWiredIntoOrchestrator:
+    """R4-003: db.detect_regression must be called from execute_feature."""
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_calls_detect_regression_on_success(
+        self, project
+    ):
+        """execute_feature must capture before/after snapshots and call
+        db.detect_regression on the success path."""
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import (
+            create_feature,
+            get_feature,
+            list_regression_events,
+            update_feature,
+        )
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import OrchestrationLoop
+
+        # Pre-existing completed feature whose tests will start failing.
+        prior = create_feature(
+            project_id=project.id,
+            name="Prior feature",
+            status="completed",
+        )
+        # The feature being implemented; setting readiness_score=0.9 so it
+        # passes the gating checks if anything looks at them.
+        f = create_feature(
+            project_id=project.id,
+            name="Causes regression",
+            description="will break tests/test_a.py::test_x",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            f.id,
+            conf_spec_understanding=0.9,
+            conf_impl_correctness=0.9,
+            conf_test_adequacy=0.9,
+            readiness_score=0.9,
+        )
+        feature = get_feature(f.id)
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        async def mock_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="done",
+                is_error=False,
+                duration_ms=100,
+                num_turns=2,
+                total_cost_usd=0.10,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        # Snapshots: before all green, after one test fails.
+        snapshots = [
+            {"tests/test_a.py::test_x": True, "tests/test_a.py::test_y": True},
+            {"tests/test_a.py::test_x": False, "tests/test_a.py::test_y": True},
+        ]
+        snapshot_iter = iter(snapshots)
+
+        def fake_capture(*_args, **_kwargs):
+            try:
+                return next(snapshot_iter)
+            except StopIteration:
+                return None
+
+        with patch(
+            "bob3.orchestrator.run_loop.spawn_sub_agent",
+            new_callable=AsyncMock,
+            side_effect=mock_spawn,
+        ), patch(
+            "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+            side_effect=fake_capture,
+        ), patch(
+            "bob3.orchestrator.run_loop.run_verification_checklist",
+            return_value={"passed": True, "summary": "ok", "checks": []},
+        ), patch(
+            "bob3.orchestrator.run_loop.git_commit_feature",
+            return_value="deadbeef",
+        ), patch(
+            "bob3.orchestrator.run_loop.git_get_status",
+            return_value={"sha": "abc123"},
+        ):
+            await loop.execute_feature(feature)
+
+        events = list_regression_events(project_id=project.id)
+        assert len(events) == 1, (
+            "execute_feature must call db.detect_regression on the success "
+            "path; regression_events table is empty (R4-003 wire-up "
+            "missing)."
+        )
+        event = events[0]
+        assert event.causing_feature_id == feature.id
+        # The affected test should be the one that flipped from PASSED to
+        # FAILED (test_x). detect_regression stores a JSON-encoded list.
+        assert "test_x" in event.affected_tests
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_records_regression_evidence(self, project):
+        """When detect_regression returns an event, an evidence row of
+        type 'regression_detected' must be written for the causing
+        feature."""
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import (
+            create_feature,
+            get_feature,
+            query_evidence,
+            update_feature,
+        )
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import OrchestrationLoop
+
+        f = create_feature(
+            project_id=project.id,
+            name="Causes regression with evidence",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            f.id,
+            conf_spec_understanding=0.9,
+            conf_impl_correctness=0.9,
+            conf_test_adequacy=0.9,
+            readiness_score=0.9,
+        )
+        feature = get_feature(f.id)
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        async def mock_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="done",
+                is_error=False,
+                duration_ms=100,
+                num_turns=1,
+                total_cost_usd=0.05,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        snapshots = [
+            {"tests/test_x.py::tx": True},
+            {"tests/test_x.py::tx": False},
+        ]
+        snapshot_iter = iter(snapshots)
+
+        def fake_capture(*_args, **_kwargs):
+            try:
+                return next(snapshot_iter)
+            except StopIteration:
+                return None
+
+        with patch(
+            "bob3.orchestrator.run_loop.spawn_sub_agent",
+            new_callable=AsyncMock,
+            side_effect=mock_spawn,
+        ), patch(
+            "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+            side_effect=fake_capture,
+        ), patch(
+            "bob3.orchestrator.run_loop.run_verification_checklist",
+            return_value={"passed": True, "summary": "ok", "checks": []},
+        ), patch(
+            "bob3.orchestrator.run_loop.git_commit_feature",
+            return_value="deadbeef",
+        ), patch(
+            "bob3.orchestrator.run_loop.git_get_status",
+            return_value={"sha": "abc123"},
+        ):
+            await loop.execute_feature(feature)
+
+        evidence_rows = query_evidence(feature_id=feature.id)
+        regression_evidence = [
+            e for e in evidence_rows if e.type == "regression_detected"
+        ]
+        assert len(regression_evidence) == 1, (
+            "execute_feature must store evidence with type "
+            "'regression_detected' so the operator sees what regressed; "
+            "found "
+            f"{[e.type for e in evidence_rows]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_skips_detect_when_snapshot_unavailable(
+        self, project
+    ):
+        """When capture_pytest_snapshot returns None (e.g. no test dir,
+        pytest missing), detect_regression must be skipped — empty
+        snapshots aren't useful and the feature wasn't really
+        regression-checked."""
+        import uuid
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from bob3.db import (
+            create_feature,
+            get_feature,
+            list_regression_events,
+            update_feature,
+        )
+        from bob3.orchestrator.claude_executor import (
+            ExecutionResult,
+            SpawnResult,
+        )
+        from bob3.orchestrator.run_loop import OrchestrationLoop
+
+        f = create_feature(
+            project_id=project.id,
+            name="No snapshot",
+            status="ready",
+            priority=10,
+            risk_category="medium",
+        )
+        update_feature(
+            f.id,
+            conf_spec_understanding=0.9,
+            conf_impl_correctness=0.9,
+            conf_test_adequacy=0.9,
+            readiness_score=0.9,
+        )
+        feature = get_feature(f.id)
+
+        loop = OrchestrationLoop(project_id=project.id, workspace="/tmp/w")
+
+        async def mock_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="done",
+                is_error=False,
+                duration_ms=100,
+                num_turns=1,
+                total_cost_usd=0.05,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        with patch(
+            "bob3.orchestrator.run_loop.spawn_sub_agent",
+            new_callable=AsyncMock,
+            side_effect=mock_spawn,
+        ), patch(
+            "bob3.orchestrator.run_loop.capture_pytest_snapshot",
+            return_value=None,
+        ), patch(
+            "bob3.orchestrator.run_loop.run_verification_checklist",
+            return_value={"passed": True, "summary": "ok", "checks": []},
+        ), patch(
+            "bob3.orchestrator.run_loop.git_commit_feature",
+            return_value="deadbeef",
+        ), patch(
+            "bob3.orchestrator.run_loop.git_get_status",
+            return_value={"sha": "abc123"},
+        ):
+            await loop.execute_feature(feature)
+
+        events = list_regression_events(project_id=project.id)
+        assert events == [], (
+            "When snapshots are unavailable, detect_regression must be "
+            "skipped to avoid spurious empty-comparison records."
+        )
+
+    def test_capture_pytest_snapshot_returns_none_for_missing_workspace(
+        self, db_path
+    ):
+        """capture_pytest_snapshot must safely return None for missing
+        workspaces (regression on the helper itself)."""
+        from bob3.orchestrator.run_loop import capture_pytest_snapshot
+
+        assert capture_pytest_snapshot(None) is None
+        assert capture_pytest_snapshot("") is None
+        assert capture_pytest_snapshot("/nonexistent/path/does/not/exist") is None

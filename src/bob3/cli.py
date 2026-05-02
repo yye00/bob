@@ -222,8 +222,11 @@ def plan(spec_file, create):
                         f"[yellow]Spec name:[/yellow] {project_name}\n"
                         f"[yellow]Database project:[/yellow] {db_project_name}\n\n"
                         f"[red]This spec appears to be for a different project![/red]\n"
-                        f"Loading the wrong spec will pollute the database with incorrect features.\n"
-                        f"If you really want to load this spec, rename it to match the project name."
+                        f"Loading the wrong spec will pollute the database with incorrect features.\n\n"
+                        f"To fix: re-initialize with "
+                        f"`bob3 init <path> --name <spec-name>`, where <spec-name> "
+                        f"is the `name:` field in your spec (here: '{project_name}').\n"
+                        f"Alternatively, rename the spec's `name:` field to match the project."
                     )
                     logger.error(
                         "Spec name '%s' does not match project name '%s'",
@@ -260,10 +263,19 @@ def _run_orchestration_loop(
 
     Returns:
         The LoopTermination reason.
+
+    Raises:
+        SystemExit(1): if another ``bob3 run`` already holds the
+            per-project lock. The error is printed to stderr in a form
+            suitable for the user.
     """
     import asyncio
 
-    from bob3.orchestrator.run_loop import LoopTermination, OrchestrationLoop
+    from bob3.orchestrator.run_loop import (
+        AlreadyRunningError,
+        LoopTermination,
+        OrchestrationLoop,
+    )
 
     conn = get_connection()
     try:
@@ -282,7 +294,14 @@ def _run_orchestration_loop(
         target_feature_id=target_feature_id,
     )
 
-    return asyncio.run(loop.run())
+    try:
+        return asyncio.run(loop.run())
+    except AlreadyRunningError as exc:
+        # Another bob3 run is in flight for this project. Print a clear
+        # message (the exception's str carries the lock path so the user
+        # can see WHICH project is locked) and exit 1.
+        click.echo(str(exc), err=True)
+        raise SystemExit(1)
 
 
 @main.command()
@@ -324,6 +343,22 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
     """
     logger.info("Starting build run")
     console = Console()
+
+    # Pre-flight: surface which auth path will be used so users get a clear
+    # signal before MCP startup or sub-agent spawning. We do not fail here:
+    # an OAuth-authenticated Claude Code CLI session works without an env
+    # var, and the SDK will surface a more specific error if neither path
+    # is available at call time.
+    from bob3.orchestrator.claude_executor import validate_api_key
+
+    key = validate_api_key()
+    if key is None:
+        click.echo(
+            "Note: no ANTHROPIC_API_KEY set. Will use Claude Code Max Pro OAuth "
+            "if available."
+        )
+    else:
+        logger.debug("ANTHROPIC_API_KEY/CLAUDE_API_KEY detected; using API key auth")
 
     # Start bob3-memory MCP server (required for all operations)
     if not no_mcp:
@@ -1307,4 +1342,80 @@ def show_regressions_cmd():
             str(detected),
         )
 
+    console.print(table)
+
+
+# ============================================================
+# SHOW-REVIEWS COMMAND (review findings registry)
+# ============================================================
+
+
+@main.command("show-reviews")
+@click.option("--query", "-q", default=None, help="Substring match in title/pattern/notes.")
+@click.option("--tag", "-t", default=None, help="Filter by tag (e.g. allowlist-gap).")
+@click.option("--severity", "-s", default=None,
+              help="Filter by severity (critical/high/medium/low).")
+@click.option("--status", default=None,
+              help="Filter by status (open/in_progress/fixed/wontfix).")
+@click.option("--file", "-f", "file_glob", default=None,
+              help="Substring match against any file path in the finding.")
+@click.option("--limit", default=30, help="Max results.")
+@click.option("--summary", is_flag=True, help="Show registry summary instead of search results.")
+def show_reviews_cmd(query, tag, severity, status, file_glob, limit, summary):
+    """Show or search the adversarial-review findings registry.
+
+    The registry lives at reviews/findings.yaml and tracks every bug or
+    anti-pattern found by review passes, including links to recurring
+    patterns. Use this command to look up prior findings before reporting
+    a new one or to see how a class of issue has trended.
+    """
+    from bob3.reviews import load_registry, render_summary
+
+    try:
+        registry = load_registry()
+    except FileNotFoundError:
+        console = Console()
+        console.print("[yellow]No registry found at reviews/findings.yaml[/yellow]")
+        return
+
+    console = Console()
+
+    if summary:
+        console.print(render_summary(registry))
+        return
+
+    results = registry.search(
+        query=query,
+        status=status,
+        severity=severity,
+        tag=tag,
+        files_glob=file_glob,
+        limit=limit,
+    )
+
+    if not results:
+        console.print("[dim]No findings match.[/dim]")
+        return
+
+    table = Table(title=f"Review findings ({len(results)} match)")
+    table.add_column("ID", style="bold")
+    table.add_column("Sev", style="dim")
+    table.add_column("Status")
+    table.add_column("Title")
+    table.add_column("Tags", style="dim")
+    for f in results:
+        sev_color = {
+            "critical": "red bold",
+            "high": "red",
+            "medium": "yellow",
+            "low": "dim",
+        }.get(f.severity, "")
+        status_color = {"fixed": "green", "open": "red"}.get(f.status, "")
+        table.add_row(
+            f.id,
+            f"[{sev_color}]{f.severity}[/{sev_color}]" if sev_color else f.severity,
+            f"[{status_color}]{f.status}[/{status_color}]" if status_color else f.status,
+            f.title,
+            ", ".join(f.tags[:3]) + ("…" if len(f.tags) > 3 else ""),
+        )
     console.print(table)

@@ -26,9 +26,21 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 
 logger = logging.getLogger(__name__)
+
+
+# A well-formed git SHA is hex, 7-40 chars long. We accept both short
+# (≥7) and full SHAs because callers may pass either; what we refuse is
+# anything that could be a git "ref expression" — namely values starting
+# with ``-`` (which git treats as a flag — e.g. ``--abort`` would put
+# ``revert`` into abort mode and silently disable rollbacks), values
+# containing ``~`` / ``^`` / ``..`` / ``@`` / whitespace (relative refs
+# and revision walks), or empty strings. The regex below is the entire
+# allowlist: hex digits only, length 7-40.
+_FULL_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
 # ---------------------------------------------------------------
@@ -349,7 +361,30 @@ def revert_feature(
     Returns:
         The full 40-character SHA of the revert commit, or ``None`` if the
         revert failed (e.g. due to merge conflicts).
+
+    Raises:
+        GitCommitError: ``commit_sha`` is not a well-formed git object name
+            (i.e. not 7-40 hex chars). This is a deliberate guard against
+            argument injection: a value like ``--abort`` would be parsed by
+            ``git revert`` as a flag (silently disabling rollbacks), and
+            ref expressions like ``HEAD~5`` would let a compromised caller
+            revert arbitrary commits. We require a literal SHA so the only
+            commits ever passed to ``git revert`` are ones the caller
+            already knows about.
     """
+    if not isinstance(commit_sha, str) or not _FULL_SHA_RE.match(commit_sha):
+        raise GitCommitError(
+            f"refusing to revert: commit_sha={commit_sha!r} is not a "
+            f"well-formed git SHA (expected 7-40 hex chars). Refs like "
+            f"'HEAD~5' or flags like '--abort' are not accepted because "
+            f"they alter git's behavior and could be used for argument "
+            f"injection.",
+            returncode=-1,
+            stdout="",
+            stderr=f"invalid commit_sha: {commit_sha!r}",
+            command=["git", "revert", "--no-edit", str(commit_sha)],
+        )
+
     result = _run_git(
         ["revert", "--no-edit", commit_sha],
         workspace=workspace,
