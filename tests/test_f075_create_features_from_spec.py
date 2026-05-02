@@ -633,3 +633,325 @@ class TestPlanFromSpecFiveFeatures:
         import os
 
         os.unlink(spec_path)
+
+
+# ============================================================
+# Step 6: Dict-of-dicts spec format (R9-001/R9-003/R9-004)
+# ============================================================
+
+
+class TestDictOfDictsFormat:
+    """The shipped example specs use a dict-of-dicts format keyed by F001/F002/...
+
+    Each value carries a ``title`` (not ``name``) plus description, priority,
+    depends_on, and acceptance_criteria. ``depends_on`` references the YAML
+    keys (e.g. ``["F001"]``), not the human-readable titles.
+    """
+
+    def test_dict_of_dicts_creates_all_features(self, db_path, project_id):
+        """All features in a dict-of-dicts spec are created (R9-001)."""
+        from bob3.db import create_features_from_spec, list_features
+
+        spec = {
+            "features": {
+                "F001": {
+                    "title": "Project skeleton",
+                    "description": "Initial package layout",
+                    "priority": "critical",
+                    "depends_on": [],
+                    "acceptance_criteria": ["pyproject.toml exists"],
+                },
+                "F002": {
+                    "title": "Mesh I/O",
+                    "description": "Read/write meshes",
+                    "priority": "critical",
+                    "depends_on": ["F001"],
+                    "acceptance_criteria": ["read_gmsh works"],
+                },
+                "F003": {
+                    "title": "Linear elasticity",
+                    "description": "Material model",
+                    "priority": "high",
+                    "depends_on": ["F002"],
+                    "acceptance_criteria": ["sigma = lambda*tr(eps)*I + 2*mu*eps"],
+                },
+                "F004": {
+                    "title": "Solver",
+                    "description": "PETSc-based solver",
+                    "priority": "high",
+                    "depends_on": ["F002", "F003"],
+                },
+                "F005": {
+                    "title": "Validation suite",
+                    "description": "Compare to analytical solutions",
+                    "priority": "medium",
+                    "depends_on": ["F004"],
+                },
+            },
+        }
+
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert len(created) == 5
+
+        # Names come from `title:`, not the YAML key, and not "Feature N".
+        names = [f.name for f in created]
+        assert names == [
+            "Project skeleton",
+            "Mesh I/O",
+            "Linear elasticity",
+            "Solver",
+            "Validation suite",
+        ]
+
+        # Descriptions are populated, not None.
+        for feat in created:
+            assert feat.description is not None
+            assert feat.description != ""
+
+        # Persisted to DB
+        features = list_features(project_id=project_id)
+        assert len(features) == 5
+
+    def test_dict_of_dicts_acceptance_criteria_preserved(
+        self, db_path, project_id
+    ):
+        """Acceptance criteria are stored from the dict-of-dicts format."""
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": {
+                "F001": {
+                    "title": "Skeleton",
+                    "description": "Setup",
+                    "priority": "critical",
+                    "acceptance_criteria": [
+                        "pyproject.toml exists",
+                        "tests/ runs",
+                    ],
+                },
+            },
+        }
+
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert created[0].acceptance_criteria is not None
+        criteria = json.loads(created[0].acceptance_criteria)
+        assert "pyproject.toml exists" in criteria
+        assert "tests/ runs" in criteria
+
+    def test_dict_of_dicts_depends_on_resolved_by_key(
+        self, db_path, project_id
+    ):
+        """depends_on entries that reference YAML keys (R9-004) resolve to UUIDs."""
+        from bob3.db import create_features_from_spec, get_feature_dependencies
+
+        spec = {
+            "features": {
+                "F001": {
+                    "title": "Foundation",
+                    "description": "Base layer",
+                    "priority": "critical",
+                    "depends_on": [],
+                },
+                "F002": {
+                    "title": "Built on F001",
+                    "description": "Depends on the base",
+                    "priority": "high",
+                    "depends_on": ["F001"],
+                },
+            },
+        }
+
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        f001 = next(f for f in created if f.name == "Foundation")
+        f002 = next(f for f in created if f.name == "Built on F001")
+
+        deps = get_feature_dependencies(f002.id)
+        assert len(deps) == 1
+        assert deps[0].depends_on_feature_id == f001.id
+
+    def test_dict_of_dicts_falls_back_to_name_field(self, db_path, project_id):
+        """If a dict-of-dicts entry uses ``name:`` instead of ``title:`` it still works."""
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": {
+                "F001": {
+                    "name": "Skeleton",
+                    "description": "Setup",
+                },
+            },
+        }
+
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert len(created) == 1
+        assert created[0].name == "Skeleton"
+
+    def test_dict_of_dicts_falls_back_to_yaml_key(self, db_path, project_id):
+        """If neither title nor name is set, the YAML key is used as the name."""
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": {
+                "F001": {
+                    "description": "No title or name set",
+                },
+            },
+        }
+
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert len(created) == 1
+        assert created[0].name == "F001"
+
+
+class TestPriorityStringMapping:
+    """Priority strings (critical/high/medium/low) must coerce to ints (R9-002)."""
+
+    def test_priority_string_critical(self, db_path, project_id):
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": [
+                {
+                    "name": "Hot feature",
+                    "description": "Critical",
+                    "priority": "critical",
+                },
+            ],
+        }
+
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert created[0].priority == 1000
+
+    def test_priority_string_high(self, db_path, project_id):
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": [{"name": "F", "description": "", "priority": "high"}],
+        }
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert created[0].priority == 500
+
+    def test_priority_string_medium(self, db_path, project_id):
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": [{"name": "F", "description": "", "priority": "medium"}],
+        }
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert created[0].priority == 100
+
+    def test_priority_string_low(self, db_path, project_id):
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": [{"name": "F", "description": "", "priority": "low"}],
+        }
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert created[0].priority == 10
+
+    def test_priority_string_critical_sorts_first(self, db_path, project_id):
+        """``critical`` features have higher priority value than ``low``."""
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": [
+                {"name": "Low", "description": "", "priority": "low"},
+                {"name": "Crit", "description": "", "priority": "critical"},
+            ],
+        }
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        by_name = {f.name: f for f in created}
+        assert by_name["Crit"].priority > by_name["Low"].priority
+
+    def test_priority_string_case_insensitive(self, db_path, project_id):
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": [
+                {"name": "F", "description": "", "priority": "Critical"},
+            ],
+        }
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert created[0].priority == 1000
+
+    def test_priority_int_still_works(self, db_path, project_id):
+        """Backward compat: integer priority values still pass through."""
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": [
+                {"name": "F", "description": "", "priority": 42},
+            ],
+        }
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert created[0].priority == 42
+
+    def test_priority_numeric_string_works(self, db_path, project_id):
+        """Numeric strings like '42' coerce to int."""
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": [
+                {"name": "F", "description": "", "priority": "42"},
+            ],
+        }
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert created[0].priority == 42
+
+    def test_unknown_priority_string_raises_clear_error(
+        self, db_path, project_id
+    ):
+        """Unknown priority strings raise ValueError with a helpful message,
+        not Pydantic's default int-coercion error."""
+        from bob3.db import create_features_from_spec
+
+        spec = {
+            "features": [
+                {"name": "F", "description": "", "priority": "extreme"},
+            ],
+        }
+
+        with pytest.raises(ValueError) as exc_info:
+            create_features_from_spec(project_id=project_id, spec=spec)
+
+        msg = str(exc_info.value)
+        assert "extreme" in msg
+        # Should mention the allowed priority labels
+        assert "critical" in msg
+        assert "low" in msg
+
+
+class TestListOfDictsBackwardCompat:
+    """The legacy list-of-dicts format must keep working unchanged."""
+
+    def test_list_of_dicts_creates_features(self, db_path, project_id):
+        from bob3.db import create_features_from_spec, get_feature_dependencies
+
+        spec = {
+            "features": [
+                {
+                    "name": "Database",
+                    "description": "DB layer",
+                    "priority": 10,
+                    "acceptance_criteria": ["tables created"],
+                },
+                {
+                    "name": "API",
+                    "description": "REST API",
+                    "priority": 20,
+                    "depends_on": ["Database"],
+                },
+            ],
+        }
+
+        created = create_features_from_spec(project_id=project_id, spec=spec)
+        assert len(created) == 2
+        assert created[0].name == "Database"
+        assert created[0].priority == 10
+        assert created[1].name == "API"
+
+        api = next(f for f in created if f.name == "API")
+        db_feat = next(f for f in created if f.name == "Database")
+        deps = get_feature_dependencies(api.id)
+        assert len(deps) == 1
+        assert deps[0].depends_on_feature_id == db_feat.id

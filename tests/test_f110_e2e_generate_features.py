@@ -869,6 +869,113 @@ class TestFullE2EWorkflow:
             features = list_features(project_id=project.id)
             assert len(features) == 5
 
+    def test_plan_create_on_dict_of_dicts_spec(
+        self, tmp_db, tmp_path
+    ):
+        """`bob3 plan <spec> --create` works on a dict-of-dicts spec like
+        the shipped examples (R9-001..R9-004 regression)."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            project = create_project(
+                name="geomech-mini",
+                workspace_path=str(tmp_path / "workspace"),
+            )
+
+            spec_content = textwrap.dedent("""\
+                name: geomech-mini
+                version: "0.1.0"
+                description: Mini geomech-style spec for E2E testing.
+
+                features:
+                  F001:
+                    title: "Project skeleton"
+                    description: |
+                      Set up the package layout and pyproject.
+                    priority: critical
+                    depends_on: []
+                    acceptance_criteria:
+                      - "src/ exists"
+                      - "pyproject.toml declares deps"
+
+                  F002:
+                    title: "Mesh I/O"
+                    description: |
+                      Read and write meshes via the Gmsh API.
+                    priority: critical
+                    depends_on: ['F001']
+                    acceptance_criteria:
+                      - "read_gmsh works"
+
+                  F003:
+                    title: "Material model"
+                    description: Linear elastic material.
+                    priority: high
+                    depends_on: ['F001']
+
+                  F004:
+                    title: "Solver"
+                    description: PETSc-based linear solver.
+                    priority: high
+                    depends_on: ['F002', 'F003']
+
+                  F005:
+                    title: "Validation"
+                    description: Compare to analytical solutions.
+                    priority: medium
+                    depends_on: ['F004']
+            """)
+            spec_file = tmp_path / "geomech_mini.yaml"
+            spec_file.write_text(spec_content)
+
+            runner = CliRunner()
+            result = runner.invoke(main, ["plan", str(spec_file), "--create"])
+            assert result.exit_code == 0, (
+                f"plan --create failed: {result.output}"
+            )
+            assert "Created 5 features" in result.output
+
+            # Verify all features exist with the right titles + descriptions
+            features = list_features(project_id=project.id)
+            assert len(features) == 5
+
+            by_name = {f.name: f for f in features}
+            expected_titles = {
+                "Project skeleton",
+                "Mesh I/O",
+                "Material model",
+                "Solver",
+                "Validation",
+            }
+            assert set(by_name.keys()) == expected_titles
+
+            # Descriptions are populated (regression for hollow features bug)
+            for feat in features:
+                assert feat.description is not None
+                assert feat.description.strip() != ""
+
+            # Priorities mapped from strings
+            assert by_name["Project skeleton"].priority == 1000  # critical
+            assert by_name["Material model"].priority == 500  # high
+            assert by_name["Validation"].priority == 100  # medium
+
+            # Acceptance criteria persisted
+            ac = json.loads(by_name["Project skeleton"].acceptance_criteria)
+            assert "src/ exists" in ac
+            assert "pyproject.toml declares deps" in ac
+
+            # Dependencies resolved by YAML key (F001/F002/...)
+            mesh_deps = get_feature_dependencies(by_name["Mesh I/O"].id)
+            assert len(mesh_deps) == 1
+            assert (
+                mesh_deps[0].depends_on_feature_id
+                == by_name["Project skeleton"].id
+            )
+
+            solver_deps = get_feature_dependencies(by_name["Solver"].id)
+            assert len(solver_deps) == 2
+            solver_dep_ids = {d.depends_on_feature_id for d in solver_deps}
+            assert by_name["Mesh I/O"].id in solver_dep_ids
+            assert by_name["Material model"].id in solver_dep_ids
+
     def test_auto_continue_flag_in_workflow(
         self, spec_file, tmp_path, generated_features
     ):

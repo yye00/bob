@@ -1568,6 +1568,85 @@ findings:
     maximum length (... bytes)"} without invoking the backend. using-bob3-memory SKILL.md
     updated with the cap and a "write concise memories" anti-pattern. Regression tests in
     tests/test_f126_memory_mcp_validation.py (TestMemoryAddContentSizeCap).'
+- id: R9-001
+  title: create_features_from_spec drops dict-of-dicts features into hollow rows
+  pattern: Iterating a dict yields keys (strings); the function's str-branch creates Feature(name=key)
+    with no description / no priority / no acceptance_criteria — every example spec was silently
+    broken.
+  files:
+  - src/bob3/db.py
+  - examples/01_geomech_simulator_spec.yaml
+  - examples/02_geotech_slope_stability_spec.yaml
+  severity: critical
+  status: fixed
+  tags:
+  - spec-parsing
+  - quickstart
+  - data-loss
+  fixed_in: e707421
+  fixed_at: '2026-05-02'
+  notes: '`bob3 plan examples/01_geomech_simulator_spec.yaml --create` loaded 28 hollow features
+    named F001..F028 with no descriptions, criteria, or dependencies. Root cause: `raw_features
+    = spec.get(''features'') or []` returns the dict unchanged, then `for feat in raw_features`
+    yields keys.'
+- id: R9-002
+  title: Priority strings (critical/high/...) crash Feature creation
+  pattern: feat.get('priority', default) returns 'critical' when YAML uses string priorities;
+    downstream Pydantic int field raises ValueError, aborting `plan --create` mid-run.
+  files:
+  - src/bob3/db.py
+  severity: critical
+  status: fixed
+  tags:
+  - spec-parsing
+  - type-coercion
+  - quickstart
+  fixed_in: e707421
+  fixed_at: '2026-05-02'
+  related:
+  - R9-001
+  notes: 'Mapping introduced: critical=1000, high=500, medium=100, low=10 — higher integer
+    = higher priority so ''critical'' sorts first. Unknown strings now raise a clear ValueError
+    listing the allowed labels rather than Pydantic''s default int-coercion error.'
+- id: R9-003
+  title: 'Feature title field ignored: code reads `name:` but examples use `title:`'
+  pattern: feat.get('name', default) is hardcoded; every shipped example uses `title:` so
+    feature.name fell back to 'Feature N' / the YAML key.
+  files:
+  - src/bob3/db.py
+  - examples/01_geomech_simulator_spec.yaml
+  - examples/02_geotech_slope_stability_spec.yaml
+  severity: high
+  status: fixed
+  tags:
+  - spec-parsing
+  - doc-drift
+  - quickstart
+  fixed_in: e707421
+  fixed_at: '2026-05-02'
+  related:
+  - R9-001
+  notes: 'Resolution order is now: title -> name -> YAML key -> ''Feature N''. List-of-dicts
+    format (with `name:`) keeps working for backward compat.'
+- id: R9-004
+  title: depends_on references silently dropped — name_to_id keyed by wrong field
+  pattern: depends_on entries reference YAML keys (['F001']) but the dependency-resolution
+    map was keyed by the resolved feature name; lookup always missed and dependencies were
+    silently dropped.
+  files:
+  - src/bob3/db.py
+  severity: high
+  status: fixed
+  tags:
+  - spec-parsing
+  - graph-correctness
+  - quickstart
+  fixed_in: e707421
+  fixed_at: '2026-05-02'
+  related:
+  - R9-001
+  notes: Replaced with spec_id_to_uuid that maps both the YAML key (e.g. 'F001') and the resolved
+    title to the created Feature UUID, so depends_on can reference either form.
 recurring_patterns:
 - tag: refactor-debt
   occurrences:

@@ -1086,6 +1086,56 @@ def get_all_predecessors(feature_id: str) -> set[str]:
 # ============================================================
 
 
+# Mapping from priority strings to integer values used by the priority column.
+# Higher integer = higher priority (so "critical" sorts ahead of "low").
+_PRIORITY_STRING_MAP: dict[str, int] = {
+    "critical": 1000,
+    "high": 500,
+    "medium": 100,
+    "low": 10,
+}
+
+
+def _coerce_priority(raw: object, default: int) -> int:
+    """Coerce a priority value (int or known string) to an int.
+
+    Accepts:
+        - int / bool: returned as int (bool first because bool is an int subclass)
+        - None / missing: caller passes ``default``
+        - str: looked up in :data:`_PRIORITY_STRING_MAP` (case-insensitive),
+          or parsed as a numeric string. Unknown strings raise ``ValueError``
+          with a clear message.
+
+    Raises:
+        ValueError: If the priority is a string that is not a known label
+            and not numeric.
+        TypeError: If the priority is some other type entirely.
+    """
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        # bool is a subclass of int — treat True/False as ints to be safe
+        return int(raw)
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str):
+        key = raw.strip().lower()
+        if key in _PRIORITY_STRING_MAP:
+            return _PRIORITY_STRING_MAP[key]
+        # Allow numeric strings like "42"
+        try:
+            return int(key)
+        except ValueError:
+            allowed = ", ".join(sorted(_PRIORITY_STRING_MAP))
+            raise ValueError(
+                f"Invalid priority {raw!r}: must be an integer or one of "
+                f"{{{allowed}}}"
+            ) from None
+    raise TypeError(
+        f"Invalid priority type {type(raw).__name__}: must be int or str"
+    )
+
+
 def create_features_from_spec(
     *,
     project_id: str,
@@ -1094,11 +1144,37 @@ def create_features_from_spec(
     """Create feature records in the database from a parsed YAML spec.
 
     For each feature in the spec, creates a Feature row with priority and
-    acceptance criteria. Then resolves depends_on references by name and
-    creates FeatureDependency rows.
+    acceptance criteria. Then resolves depends_on references and creates
+    FeatureDependency rows.
 
-    Handles features specified as dicts (with name, description, priority,
-    acceptance_criteria, depends_on) or as plain strings.
+    Two YAML formats are supported:
+
+    1. **List-of-dicts** (legacy)::
+
+        features:
+          - name: Auth
+            description: ...
+            depends_on: [Database]
+
+    2. **Dict-of-dicts** (used by the shipped example specs)::
+
+        features:
+          F001:
+            title: Project skeleton
+            description: ...
+            priority: critical
+            depends_on: []
+          F002:
+            title: ...
+            depends_on: [F001]
+
+       In this form the YAML key ("F001") is used as the spec ID and is
+       the value referenced by ``depends_on``. The human-readable feature
+       name is taken from ``title`` (preferred) or ``name``.
+
+    Priority may be an integer or one of the strings ``critical``, ``high``,
+    ``medium``, ``low`` (mapped to 1000/500/100/10 — higher = sooner).
+    Plain features specified as strings are also supported.
 
     Args:
         project_id: The project to attach features to.
@@ -1106,24 +1182,55 @@ def create_features_from_spec(
 
     Returns:
         A list of created Feature models, in spec order.
+
+    Raises:
+        ValueError: If a priority string is not recognized.
     """
-    raw_features = spec.get("features") or []
+    raw_features = spec.get("features")
+
+    # Normalize to an ordered list of (spec_key, feat_value) pairs.
+    # spec_key is the canonical reference used by depends_on:
+    #   - dict-of-dicts: the YAML key (e.g. "F001")
+    #   - list-of-dicts: the resolved feature title/name
+    #   - list-of-strings: the string itself
+    items: list[tuple[str | None, object]] = []
+    if isinstance(raw_features, dict):
+        for key, value in raw_features.items():
+            items.append((str(key), value))
+    elif isinstance(raw_features, list):
+        for feat in raw_features:
+            items.append((None, feat))
+    elif raw_features is None:
+        items = []
+    else:
+        items = []
 
     created: list[Feature] = []
-    name_to_id: dict[str, str] = {}
+    # Maps both the spec key (e.g. "F001") and the resolved feature name
+    # to the created feature's UUID, so depends_on can reference either.
+    spec_id_to_uuid: dict[str, str] = {}
 
-    for idx, feat in enumerate(raw_features):
+    for idx, (spec_key, feat) in enumerate(items):
+        default_priority = (idx + 1) * 100
+
         if isinstance(feat, str):
             feat_name = feat
             feat_desc = None
-            feat_priority = (idx + 1) * 100
+            feat_priority = default_priority
             feat_criteria = None
             feat_tdd_mode = None
             feat_sub_agent_mode = None
         elif isinstance(feat, dict):
-            feat_name = feat.get("name", f"Feature {idx + 1}")
+            # Prefer title (used by example specs); fall back to name.
+            feat_name = (
+                feat.get("title")
+                or feat.get("name")
+                or (spec_key if spec_key is not None else f"Feature {idx + 1}")
+            )
             feat_desc = feat.get("description")
-            feat_priority = feat.get("priority", (idx + 1) * 100)
+            feat_priority = _coerce_priority(
+                feat.get("priority"), default_priority
+            )
             raw_criteria = feat.get("acceptance_criteria")
             if raw_criteria is None:
                 feat_criteria = None
@@ -1149,18 +1256,22 @@ def create_features_from_spec(
             sub_agent_mode=feat_sub_agent_mode,
         )
         created.append(feature)
-        name_to_id[feat_name] = feature.id
+        # Both the YAML key (if any) and the resolved name resolve to this UUID.
+        if spec_key is not None:
+            spec_id_to_uuid[spec_key] = feature.id
+        spec_id_to_uuid[feat_name] = feature.id
 
-    # Second pass: create dependencies
-    for idx, feat in enumerate(raw_features):
+    # Second pass: create dependencies. Allow depends_on entries to
+    # reference either the YAML key (e.g. "F001") or the feature title.
+    for idx, (_spec_key, feat) in enumerate(items):
         if not isinstance(feat, dict):
             continue
         depends_on = feat.get("depends_on") or []
         if idx >= len(created):
             continue
         feature_id = created[idx].id
-        for dep_name in depends_on:
-            dep_id = name_to_id.get(dep_name)
+        for dep_ref in depends_on:
+            dep_id = spec_id_to_uuid.get(str(dep_ref))
             if dep_id is not None:
                 add_feature_dependency(
                     feature_id=feature_id,
