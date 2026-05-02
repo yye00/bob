@@ -593,3 +593,182 @@ class TestParseDecompositionResult:
         """Returns None if 'children' is empty."""
         result = parse_decomposition_result(json.dumps({"children": []}))
         assert result is None
+
+
+# ============================================================
+# R9-006: Parent feature auto-completion when all children complete
+# ============================================================
+
+
+class TestParentAutoCompletionOnChildrenComplete:
+    """R9-006: ``check_parent_completion`` exists in db.py to auto-
+    complete a parent when all its children are done — but until this
+    fix, nothing in run_loop.py called it. Decomposed parents stayed
+    at ``pending_decomposition`` forever, blocking any sibling
+    feature that depended on the parent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_parent_completes_when_all_children_complete(
+        self, tmp_db, project
+    ):
+        """When the last child of a decomposed parent completes via
+        the orchestration flow, the parent must transition to
+        'completed'.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.orchestrator.run_loop import handle_execution_result
+            from bob3.orchestrator.claude_executor import (
+                ExecutionResult, SpawnResult,
+            )
+
+            # Build the parent (pending_decomposition) + 2 children.
+            parent = create_feature(
+                project_id=project.id,
+                name="Parent",
+                description="Decomposed parent",
+                status="pending_decomposition",
+                priority=10,
+                risk_category="medium",
+            )
+            child_a = create_child_feature(
+                parent_feature_id=parent.id,
+                project_id=project.id,
+                name="Child A",
+                description="First child",
+                status="ready",
+                priority=10,
+            )
+            child_b = create_child_feature(
+                parent_feature_id=parent.id,
+                project_id=project.id,
+                name="Child B",
+                description="Second child",
+                status="ready",
+                priority=20,
+            )
+
+            def _spawn_result_for(cost_usd: float = 0.10) -> SpawnResult:
+                return SpawnResult(
+                    execution_result=ExecutionResult(
+                        text="done",
+                        is_error=False,
+                        duration_ms=1000,
+                        num_turns=1,
+                        total_cost_usd=cost_usd,
+                    ),
+                    agent_run=MagicMock(id=str(uuid.uuid4())),
+                )
+
+            # Complete child_a via the orchestration flow.
+            child_a_obj = get_feature(child_a.id)
+            handle_execution_result(
+                project_id=project.id,
+                feature=child_a_obj,
+                spawn_result=_spawn_result_for(),
+                verification_passed=True,
+            )
+
+            # Parent should still be pending_decomposition because
+            # child_b is not done yet.
+            assert get_feature(parent.id).status == "pending_decomposition"
+            assert get_feature(child_a.id).status == "completed"
+
+            # Now complete child_b — this should trigger parent
+            # auto-completion.
+            child_b_obj = get_feature(child_b.id)
+            handle_execution_result(
+                project_id=project.id,
+                feature=child_b_obj,
+                spawn_result=_spawn_result_for(),
+                verification_passed=True,
+            )
+
+            # Parent must now be 'completed'.
+            assert get_feature(child_b.id).status == "completed"
+            assert get_feature(parent.id).status == "completed", (
+                "parent feature must auto-complete once all children "
+                "are completed; check_parent_completion must be called "
+                "from the orchestration flow"
+            )
+
+    @pytest.mark.asyncio
+    async def test_parent_completion_cascades_to_dependents(
+        self, tmp_db, project
+    ):
+        """When parent auto-completes, features that depend on the
+        parent must also transition from 'pending' to 'ready'.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.orchestrator.run_loop import handle_execution_result
+            from bob3.orchestrator.claude_executor import (
+                ExecutionResult, SpawnResult,
+            )
+
+            parent = create_feature(
+                project_id=project.id,
+                name="Parent",
+                description="Decomposed parent",
+                status="pending_decomposition",
+                priority=10,
+                risk_category="medium",
+            )
+            child_a = create_child_feature(
+                parent_feature_id=parent.id,
+                project_id=project.id,
+                name="Child A",
+                description="First child",
+                status="ready",
+                priority=10,
+            )
+            child_b = create_child_feature(
+                parent_feature_id=parent.id,
+                project_id=project.id,
+                name="Child B",
+                description="Second child",
+                status="ready",
+                priority=20,
+            )
+            # A sibling feature depending on the parent — initially
+            # pending until parent completes.
+            sibling_dependent = create_feature(
+                project_id=project.id,
+                name="Depends on parent",
+                description="Sibling that depends on parent",
+                status="pending",
+                priority=30,
+                risk_category="medium",
+            )
+            add_feature_dependency(
+                feature_id=sibling_dependent.id,
+                depends_on_feature_id=parent.id,
+            )
+
+            def _spawn() -> SpawnResult:
+                return SpawnResult(
+                    execution_result=ExecutionResult(
+                        text="done",
+                        is_error=False,
+                        duration_ms=1000,
+                        num_turns=1,
+                        total_cost_usd=0.10,
+                    ),
+                    agent_run=MagicMock(id=str(uuid.uuid4())),
+                )
+
+            # Complete both children.
+            for child_id in (child_a.id, child_b.id):
+                handle_execution_result(
+                    project_id=project.id,
+                    feature=get_feature(child_id),
+                    spawn_result=_spawn(),
+                    verification_passed=True,
+                )
+
+            assert get_feature(parent.id).status == "completed"
+            # The cascade from parent-completion must have promoted
+            # the sibling to 'ready'.
+            assert get_feature(sibling_dependent.id).status == "ready", (
+                "dependent of the auto-completed parent must cascade "
+                "from 'pending' to 'ready'"
+            )
