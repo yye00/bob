@@ -48,6 +48,11 @@ _BOB3_ENV_VARS_TO_SNAPSHOT = (
     "BOB3_COST_PER_TURN_PROXY",
     "BOB3_SNAPSHOT_TIMEOUT",
     "BOB3_TEST_RUN_TIMEOUT",
+    # R10-010 / R10-011: orchestration tuning knobs read by run_loop.py
+    "BOB3_FAILURE_THRESHOLD_FOR_RESEARCH",
+    "BOB3_CONFIDENCE_DECAY_PER_FAILURE",
+    "BOB3_RCA_TIMEOUT_SECONDS",
+    "BOB3_RCA_ENABLED",
 )
 
 
@@ -68,6 +73,33 @@ def _reset_module_state():
     saved_env: dict[str, str | None] = {
         k: os.environ.get(k) for k in _BOB3_ENV_VARS_TO_SNAPSHOT
     }
+
+    # R10-009: ``execute_feature``'s failure path now invokes
+    # ``spawn_rca_agent`` once the second-or-later attempt fails. In
+    # production this is desired; in tests, however, we don't want
+    # every failure-path test to launch a real Claude SDK subprocess.
+    # Default ``BOB3_RCA_ENABLED=0`` so pre-existing tests behave
+    # exactly as they did before R10-009 was wired in. Tests that
+    # need RCA to fire (test_r10_failure_recovery.py) explicitly
+    # mock ``spawn_rca_agent`` AND/OR set ``BOB3_RCA_ENABLED=1``.
+    # Mocking at ``bob3.orchestrator.run_loop.spawn_rca_agent``
+    # short-circuits the SDK call regardless of this flag.
+    if "BOB3_RCA_ENABLED" not in os.environ:
+        os.environ["BOB3_RCA_ENABLED"] = "0"
+
+    # R10-011: confidence decay per failed attempt is on by default in
+    # production (0.15) so the low-confidence research trigger
+    # (Trigger 3 in ``needs_research``) re-fires on retries. In tests,
+    # however, decay can push confidence below 0.5 mid-test and cause
+    # ``_run_research`` to spawn a real research sub-agent (most
+    # pre-R10 retry tests do not mock ``spawn_research_agent``).
+    # Default decay to 0.0 here so failure-path tests behave as they
+    # did before R10-011 was wired in. Tests that exercise decay
+    # explicitly (test_r10_failure_recovery.py) override via
+    # ``monkeypatch.setenv("BOB3_CONFIDENCE_DECAY_PER_FAILURE", ...)``
+    # or call ``_decay_confidence_after_failure`` directly.
+    if "BOB3_CONFIDENCE_DECAY_PER_FAILURE" not in os.environ:
+        os.environ["BOB3_CONFIDENCE_DECAY_PER_FAILURE"] = "0"
 
     yield
 

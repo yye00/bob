@@ -151,8 +151,8 @@ class TestNeedsResearch:
             feature = db.get_feature(f.id)
             assert needs_research(feature, project.id) is True
 
-    def test_feature_with_2_failures_no_research(self, tmp_db, project):
-        """Feature with only 2 failures does not trigger research."""
+    def test_feature_with_1_failure_no_research(self, tmp_db, project):
+        """Feature with only 1 failure does not trigger Trigger 2 at the default threshold (2)."""
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             f = db.create_feature(
                 project_id=project.id,
@@ -163,6 +163,35 @@ class TestNeedsResearch:
             )
             # Set confidence scores above the 0.5 threshold so only
             # the failure-count trigger is being tested here.
+            db.update_feature(
+                f.id,
+                conf_impl_correctness=0.8,
+                conf_spec_understanding=0.8,
+                readiness_score=0.8,
+            )
+            run = db.create_agent_run(
+                project_id=project.id,
+                purpose="implement_feature",
+                target_type="feature",
+                target_id=f.id,
+                status="running",
+            )
+            db.update_agent_run(run.id, status="failed")
+
+            feature = db.get_feature(f.id)
+            # Default threshold is 2 (R10-010); 1 failure is below it.
+            assert needs_research(feature, project.id) is False
+
+    def test_feature_with_2_failures_triggers_research(self, tmp_db, project):
+        """Feature with 2 failures triggers research at the new default threshold (R10-010)."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            f = db.create_feature(
+                project_id=project.id,
+                name="Failing Feature",
+                description="Failing",
+                status="ready",
+                priority=10,
+            )
             db.update_feature(
                 f.id,
                 conf_impl_correctness=0.8,
@@ -180,7 +209,8 @@ class TestNeedsResearch:
                 db.update_agent_run(run.id, status="failed")
 
             feature = db.get_feature(f.id)
-            assert needs_research(feature, project.id) is False
+            # Default threshold lowered from 3 → 2 in R10-010.
+            assert needs_research(feature, project.id) is True
 
     def test_feature_with_3_failures_but_already_researched(self, tmp_db, project):
         """Feature that failed 3+ times but already has research_iterations >= 1 doesn't re-research."""

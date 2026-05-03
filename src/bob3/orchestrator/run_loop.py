@@ -156,6 +156,7 @@ from bob3.orchestrator.claude_executor import (
     ExecutionResult,
     SpawnResult,
     build_sub_agent_options,
+    spawn_rca_agent,
     spawn_research_agent,
     spawn_sub_agent,
 )
@@ -1170,7 +1171,172 @@ async def handle_decomposition(
 # ---------------------------------------------------------------
 
 _RESEARCH_REQUIRED_MARKER = "research_required=True"
-_FAILURE_THRESHOLD_FOR_RESEARCH = 3
+
+# R10-010: Lowered from 3 → 2 after an examples/04_swedish_circle e2e run
+# spent two consecutive 1-hour feature timeouts on F009 before the
+# previous threshold of 3 would have fired research. After 2 failures
+# (vs 3), research becomes more responsive — by failure 2 we've already
+# burned ~2× the feature's expected cost; an expensive V&V feature needs
+# research sooner than a cheap one. Configurable via
+# ``BOB3_FAILURE_THRESHOLD_FOR_RESEARCH`` for operators who want the
+# old behaviour back (or a more aggressive 1).
+_DEFAULT_FAILURE_THRESHOLD_FOR_RESEARCH = 2
+_FAILURE_THRESHOLD_FOR_RESEARCH = _DEFAULT_FAILURE_THRESHOLD_FOR_RESEARCH
+
+
+def _resolve_failure_threshold_for_research() -> int:
+    """Read ``BOB3_FAILURE_THRESHOLD_FOR_RESEARCH`` from the environment.
+
+    Returns the configured threshold, falling back to
+    ``_DEFAULT_FAILURE_THRESHOLD_FOR_RESEARCH`` (2) on any parse error or
+    non-positive value. Kept as a small helper so tests can monkeypatch
+    the env var per-test without poking at module-level constants.
+    """
+    raw = os.environ.get("BOB3_FAILURE_THRESHOLD_FOR_RESEARCH")
+    if raw is None:
+        return _DEFAULT_FAILURE_THRESHOLD_FOR_RESEARCH
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid BOB3_FAILURE_THRESHOLD_FOR_RESEARCH=%r; using default %d",
+            raw,
+            _DEFAULT_FAILURE_THRESHOLD_FOR_RESEARCH,
+        )
+        return _DEFAULT_FAILURE_THRESHOLD_FOR_RESEARCH
+    if value < 1:
+        logger.warning(
+            "Non-positive BOB3_FAILURE_THRESHOLD_FOR_RESEARCH=%r; using default %d",
+            raw,
+            _DEFAULT_FAILURE_THRESHOLD_FOR_RESEARCH,
+        )
+        return _DEFAULT_FAILURE_THRESHOLD_FOR_RESEARCH
+    return value
+
+
+# R10-011: How much to drop confidence scores after each failed feature
+# attempt. After 2 failures with the default of 0.15, a feature that
+# started at 0.7 conf falls to 0.40 — below the 0.5 needs_research
+# threshold — so Trigger 3 in ``needs_research`` re-fires on the third
+# attempt regardless of the failure-count threshold. Configurable via
+# ``BOB3_CONFIDENCE_DECAY_PER_FAILURE``.
+_DEFAULT_CONFIDENCE_DECAY_PER_FAILURE = 0.15
+
+
+def _resolve_confidence_decay_per_failure() -> float:
+    """Read ``BOB3_CONFIDENCE_DECAY_PER_FAILURE`` from the environment.
+
+    Returns the configured decay, falling back to
+    ``_DEFAULT_CONFIDENCE_DECAY_PER_FAILURE`` (0.15) on any parse error
+    or negative value. A decay of 0.0 disables confidence decay entirely.
+    """
+    raw = os.environ.get("BOB3_CONFIDENCE_DECAY_PER_FAILURE")
+    if raw is None:
+        return _DEFAULT_CONFIDENCE_DECAY_PER_FAILURE
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid BOB3_CONFIDENCE_DECAY_PER_FAILURE=%r; using default %.2f",
+            raw,
+            _DEFAULT_CONFIDENCE_DECAY_PER_FAILURE,
+        )
+        return _DEFAULT_CONFIDENCE_DECAY_PER_FAILURE
+    if value < 0:
+        logger.warning(
+            "Negative BOB3_CONFIDENCE_DECAY_PER_FAILURE=%r; using default %.2f",
+            raw,
+            _DEFAULT_CONFIDENCE_DECAY_PER_FAILURE,
+        )
+        return _DEFAULT_CONFIDENCE_DECAY_PER_FAILURE
+    return value
+
+
+# R10-009: bound RCA wall-clock so a stuck RCA sub-agent cannot park
+# the orchestration loop. Default 600s (10 minutes) is plenty for the
+# hypothesis-only Phase 1-4 work the RCA prompt asks for; production
+# deployments that want a longer window can raise this. Set very low
+# (e.g., 1) in tests to short-circuit the SDK spawn entirely.
+_DEFAULT_RCA_TIMEOUT_SECONDS = 600
+
+
+def _rca_enabled() -> bool:
+    """Whether the RCA wiring (R10-009) is active.
+
+    Defaults to True in production. Tests that don't explicitly mock
+    ``spawn_rca_agent`` should set ``BOB3_RCA_ENABLED=0`` to opt out
+    rather than gate every assertion on a real SDK invocation. The
+    autouse fixture in tests/conftest.py wires the default to "0" so
+    pre-existing failure-path tests don't try to launch a real Claude
+    sub-agent.
+    """
+    raw = os.environ.get("BOB3_RCA_ENABLED")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _resolve_rca_timeout_seconds() -> float:
+    """Read ``BOB3_RCA_TIMEOUT_SECONDS`` from the environment.
+
+    Returns the configured timeout, falling back to
+    ``_DEFAULT_RCA_TIMEOUT_SECONDS`` (600) on any parse error or
+    non-positive value.
+    """
+    raw = os.environ.get("BOB3_RCA_TIMEOUT_SECONDS")
+    if raw is None:
+        return float(_DEFAULT_RCA_TIMEOUT_SECONDS)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid BOB3_RCA_TIMEOUT_SECONDS=%r; using default %ss",
+            raw,
+            _DEFAULT_RCA_TIMEOUT_SECONDS,
+        )
+        return float(_DEFAULT_RCA_TIMEOUT_SECONDS)
+    if value <= 0:
+        logger.warning(
+            "Non-positive BOB3_RCA_TIMEOUT_SECONDS=%r; using default %ss",
+            raw,
+            _DEFAULT_RCA_TIMEOUT_SECONDS,
+        )
+        return float(_DEFAULT_RCA_TIMEOUT_SECONDS)
+    return value
+
+
+def _decay_confidence_after_failure(feature_id: str) -> Feature | None:
+    """Decrement confidence scores after a failed feature attempt.
+
+    R10-011 fix: confidence scores never dropped between attempts, so
+    the low-confidence ``needs_research`` trigger (Trigger 3) was
+    effectively a one-shot. Lowering the scores after each failure
+    means the next retry is more likely to trigger research even when
+    the failure-count threshold (R10-010) hasn't fired yet.
+
+    The decay amount is read from ``BOB3_CONFIDENCE_DECAY_PER_FAILURE``
+    (default 0.15). Each of ``conf_impl_correctness``,
+    ``conf_spec_understanding``, and ``readiness_score`` is decremented
+    independently with a floor of 0.0.
+
+    Returns the updated Feature, or None if the feature was not found
+    or decay is disabled.
+    """
+    decay = _resolve_confidence_decay_per_failure()
+    if decay <= 0.0:
+        return None
+    current = db.get_feature(feature_id)
+    if current is None:
+        return None
+    new_impl = max(0.0, float(current.conf_impl_correctness) - decay)
+    new_spec = max(0.0, float(current.conf_spec_understanding) - decay)
+    new_ready = max(0.0, float(current.readiness_score) - decay)
+    return db.update_feature(
+        feature_id,
+        conf_impl_correctness=new_impl,
+        conf_spec_understanding=new_spec,
+        readiness_score=new_ready,
+    )
 
 
 def count_feature_failures(feature_id: str, project_id: str) -> int:
@@ -1189,8 +1355,11 @@ def needs_research(feature: Feature, project_id: str) -> bool:
     Research is triggered when:
     1. Feature description contains 'research_required=True' AND
        research_iterations is 0 (hasn't been researched yet)
-    2. Feature has failed 3+ times AND research_iterations is 0
+    2. Feature has failed >= ``BOB3_FAILURE_THRESHOLD_FOR_RESEARCH``
+       times (default 2; R10-010) AND research_iterations is 0
     3. Feature has low confidence (< 0.5) AND research_iterations is 0
+       — confidence decays after each failed attempt (R10-011) so this
+       trigger CAN re-fire on a retry.
 
     Returns False if the feature has already been researched
     (research_iterations >= 1).
@@ -1203,9 +1372,10 @@ def needs_research(feature: Feature, project_id: str) -> bool:
     if feature.description and _RESEARCH_REQUIRED_MARKER in feature.description:
         return True
 
-    # Trigger 2: Feature has failed >= 3 times
+    # Trigger 2: Feature has failed >= configured threshold (default 2)
     failure_count = count_feature_failures(feature.id, project_id)
-    if failure_count >= _FAILURE_THRESHOLD_FOR_RESEARCH:
+    threshold = _resolve_failure_threshold_for_research()
+    if failure_count >= threshold:
         return True
 
     # Trigger 3: Low confidence (< 0.5) indicating missing information
@@ -1908,6 +2078,313 @@ class OrchestrationLoop:
 
         return research_result
 
+    # -----------------------------------------------------------------
+    # R10-009: RCA wiring
+    # -----------------------------------------------------------------
+    # ``spawn_rca_agent`` exists in claude_executor.py with a full system
+    # prompt and a passing F058 test suite, but had ZERO production call
+    # sites until this method was added. The orchestration loop now
+    # invokes RCA after a feature fails (past the first attempt, with a
+    # 24h per-feature cooldown so a flapping feature doesn't burn budget
+    # on repeated RCA spawns) and routes the recommendation back into
+    # the loop.
+
+    _RCA_COOLDOWN_SECONDS = 24 * 60 * 60  # 24h
+
+    def _last_rca_run_at(self, feature_id: str) -> float | None:
+        """Return UNIX timestamp of the most recent RCA evidence for a feature.
+
+        Looks up evidence_artifacts of type ``rca_analysis`` for the
+        feature and returns the latest ``created_at`` as a UNIX
+        timestamp. Returns ``None`` when no RCA has run yet, so callers
+        can treat ``None`` as "never run".
+        """
+        try:
+            rows = db.query_evidence(feature_id=feature_id)
+        except Exception:
+            logger.debug(
+                "Could not query RCA evidence for feature %s",
+                feature_id,
+                exc_info=True,
+            )
+            return None
+        latest: float | None = None
+        for ev in rows:
+            if ev.type != "rca_analysis":
+                continue
+            ts: float | None = None
+            created = ev.created_at
+            if created is not None:
+                try:
+                    ts = created.timestamp()
+                except Exception:
+                    ts = None
+            if ts is None:
+                continue
+            if latest is None or ts > latest:
+                latest = ts
+        return latest
+
+    def _rca_cooldown_active(self, feature_id: str) -> bool:
+        """True when the last RCA for this feature was less than 24h ago."""
+        last = self._last_rca_run_at(feature_id)
+        if last is None:
+            return False
+        return (time.time() - last) < self._RCA_COOLDOWN_SECONDS
+
+    async def _maybe_run_rca(
+        self,
+        *,
+        feature: Feature,
+        result: ExecutionResult,
+    ) -> dict[str, Any] | None:
+        """Spawn an RCA sub-agent for a failed feature when criteria are met.
+
+        Criteria (per R10-009 task):
+        - ``feature.refinement_attempts >= 2`` (i.e. at least one PRIOR
+          failure has already happened — the very first failure is too
+          early to invoke RCA, since one-shot failures are common and
+          the loop's normal retry path handles them at lower cost).
+          Caller is expected to pass the post-``increment_refinement_attempts``
+          value, so a count of 2 means the current failure is the
+          second attempt. This matches the e2e scenario in R10-009
+          where F009 timed out on attempt 2 after a 55-minute attempt 1.
+        - No RCA has run for this feature in the last 24 hours.
+        - The orchestration loop is not in budget exhaustion.
+
+        On success, stores the RCA result as an evidence artifact of
+        type ``rca_analysis`` (so ``_last_rca_run_at`` can find it) and
+        returns the parsed RCA dict (``blame_target``,
+        ``recommended_action``, ``root_cause``, etc.). Returns ``None``
+        when RCA was skipped or failed.
+        """
+        # Gate 0: feature flag, primarily for tests that don't mock
+        # ``spawn_rca_agent`` (and would otherwise launch a real SDK
+        # subprocess). Defaults to True in production.
+        if not _rca_enabled():
+            return None
+
+        # Gate 1: at least one PRIOR failure on the books (so this is
+        # the second-or-later attempt). The caller passes the
+        # post-increment refinement_attempts value.
+        if feature.refinement_attempts < 2:
+            return None
+
+        # Gate 2: don't spam RCA on a flapping feature.
+        if self._rca_cooldown_active(feature.id):
+            logger.debug(
+                "Skipping RCA for feature %s: 24h cooldown still active",
+                feature.id,
+            )
+            return None
+
+        # Gate 3: never spend post-budget budget on RCA.
+        try:
+            if self.budget_exceeded():
+                logger.info(
+                    "Skipping RCA for feature %s: budget exhausted",
+                    feature.id,
+                )
+                return None
+        except Exception:
+            # If budget check raises, err on the side of running RCA —
+            # it's cheap relative to the feature retry it might prevent.
+            logger.debug(
+                "budget_exceeded() raised during RCA gating",
+                exc_info=True,
+            )
+
+        # Build a failure-evidence blob. Cap the body so the RCA prompt
+        # stays bounded — sub-agent stdout can be megabytes of
+        # diagnostics; the first ~4 KB is plenty for hypothesis work.
+        evidence_text = (
+            (result.text or "")[:4000]
+            + (
+                f"\n\n---\nerror_message: {result.error_message}"
+                if result.error_message
+                else ""
+            )
+        )
+        error_message = (
+            result.error_message
+            or "Sub-agent reported is_error=True with no error_message"
+        )
+
+        # Bound the RCA spawn with its own wall-clock timeout so a stuck
+        # tool call inside the RCA sub-agent cannot park the
+        # orchestration loop. Configurable via ``BOB3_RCA_TIMEOUT_SECONDS``
+        # (default 600s = 10 minutes — RCA is meant to be a quick
+        # hypothesis pass, not another implementation budget).
+        rca_timeout = _resolve_rca_timeout_seconds()
+        try:
+            rca_spawn = await asyncio.wait_for(
+                spawn_rca_agent(
+                    project_id=self.project_id,
+                    failure_evidence=evidence_text,
+                    error_type="feature_implementation_failure",
+                    error_message=error_message,
+                    target_type="feature",
+                    target_id=feature.id,
+                ),
+                timeout=rca_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "spawn_rca_agent for feature %s exceeded %ss; "
+                "continuing without RCA recommendation",
+                feature.id,
+                rca_timeout,
+            )
+            return None
+        except Exception:
+            logger.warning(
+                "spawn_rca_agent crashed for feature %s; continuing without RCA",
+                feature.id,
+                exc_info=True,
+            )
+            return None
+
+        rca_exec = rca_spawn.execution_result
+        # Extract the parsed RCA fields; fall back to a synthetic dict
+        # when the SDK errored or the parser couldn't find a JSON block.
+        if rca_exec.is_error:
+            rca: dict[str, Any] = {
+                "blame_target": "unknown",
+                "recommended_action": "investigate",
+                "root_cause": (
+                    "RCA sub-agent itself errored: "
+                    + str(rca_exec.error_message or "unknown")
+                )[:500],
+            }
+        else:
+            from bob3.orchestrator.claude_executor import parse_rca_result
+            rca = dict(parse_rca_result(rca_exec.text))
+
+        # Record the RCA result as an evidence artifact so it shows up
+        # alongside the feature's other evidence and so the cooldown
+        # check (``_last_rca_run_at``) can find it on the next failure.
+        try:
+            db.create_evidence(
+                project_id=self.project_id,
+                feature_id=feature.id,
+                type="rca_analysis",
+                content=json.dumps({
+                    "rca": rca,
+                    "refinement_attempts": feature.refinement_attempts,
+                    "agent_run_id": getattr(rca_spawn.agent_run, "id", None),
+                    "rca_text": (rca_exec.text or "")[:4000],
+                    "rca_is_error": rca_exec.is_error,
+                    "rca_error_message": rca_exec.error_message,
+                }),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record rca_analysis evidence for feature %s; "
+                "continuing with the recommendation in memory",
+                feature.id,
+                exc_info=True,
+            )
+
+        # Route RCA cost through the canonical writer.
+        rca_cost, rca_cost_source = _normalize_cost(
+            rca_exec.total_cost_usd, rca_exec.num_turns
+        )
+        self._increment_cost(rca_cost, rca_cost_source)
+
+        logger.info(
+            "RCA for feature %s: blame=%s action=%s",
+            feature.id[:8],
+            rca.get("blame_target"),
+            rca.get("recommended_action"),
+        )
+        return rca
+
+    async def _force_research_for_feature(self, feature: Feature) -> None:
+        """Run research on a feature even when ``needs_research`` is False.
+
+        Used by the RCA wiring (R10-009) when an RCA returns
+        ``recommended_action == "research"``. The feature has already
+        failed at least once and RCA explicitly asked for research, so
+        the standard threshold gates don't apply. We achieve "force"
+        by temporarily resetting ``research_iterations`` to 0 if it
+        was already incremented by an earlier mid-run research.
+        Implementation note: ``_run_research`` already increments
+        ``research_iterations`` on completion, so a forced research
+        still gets recorded as one iteration.
+        """
+        # The simplest "force" is to call _run_research's body
+        # unconditionally. We re-fetch the feature so we work against
+        # the latest DB state.
+        latest = db.get_feature(feature.id) or feature
+
+        # Build the same query _run_research uses.
+        query = (
+            f"Research for implementing: {latest.name}\n\n"
+            f"Description: {latest.description or 'No description'}\n\n"
+            f"Find relevant documentation, libraries, patterns, and examples."
+        )
+        try:
+            research_result = await spawn_research_agent(
+                project_id=self.project_id,
+                query=query,
+                purpose="feature_research",
+                target_type="feature",
+                target_id=latest.id,
+                workspace=self.workspace or None,
+            )
+        except Exception:
+            logger.warning(
+                "Force-research spawn failed for feature %s; continuing",
+                feature.id,
+                exc_info=True,
+            )
+            return
+
+        research_exec = research_result.execution_result
+        research_cost, research_cost_source = _normalize_cost(
+            research_exec.total_cost_usd, research_exec.num_turns
+        )
+        self._increment_cost(research_cost, research_cost_source)
+
+        findings = research_exec.text if not research_exec.is_error else None
+        agent_run_id = getattr(research_result.agent_run, "id", None)
+        try:
+            try:
+                db.create_research_result(
+                    feature_id=latest.id,
+                    project_id=self.project_id,
+                    query=query,
+                    findings=findings,
+                    agent_run_id=agent_run_id,
+                )
+            except Exception:
+                db.create_research_result(
+                    feature_id=latest.id,
+                    project_id=self.project_id,
+                    query=query,
+                    findings=findings,
+                )
+        except Exception:
+            logger.warning(
+                "Failed to record forced-research result for feature %s",
+                latest.id,
+                exc_info=True,
+            )
+
+        # Increment research_iterations and (on success) restore confidence.
+        post = db.get_feature(latest.id) or latest
+        new_iters = (post.research_iterations or 0) + 1
+        updates: dict[str, Any] = {"research_iterations": new_iters}
+        if not research_exec.is_error:
+            updates["conf_spec_understanding"] = max(
+                post.conf_spec_understanding, 0.85
+            )
+            updates["conf_impl_correctness"] = max(
+                post.conf_impl_correctness, 0.85
+            )
+            updates["readiness_score"] = max(post.readiness_score, 0.85)
+        db.update_feature(latest.id, **updates)
+
     async def execute_feature(self, feature: Feature) -> SpawnResult:
         """Spawn a sub-agent to implement a feature.
 
@@ -2280,7 +2757,98 @@ class OrchestrationLoop:
             else:
                 # F071: Retry logic — check refinement attempts before giving up
                 updated_feature = db.increment_refinement_attempts(feature.id)
-                if updated_feature is not None and not db.check_refinement_limit(feature.id):
+
+                # R10-011: Decay confidence so the low-confidence research
+                # trigger (Trigger 3 in ``needs_research``) can re-fire on
+                # the next attempt, even when the failure-count threshold
+                # (R10-010) hasn't been crossed yet. Decay happens AFTER
+                # ``increment_refinement_attempts`` so a fresh DB read is
+                # consistent. Refresh the in-memory ``updated_feature``
+                # after decay so subsequent log messages and RCA gating
+                # see the latest values.
+                decayed = _decay_confidence_after_failure(feature.id)
+                if decayed is not None:
+                    updated_feature = decayed
+
+                # R10-009: Spawn an RCA sub-agent on every failure past the
+                # first (gated by 24h cooldown + budget). RCA recommendations
+                # short-circuit the normal retry path: ``research`` triggers
+                # a forced research pass, ``decompose`` flags the feature as
+                # too large, ``mark_needs_human``/``skip`` retire the feature
+                # immediately, and any other action falls through to the
+                # default retry/needs_human logic below.
+                rca_result = await self._maybe_run_rca(
+                    feature=updated_feature or feature, result=result
+                )
+                rca_action = (
+                    rca_result.get("recommended_action") if rca_result else None
+                )
+
+                # ---- RCA short-circuits ----
+                if rca_action in ("mark_needs_human", "skip", "escalate"):
+                    db.update_feature(feature.id, status="needs_human")
+                    self.features_failed += 1
+                    logger.warning(
+                        "Feature %s marked needs_human by RCA "
+                        "(action=%s, blame=%s): %s",
+                        feature.id,
+                        rca_action,
+                        (rca_result or {}).get("blame_target"),
+                        (rca_result or {}).get("root_cause"),
+                    )
+                elif rca_action == "decompose":
+                    db.update_feature(
+                        feature.id,
+                        exceeds_size_limits=True,
+                        size_limit_justification=(
+                            "RCA recommendation after failure: "
+                            + str(
+                                (rca_result or {}).get("root_cause")
+                                or "feature too large to implement in one pass"
+                            )
+                        )[:500],
+                        status="ready",
+                    )
+                    logger.info(
+                        "Feature %s flagged for decomposition by RCA "
+                        "(blame=%s)",
+                        feature.id,
+                        (rca_result or {}).get("blame_target"),
+                    )
+                elif rca_action in ("research", "clarify_spec"):
+                    # Force a research pass even if normal triggers wouldn't fire.
+                    await self._force_research_for_feature(
+                        updated_feature or feature
+                    )
+                    if updated_feature is not None and not db.check_refinement_limit(
+                        feature.id
+                    ):
+                        db.update_feature(feature.id, status="ready")
+                        logger.info(
+                            "Feature %s: RCA forced research; resetting "
+                            "to ready for retry (attempt %d/%d)",
+                            feature.id,
+                            updated_feature.refinement_attempts,
+                            updated_feature.max_refinement_attempts,
+                        )
+                    else:
+                        self.features_failed += 1
+                        logger.warning(
+                            "Feature %s: RCA recommended research but "
+                            "retry limit exhausted (%s/%s)",
+                            feature.id,
+                            updated_feature.refinement_attempts
+                            if updated_feature
+                            else "?",
+                            updated_feature.max_refinement_attempts
+                            if updated_feature
+                            else "?",
+                        )
+                # ---- Default retry / exhaustion path ----
+                elif (
+                    updated_feature is not None
+                    and not db.check_refinement_limit(feature.id)
+                ):
                     # Under limit: reset to 'ready' so the loop retries this feature
                     db.update_feature(feature.id, status="ready")
                     logger.info(

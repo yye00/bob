@@ -980,12 +980,20 @@ _VALID_BLAME_TARGETS = frozenset({
 })
 
 _VALID_RECOMMENDED_ACTIONS = frozenset({
+    # Original F058 vocabulary
     "fix_code", "fix_test", "clarify_spec", "retry",
     "investigate", "escalate",
+    # R10-009 wiring vocabulary used by ``OrchestrationLoop._maybe_run_rca``
+    # (run_loop.py). Lets the RCA agent return loop-level routing
+    # recommendations directly, without a translation layer in the loop.
+    "fix_implementation", "decompose", "research", "mark_needs_human", "skip",
 })
 
 # Actions that propose a fix (require root_cause to be present)
-_FIX_ACTIONS = frozenset({"fix_code", "fix_test", "clarify_spec"})
+_FIX_ACTIONS = frozenset({
+    "fix_code", "fix_test", "clarify_spec",
+    "fix_implementation",
+})
 
 RCA_SYSTEM_PROMPT = (
     "You are a Root Cause Analysis (RCA) agent following the Systematic Debugging Protocol.\n\n"
