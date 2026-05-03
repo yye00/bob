@@ -1973,6 +1973,108 @@ findings:
     on POSIX grep, and add a note clarifying that the AST-based stub detector is
     what catches the function-body cases. Regression test in tests/test_r6_doc_ux_fixes.py
     (TestNoStubsGrepPortability).'
+- id: R10-005
+  title: source_files_exist excludes __init__.py — false negative for package-only features
+  pattern: verifier filter drops legitimate source files, causing acceptance-criteria-passing
+    feature to be wrongly marked needs_human
+  files:
+  - src/bob3/superpowers.py
+  severity: critical
+  status: fixed
+  tags:
+  - permissive-default
+  - false-negative
+  - verifier-bug
+  fixed_in: pending-r10-e2e
+  fixed_at: '2026-05-02'
+  notes: 'Observed end-to-end against examples/03_simple_calculator_spec.yaml: a feature
+    whose acceptance criterion was "File exists: src/calculator/__init__.py" had the
+    sub-agent correctly create the file, but run_verification_checklist filtered
+    __init__.py out of the source-file count (line 459: ``f.name != "__init__.py"``),
+    found 0 source files, FAILed source_files_exist, and the feature was marked
+    needs_human even though acceptance_criteria_met passed. An __init__.py IS a
+    source file — especially for a package whose entry point is the package itself.
+    Fix: remove the __init__.py exclusion from the source_files_exist count;
+    keep __pycache__ exclusion. To preserve stub-detection for "implement function
+    X" features, add a separate warning-severity check ``package_has_substance``
+    that fires when a package contains ONLY empty __init__.py markers and no other
+    code. Regression tests in tests/test_f113_superpowers_integration.py
+    (TestR10005InitPyIsSource).'
+- id: R10-006
+  title: Stale .bob3.lock after SIGKILL/OOM blocks restart with unactionable error
+  pattern: lock file persists across crash; no PID probe and no recovery hint
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  - src/bob3/cli.py
+  severity: high
+  status: fixed
+  tags:
+  - cli-concurrency
+  - poor-error-message
+  - stale-state
+  fixed_in: pending-r10-e2e
+  fixed_at: '2026-05-02'
+  notes: 'Observed end-to-end: a SIGKILLed bob3 run can leave a .bob3.lock that
+    the kernel did not release because a still-running grandchild inherited the
+    FD. The next run hits BlockingIOError on flock and the user sees only
+    "Another bob3 run is already in progress" with no PID, no recovery path,
+    and no suggestion to remove the lock manually. Fix: (1) write our PID into
+    the lock file after acquire; (2) on contention, read the holder PID and
+    probe it with kill(pid, 0); (3) if the holder is dead, raise an actionable
+    AlreadyRunningError that names the dead PID and points at --force-unlock or
+    rm <path>; (4) add a --force-unlock CLI flag that forcibly clears a stale
+    lock whose holder PID is dead. Regression tests in
+    tests/test_f069_run_command.py (TestR10006StaleLockRecovery).'
+- id: R10-007
+  title: _run_single_feature returns ALL_COMPLETED even when feature failed
+  pattern: termination reason ignored feature.status; "completed" returned for needs_human
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: critical
+  status: fixed
+  tags:
+  - state-machine
+  - inconsistent-summary
+  - exit-code-correctness
+  fixed_in: pending-r10-e2e
+  fixed_at: '2026-05-02'
+  notes: 'Observed end-to-end: after ``await self.execute_feature(feature)`` the
+    single-feature path returned LoopTermination.ALL_COMPLETED unconditionally,
+    even when the sub-agent failed verification, hit a hook rejection, or
+    otherwise ended ``needs_human``. The summary log then said
+    ``termination=ALL_COMPLETED features_completed=0 features_failed=1`` —
+    internally inconsistent — and the CLI mapped ALL_COMPLETED to exit 0,
+    so a CI pipeline doing ``bob3 run --feature X && deploy.sh`` would push a
+    half-built tree to production. Fix: re-read the feature post-execution and
+    map status==''completed'' → ALL_COMPLETED; needs_human/failed/interrupted/
+    executing/ready/pending all → ALL_BLOCKED. Regression tests in
+    tests/test_f069_run_command.py (TestR10007SingleFeatureTerminationReflectsStatus).'
+- id: R10-008
+  title: bob3 run --feature exits 0 and prints "Feature completed!" on failure
+  pattern: CLI message + exit code do not reflect feature''s actual final status
+  files:
+  - src/bob3/cli.py
+  severity: critical
+  status: fixed
+  tags:
+  - exit-code-correctness
+  - misleading-message
+  - ci-correctness
+  fixed_in: pending-r10-e2e
+  fixed_at: '2026-05-02'
+  related:
+  - R10-007
+  - R5-008
+  notes: 'Downstream of R10-007: with the loop returning ALL_COMPLETED on
+    failure, ``bob3 run --feature X`` exited 0 and printed "Feature
+    completed!" even when the sub-agent failed. With R10-007 fixed at the
+    loop level, the CLI now correctly maps ALL_BLOCKED to exit code 2 — but
+    the user-facing message also needs to disambiguate "not runnable" from
+    "ran but ended needs_human" (since R10-007 made both map to ALL_BLOCKED).
+    Fix: re-read feature.status after the run and print a status-specific
+    message ("Feature ended: needs_human" / "Feature is blocked
+    (status=...)" etc.). Regression test in tests/test_f069_run_command.py
+    (TestR10008CliExitCodeOnFailure).'
 recurring_patterns:
 - tag: refactor-debt
   occurrences:
@@ -1997,6 +2099,15 @@ recurring_patterns:
   - R4-005
   - R4-006
   - R4-008
+  - R5-008
+  - R5-009
+  - R6-005
+  - R6-006
+  - R6-007
+  - R6-008
+  - R6-009
+  - R6-010
+  - R6-011
   summary: 'User-facing docs (README, CLI error messages) keep falling out of
 
     sync with code: missing prerequisites, missing env vars, capability
@@ -2013,6 +2124,8 @@ recurring_patterns:
   - R3-011
   - R4-001
   - R4-002
+  - R6-007
+  - R6-008
   summary: 'Fresh-clone setup paths repeatedly break: missing transitive deps,
 
     defaults that point at the install location instead of the user''s
@@ -2026,9 +2139,21 @@ recurring_patterns:
   occurrences:
   - R1-003
   - R2-001
-  summary: 'Two trackings of the same value (in-memory + DB) drift. Use a single
+  - R5-010
+  - R6-001
+  - R6-002
+  - R9-006
+  summary: 'FIXED STRUCTURALLY in <commit>: self.total_cost was deleted; all cost
+    writes route through OrchestrationLoop._increment_cost which updates DB +
+    expected-total floor + cache atomically. Should not recur.
 
-    atomic source of truth.
+    Historical: two trackings of the same value (in-memory ``self.total_cost``
+    + DB ``project.total_cost_usd``) repeatedly drifted. Each new cost-bearing
+    code path had to remember which to use and reviewers kept finding paths
+    that used the wrong one (R1-003 / R2-001 / R5-010 / R6-001 / R6-002 /
+    R9-006). The structural fix retires the in-memory mirror entirely so
+    there is no second-class field to forget about; the seventh occurrence
+    is now structurally impossible.
 
     '
 - tag: allowlist-gap
@@ -2047,6 +2172,7 @@ recurring_patterns:
   - R2-002
   - R2-012
   - R4-014
+  - R7-002
   summary: '`except Exception:` followed by a permissive default is a recurring
 
     vector for hiding bugs. Catch specific exceptions; fail loud on
@@ -2092,6 +2218,7 @@ recurring_patterns:
   - R1-001
   - R3-006
   - R4-017
+  - R9-007
   summary: 'Tests can pass green for code that production never executes.
 
     Verify that test fixtures call the same code paths as the live
@@ -2119,6 +2246,7 @@ recurring_patterns:
   occurrences:
   - R3-010
   - R4-020
+  - R6-006
   summary: 'Tests share an interpreter; module-level state, signal handlers, and process-wide
     environment variables leak across test boundaries. Every newly introduced shared-state
     surface needs a corresponding teardown in the autouse fixture in tests/conftest.py.
@@ -2177,5 +2305,59 @@ recurring_patterns:
     command and exit with a clear message on contention rather than
 
     racing on the database.
+
+    '
+- tag: security
+  occurrences:
+  - R3-001
+  - R3-002
+  - R4-009
+  - R4-010
+  - R4-011
+  - R4-012
+  - R8-001
+  - R8-002
+  - R8-003
+  - R8-004
+  - R9-008
+  summary: 'Cluster of findings where untrusted input crosses a security
+    boundary into the orchestrator (sub-agent FS writes, MCP transport,
+    skill content, spec YAML, prompt-injection vectors, log-line
+    forgery). Reviewers should treat any new ingest path as adversarial
+    by default: name the threat, name the trust boundary it crosses,
+    and add a defence-in-depth control before merging. Skill poisoning
+    and prompt-injection cases under R10 belong here too.
+
+    '
+- tag: spec-parsing
+  occurrences:
+  - R9-001
+  - R9-002
+  - R9-003
+  - R9-004
+  summary: 'Spec YAML accepted multiple shapes (list-of-dicts vs
+    dict-of-dicts; nested vs flat acceptance criteria; missing
+    title/description). Each new shape was treated as ad-hoc by the
+    parser; downstream code (``bob3 plan --create``, log lines,
+    research triggers) silently picked up empty descriptions or YAML
+    keys instead of human names. Centralise spec-shape handling: one
+    canonicaliser that always produces the same internal Feature
+    record regardless of which YAML shape arrived. Validate at the
+    boundary; everything downstream consumes the canonical form.
+
+    '
+- tag: trust-boundary
+  occurrences:
+  - R4-012
+  - R8-002
+  - R9-008
+  summary: 'Code that runs INSIDE the orchestrator''s trust zone (the
+    Python process that owns ``bob3.db`` and the budget) treated data
+    coming from sub-agents / MCP servers / spec YAML as if it had the
+    same trust level. The fix is always the same: name the boundary
+    explicitly, validate at the crossing, never let cross-boundary
+    data drive a security-relevant decision (budget, skill load,
+    permission grant, file-system reach) without an explicit allow-
+    listed control. See also: ``security``, ``allowlist-gap``.
 
     '

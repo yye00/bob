@@ -536,8 +536,10 @@ class TestEndToEndDecomposition:
         R4-002 (2026-04, follow-up): the decomposition cost used to be
         added ONLY to ``loop.total_cost`` and never to
         ``project.total_cost_usd`` — so the project budget was blind to
-        decomposition. Fix: route to ``db.update_project_cost`` (atomic,
-        canonical source). The DB total is the right thing to assert on.
+        decomposition. The structural ``non-atomic-counter`` fix routes
+        every cost write through ``OrchestrationLoop._increment_cost``;
+        ``self.total_cost`` no longer exists. The DB total is the right
+        thing to assert on.
         """
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             loop = OrchestrationLoop(project_id=project.id)

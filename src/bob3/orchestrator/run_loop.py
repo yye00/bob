@@ -18,8 +18,8 @@ This is intentional, not a TODO:
    would serialize on the DB anyway, and we'd inherit lock-contention
    debugging on top.
 2. Cost tracking and budget enforcement assume sequential cost
-   accumulation. ``self.total_cost``, ``update_project_cost``, and
-   ``budget_exceeded`` are checked once per iteration; concurrent
+   accumulation. The single ``OrchestrationLoop._increment_cost`` method
+   and ``budget_exceeded`` are checked once per iteration; concurrent
    features would race on the running total and could overshoot
    ``max_cost`` by N feature-budgets at once.
 3. Failure isolation — a failed sibling shouldn't poison parallel
@@ -107,7 +107,8 @@ budget enforcement on the next iteration of the loop.
 The orchestrator can't prevent the write (the trust model accepts that
 sub-agents have FS access), but it can DETECT the tampering and refuse
 to honor the lower value. The loop maintains an in-memory ``_expected_total_cost``
-that is incremented on every ``db.update_project_cost`` call. When
+that is incremented on every ``db.update_project_cost`` call (routed
+exclusively through ``_increment_cost``). When
 ``_refresh_project_cost_cache`` reloads the canonical DB total, it
 compares to the expected total; if the DB total has DECREASED beyond a
 small floating-point slack, the loop:
@@ -251,7 +252,52 @@ class AlreadyRunningError(RuntimeError):
     """
 
 
-def acquire_run_lock(workspace: str | pathlib.Path) -> Any:
+def _read_lock_pid(lock_path: pathlib.Path) -> int | None:
+    """Read the holder PID from a lock file, or None if unreadable.
+
+    R10-006: We write our PID into the lock file after acquiring it so
+    a subsequent contended attempt can probe the holder with
+    ``kill(pid, 0)`` and produce an actionable error message (or, with
+    ``force_unlock=True``, recover automatically from a truly stale lock).
+    """
+    try:
+        contents = lock_path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    if not contents:
+        return None
+    try:
+        return int(contents.split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Return True if a process with ``pid`` is alive (signal 0 probe).
+
+    R10-006: ``os.kill(pid, 0)`` raises ProcessLookupError when the PID
+    is not in the kernel's task table, PermissionError when the process
+    exists but is owned by another user (still alive), and succeeds
+    silently if the PID is alive and signalable.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        # Be conservative on unexpected errors: assume alive.
+        return True
+    return True
+
+
+def acquire_run_lock(
+    workspace: str | pathlib.Path,
+    force_unlock: bool = False,
+) -> Any:
     """Acquire a non-blocking exclusive advisory lock for ``bob3 run``.
 
     Opens (creates if necessary) ``<workspace>/.bob3.lock`` and tries to
@@ -368,14 +414,83 @@ def acquire_run_lock(workspace: str | pathlib.Path) -> Any:
     try:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError as exc:
+        # R10-006: On contention, peek at the PID we wrote into the
+        # lock file the last time it was acquired and check whether
+        # that holder is still alive. ``flock`` is supposed to be
+        # released on process exit by the kernel, but a still-running
+        # grandchild that inherited the lock FD can keep it alive past
+        # the original ``bob3 run`` — and on systemd-managed sessions
+        # we have observed cases where this happens. Surface a more
+        # actionable error in that case (and recover automatically if
+        # the operator passed ``--force-unlock``).
+        holder_pid = _read_lock_pid(lock_path)
+        holder_alive = _pid_is_alive(holder_pid) if holder_pid is not None else True
+        if not holder_alive:
+            if force_unlock:
+                # Truly stale — close our fd, remove the lock file, and
+                # recurse once. If we still can't acquire it after that,
+                # something's seriously wrong; don't loop.
+                fh.close()
+                try:
+                    lock_path.unlink()
+                except OSError:
+                    logger.debug(
+                        "Could not unlink stale lock file %s",
+                        lock_path,
+                        exc_info=True,
+                    )
+                logger.warning(
+                    "Removed stale .bob3.lock (holder PID %s was dead)",
+                    holder_pid,
+                )
+                # Recurse with force_unlock=False so a real concurrent
+                # run still raises cleanly.
+                return acquire_run_lock(workspace, force_unlock=False)
+            fh.close()
+            raise AlreadyRunningError(
+                f"`.bob3.lock` exists but its holder PID {holder_pid} is "
+                f"not running. The lock is stale (likely from a previous "
+                f"run that was SIGKILLed or OOM-killed). To recover, "
+                f"either re-run with `bob3 run --force-unlock ...` or "
+                f"remove the lock file manually: rm {lock_path}"
+            ) from exc
         fh.close()
+        # Real concurrent run. Tell the user which PID is holding it
+        # and how to recover if they're sure no other run is active.
+        pid_hint = (
+            f" (holder PID {holder_pid})" if holder_pid is not None else ""
+        )
         raise AlreadyRunningError(
             f"Another `bob3 run` is already in progress for this project. "
-            f"Refusing to start. (lock: {lock_path})"
+            f"Refusing to start. (lock: {lock_path}){pid_hint} — "
+            f"if no other bob3 run is actually running, remove the lock "
+            f"file: rm {lock_path}"
         ) from exc
     except OSError:
         fh.close()
         raise
+
+    # R10-006: Record our PID inside the lock file so a future
+    # contended attempt can identify a stale lock. We truncate first
+    # because the file was opened append-only ("ab") above; rewriting
+    # the same fd avoids opening a second descriptor.
+    try:
+        os.lseek(fh.fileno(), 0, os.SEEK_SET)
+        os.ftruncate(fh.fileno(), 0)
+        fh.write(f"{os.getpid()}\n".encode("utf-8"))
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            # fsync may fail on some FS types — not worth aborting the
+            # whole run for.
+            logger.debug("fsync on .bob3.lock failed", exc_info=True)
+    except OSError:
+        # Best-effort. If we can't write the PID, the flock still
+        # protects against concurrent runs; we just lose the
+        # stale-lock detection nicety.
+        logger.debug("Could not write PID to .bob3.lock", exc_info=True)
+
     return fh
 
 
@@ -1121,11 +1236,15 @@ def handle_execution_result(
 ) -> dict[str, Any]:
     """Handle the result of executing a feature sub-agent.
 
-    Performs all post-execution bookkeeping:
+    Performs all post-execution bookkeeping EXCEPT cost accounting:
     1. Parses the execution result (success/failure)
     2. Updates the feature status (completed/failed/interrupted/needs_human)
     3. Creates evidence artifacts from the execution output
-    4. Updates project-level cost tracking (atomically, with budget enforcement)
+    4. Returns the normalized cost so the caller can route it through
+       ``OrchestrationLoop._increment_cost`` — the single canonical
+       writer for project cost. This function NO LONGER calls
+       ``db.update_project_cost`` itself (recurring pattern
+       ``non-atomic-counter``).
 
     A feature is only marked 'completed' and dependents cascaded to 'ready'
     when BOTH the sub-agent succeeded AND verification passed. If the
@@ -1143,8 +1262,11 @@ def handle_execution_result(
             verification result (recorded in the evidence payload).
 
     Returns:
-        Dict with keys: success, cost_usd, duration_ms, error_message,
-        evidence_id, verification_passed.
+        Dict with keys: success, cost_usd, cost_source, duration_ms,
+        error_message, evidence_id, verification_passed. The caller is
+        responsible for incrementing project cost via
+        ``OrchestrationLoop._increment_cost(cost_usd, cost_source)``
+        when ``cost_usd > 0``.
     """
     result = spawn_result.execution_result
     agent_run_id = getattr(spawn_result.agent_run, "id", None)
@@ -1318,17 +1440,19 @@ def handle_execution_result(
             exc_info=True,
         )
 
-    # Step 4: Update project cost tracking atomically (also enforces budget).
-    # We always record the normalized cost — even when sourced from the
-    # turn-count proxy — so that runaway sub-agents on Max Pro still trip
-    # the budget guard. A normalized cost of 0.0 (no SDK cost AND no turns)
-    # is a no-op against the running total.
-    if normalized_cost > 0:
-        db.update_project_cost(
-            project_id=project_id,
-            cost_usd=normalized_cost,
-        )
-
+    # Step 4: NOTE — project cost is NOT written here.
+    #
+    # The single canonical writer is ``OrchestrationLoop._increment_cost``,
+    # called by the orchestration loop after this function returns. Routing
+    # every cost write through one method retires the recurring
+    # ``non-atomic-counter`` pattern (R1-003 / R2-001 / R5-010 / R6-001 /
+    # R6-002 / R9-006): when this function used to issue the DB write
+    # itself, the loop ALSO had to remember to mirror the delta into the
+    # tamper-detection ``_expected_total_cost`` and refresh the cache —
+    # and every new cost-bearing path was one ``forgot to do that`` away
+    # from drift. Returning the normalized cost back to the caller and
+    # letting ``_increment_cost`` perform write + mirror + refresh
+    # together makes the next occurrence structurally impossible.
     return outcome
 
 
@@ -1352,13 +1476,16 @@ class OrchestrationLoop:
         workspace: str | None = None,
         fresh: bool = False,
         target_feature_id: str | None = None,
+        force_unlock: bool = False,
     ) -> None:
         self.project_id = project_id
         self.max_cost = max_cost
         self.workspace = workspace or ""
         self.fresh = fresh
         self.target_feature_id = target_feature_id
-        self.total_cost: float = 0.0
+        # R10-006: forwarded to ``acquire_run_lock``; lets operators
+        # recover from a SIGKILLed run that left a stale ``.bob3.lock``.
+        self.force_unlock = force_unlock
         self.features_completed: int = 0
         self.features_failed: int = 0
         # R5-009: wall-clock start time for the run, captured at the top
@@ -1439,6 +1566,11 @@ class OrchestrationLoop:
         depth — budget tampering" section for the threat model.
 
         Negative deltas are rejected: cost is monotonic by contract.
+
+        Internal helper: the only caller is ``_increment_cost``. Do NOT
+        call this directly from new code; route every cost write through
+        ``_increment_cost`` so the DB write, expected-total bump, and
+        cache refresh stay in lockstep.
         """
         if delta < 0:
             logger.error(
@@ -1448,6 +1580,62 @@ class OrchestrationLoop:
             )
             return
         self._expected_total_cost += float(delta)
+
+    def _increment_cost(self, normalized_cost: float, source: str) -> None:
+        """Single canonical entry point for recording loop-level cost.
+
+        This is the ONLY method that writes cost into the project. Every
+        path that previously did ``db.update_project_cost(...)`` (the
+        feature execution path inside ``handle_execution_result``, the
+        research path, the decomposition path, plus any future cost-
+        bearing sub-agent the loop orchestrates) MUST go through here.
+
+        The structural reason: the loop used to maintain TWO trackers —
+        ``self.total_cost`` (in-memory) and ``db.update_project_cost``
+        (atomic DB column) — and every new cost-bearing code path had
+        to remember which one to use. Reviewers kept finding paths that
+        used the wrong one (R1-003, R2-001, R5-010, R6-001, R6-002,
+        R9-006). Collapsing both writes behind one method makes the
+        seventh occurrence structurally impossible: there is no second-
+        class field to forget about.
+
+        Steps performed atomically from the caller's point of view:
+        1. ``db.update_project_cost`` — the canonical, atomic column
+           write. SQLite serialises this against any concurrent writer,
+           so the project total stays monotonic.
+        2. ``_increment_expected_total_cost`` — bumps the tamper-detection
+           floor (see ``_refresh_project_cost_cache``). Must happen with
+           the SAME delta we just sent to the DB so a sub-agent zeroing
+           the column gets caught on the next refresh.
+        3. ``_refresh_project_cost_cache`` — reloads the cached total so
+           ``budget_exceeded()`` and any code reading
+           ``self._project_total_cost`` sees the post-write value
+           without paying for a fresh SQLite connection.
+
+        ``normalized_cost`` MUST already have been through ``_normalize_cost``
+        (so Max Pro / OAuth subscriptions, which return ``cost_usd=None``,
+        are accounted for via the turn-count proxy). A non-positive value
+        is a no-op against all three steps.
+
+        ``source`` is one of: ``"sdk"``, ``"turn_proxy"``, ``"zero"``. It
+        is used for the once-per-loop proxy warning and is otherwise
+        free-form for diagnostics. When ``source == "turn_proxy"`` we
+        also flip ``self._cost_proxy_active`` so ``_maybe_warn_cost_proxy_active``
+        surfaces the warning at the next safe point.
+        """
+        # Flag the proxy state regardless of the magnitude — even a
+        # zero-magnitude proxy reading still tells us the SDK is not
+        # reporting cost on this subscription tier.
+        if source == "turn_proxy":
+            self._cost_proxy_active = True
+        if normalized_cost <= 0:
+            return
+        db.update_project_cost(
+            project_id=self.project_id,
+            cost_usd=normalized_cost,
+        )
+        self._increment_expected_total_cost(normalized_cost)
+        self._refresh_project_cost_cache()
 
     def _refresh_project_cost_cache(self, _priming: bool = False) -> None:
         """Reload cached project cost values from the DB.
@@ -1523,26 +1711,26 @@ class OrchestrationLoop:
         Reads the cached project total (``self._project_total_cost``) and
         compares it to BOTH the loop-level ``self.max_cost`` and the
         project-level ``self._project_max_cost_usd`` ceiling. Cost is
-        tracked atomically via ``db.update_project_cost`` (called from
-        ``handle_execution_result``) and the cache is refreshed on every
-        write — so the cache is the single source of truth for the loop,
-        without paying for a fresh SQLite connection every iteration.
+        tracked atomically via ``_increment_cost`` (the single method
+        through which every loop cost write flows) and the cache is
+        refreshed on every write — so the cache is the single source of
+        truth for the loop, without paying for a fresh SQLite connection
+        every iteration.
 
         Defensively coerces a missing/None project total to 0.0 — if cost
         normalization is bypassed somewhere and None lands in the DB, the
-        budget check should not silently treat it as "infinite room". As a
-        belt-and-suspenders fallback, if ``self.total_cost`` has been set
-        (e.g. by tests that bypass the DB), it is OR'd into the loop-level
-        check.
+        budget check should not silently treat it as "infinite room".
         """
         project_total = self._project_total_cost or 0.0
 
         # Check loop-level budget against the DB-tracked project total.
-        # Tests may set self.total_cost directly (bypassing the DB write),
-        # so we also honour that for backwards compatibility.
+        # There is no second-class in-memory accumulator any more; tests
+        # that want to drive a synthetic running cost should set
+        # ``self._project_total_cost`` (the cached canonical value) or
+        # write directly through ``db.update_project_cost`` before
+        # invoking the budget check.
         if self.max_cost is not None:
-            running = max(project_total, self.total_cost)
-            if running >= self.max_cost:
+            if project_total >= self.max_cost:
                 return True
 
         # Check project-level budget against the project's own max.
@@ -1636,30 +1824,19 @@ class OrchestrationLoop:
                 research_cost,
                 research_exec.num_turns or 0,
             )
-            self._cost_proxy_active = True
         elif research_cost_source == "sdk" and research_exec.total_cost_usd is None:
             # Defensive — should never happen but keep flag detection consistent.
             self._cost_proxy_active = True
         if research_exec.total_cost_usd is None:
             # Even when num_turns==0 (zero source), surface that cost data is absent.
             self._cost_proxy_active = True
-        if research_cost > 0:
-            # R4-001 fix: only update the canonical DB total. Previously
-            # this also did ``self.total_cost += research_cost`` while
-            # ``budget_exceeded()`` takes ``max(project_total, self.total_cost)``,
-            # so the in-memory accumulator drifted above the DB total and the
-            # research charge was effectively counted twice against the
-            # budget. The feature execution path was already fixed under
-            # R2-001; this is the same pattern recurring on the research
-            # path. Keep DB update only — it is the single source of truth.
-            db.update_project_cost(
-                project_id=self.project_id,
-                cost_usd=research_cost,
-            )
-            # R5-003: mirror the cost delta into the tamper-detection
-            # expected total before refreshing the cache.
-            self._increment_expected_total_cost(research_cost)
-            self._refresh_project_cost_cache()
+        # All cost writes route through the single ``_increment_cost``
+        # entry point: it issues the atomic DB write, mirrors the delta
+        # into the tamper-detection floor, refreshes the cached total,
+        # and flips ``_cost_proxy_active`` when source=="turn_proxy".
+        # See ``non-atomic-counter`` recurring pattern in reviews/findings.yaml
+        # — this is the structural fix that retired ``self.total_cost``.
+        self._increment_cost(research_cost, research_cost_source)
 
         # Store research results in DB (even if research failed, record the attempt)
         findings = research_exec.text if not research_exec.is_error else None
@@ -1765,34 +1942,21 @@ class OrchestrationLoop:
             )
 
             # R4-002 fix: route decomposition cost to the canonical project
-            # total via db.update_project_cost (atomic) rather than the
-            # in-memory accumulator. Previously this only incremented
-            # ``self.total_cost`` so the project's ``total_cost_usd`` never
-            # reflected decomposition charges and project-level
-            # ``max_cost_usd`` enforcement was blind to them. Normalize so
-            # Max Pro / OAuth subscriptions (which return cost_usd=None)
-            # still consume budget via the turn-count proxy.
+            # total via the loop's single ``_increment_cost`` entry point.
+            # Normalize so Max Pro / OAuth subscriptions (which return
+            # cost_usd=None) still consume budget via the turn-count proxy.
             decomp_cost_raw = decomp_result.get("cost_usd")
             decomp_num_turns = decomp_result.get("num_turns")
             decomp_normalized, decomp_cost_source = _normalize_cost(
                 decomp_cost_raw, decomp_num_turns
             )
-            if decomp_cost_source == "turn_proxy":
-                self._cost_proxy_active = True
-            elif decomp_cost_raw is None:
+            if decomp_cost_source != "turn_proxy" and decomp_cost_raw is None:
                 # SDK reported no cost AND no usable turn proxy — still flag
                 # so downstream consumers (CLI status / budget warnings)
-                # know cost data is absent on this path.
+                # know cost data is absent on this path. ``_increment_cost``
+                # also flips the flag when source=="turn_proxy".
                 self._cost_proxy_active = True
-            if decomp_normalized > 0:
-                db.update_project_cost(
-                    project_id=self.project_id,
-                    cost_usd=decomp_normalized,
-                )
-                # R5-003: mirror the cost delta into the tamper-detection
-                # expected total before refreshing the cache.
-                self._increment_expected_total_cost(decomp_normalized)
-                self._refresh_project_cost_cache()
+            self._increment_cost(decomp_normalized, decomp_cost_source)
 
             if decomp_result["success"]:
                 logger.info(
@@ -2078,20 +2242,16 @@ class OrchestrationLoop:
             verification_passed=verification_passed,
             verification_summary=verification_summary,
         )
-        # R5-003: mirror the cost delta into our in-memory expected total
-        # BEFORE refreshing the cache. ``handle_execution_result`` only
-        # writes to the DB when ``normalized_cost > 0`` (zero is a no-op),
-        # so we apply the same gate here. This keeps tamper detection
-        # tight: if a sub-agent zeroes out the DB, the next refresh sees
-        # ``db_total < expected_total`` and the SECURITY warning fires.
+        # Single canonical cost write: ``_increment_cost`` performs the
+        # atomic ``db.update_project_cost``, mirrors the delta into
+        # ``_expected_total_cost`` for tamper detection, and refreshes
+        # the cached project total — all in one place. ``handle_execution_result``
+        # no longer touches the DB for cost (recurring pattern
+        # ``non-atomic-counter``: every cost-bearing path that wrote the
+        # DB on its own turned into a drift bug).
         cost_recorded = float(outcome.get("cost_usd") or 0.0)
-        if cost_recorded > 0:
-            self._increment_expected_total_cost(cost_recorded)
-        # Refresh the cached project cost after handle_execution_result —
-        # it issues db.update_project_cost on the success path, so the
-        # next budget_exceeded() must see the updated total without
-        # re-fetching the project from disk.
-        self._refresh_project_cost_cache()
+        cost_source = str(outcome.get("cost_source") or "sdk")
+        self._increment_cost(cost_recorded, cost_source)
 
         # Store verification_checklist evidence only when verification
         # actually ran (i.e. sub-agent succeeded and workspace is set).
@@ -2283,13 +2443,12 @@ class OrchestrationLoop:
                 self.features_completed += 1
                 logger.info("Feature %s completed successfully", feature.id)
 
-        # Cost is tracked atomically via db.update_project_cost inside
-        # handle_execution_result; we do NOT increment self.total_cost here
-        # to avoid double-counting (handle_execution_result already wrote
-        # the same normalized cost to the DB). budget_exceeded() reads the
-        # canonical total back from the DB. We still flip the proxy flag so
-        # downstream consumers (CLI status, run() warning) can surface that
-        # the SDK is not reporting cost.
+        # Cost was written above via ``self._increment_cost(...)`` — the
+        # single canonical writer. There is no longer any in-memory mirror
+        # to bump here; ``budget_exceeded()`` reads ``self._project_total_cost``
+        # which ``_increment_cost`` already refreshed. We still flip the
+        # proxy flag so downstream consumers (CLI status, run() warning)
+        # can surface that the SDK is not reporting cost.
         if result.total_cost_usd is None:
             self._cost_proxy_active = True
 
@@ -2516,20 +2675,16 @@ class OrchestrationLoop:
             feature: The feature that was being executed.
             result: The execution result from the sub-agent.
         """
-        # R5-010 / R7-004: ``self.total_cost`` was zeroed by the round-3
-        # fix that moved cost accounting into the project DB row, so the
-        # previous version of this method always recorded
-        # total_cost_at_interrupt=0.0 — useless for resume forensics.
-        # Use the cached, refreshed-from-DB project total instead.
-        # R9-002: ``handle_execution_result`` (called from execute_feature
-        # before this method) has already written
-        # ``result.total_cost_usd`` into the DB via
-        # ``db.update_project_cost``, AND execute_feature has called
-        # ``_increment_expected_total_cost`` +
-        # ``_refresh_project_cost_cache`` before invoking this helper, so
-        # ``self._project_total_cost`` already includes the just-finished
-        # feature's cost. Adding ``result.total_cost_usd`` again here
-        # would double-count.
+        # R5-010 / R7-004 / structural fix (``non-atomic-counter``):
+        # the in-memory ``self.total_cost`` mirror was deleted; cost is
+        # written exclusively through ``self._increment_cost`` which
+        # updates the DB, mirrors the delta into the tamper-detection
+        # floor, and refreshes ``self._project_total_cost`` atomically.
+        # R9-002: by the time this helper runs, execute_feature has
+        # ALREADY routed the just-finished feature's cost through
+        # ``_increment_cost``, so ``self._project_total_cost`` already
+        # includes it. Adding ``result.total_cost_usd`` again here would
+        # double-count.
         project_total = float(self._project_total_cost or 0.0)
         state = {
             "feature_id": feature.id,
@@ -2762,8 +2917,11 @@ class OrchestrationLoop:
         ``find_next_ready_feature`` so we never run unrelated features.
 
         Returns:
-            ALL_COMPLETED if the feature was executed (success or failure),
-            ALL_BLOCKED if the feature is not runnable.
+            ALL_COMPLETED if the feature finished with status='completed',
+            ALL_BLOCKED if the feature is not runnable or ended in any
+            non-completed status (``needs_human``, ``failed``, ``interrupted``).
+            BUDGET_EXCEEDED if --max-cost was reached before execution.
+            SHUTDOWN_REQUESTED if SIGINT/SIGTERM fired mid-run.
         """
         feature = db.get_feature(self.target_feature_id)
         if feature is None:
@@ -2868,7 +3026,36 @@ class OrchestrationLoop:
         # prints "Shutdown requested." and exits 130.
         if self.shutdown_requested:
             return LoopTermination.SHUTDOWN_REQUESTED
-        return LoopTermination.ALL_COMPLETED
+        # R10-007: Reflect the feature's ACTUAL final status in the
+        # termination reason. Previously this returned ALL_COMPLETED
+        # unconditionally — even when the sub-agent failed verification,
+        # was rejected by a hook, errored out, or otherwise ended
+        # ``needs_human``. The summary log then said
+        # ``termination=ALL_COMPLETED features_completed=0 features_failed=1``
+        # which is internally inconsistent and (worse) made `bob3 run
+        # --feature X` exit 0 on failure, so a CI pipeline doing `bob3
+        # run --feature X && deploy.sh` would push a half-built tree to
+        # production. Re-read the feature post-execution and map status
+        # to the appropriate termination.
+        try:
+            final = db.get_feature(feature.id)
+        except Exception:
+            logger.debug(
+                "Could not re-read feature %s after execution; "
+                "falling back to ALL_BLOCKED",
+                feature.id,
+                exc_info=True,
+            )
+            return LoopTermination.ALL_BLOCKED
+        if final is None:
+            return LoopTermination.ALL_BLOCKED
+        if final.status == "completed":
+            return LoopTermination.ALL_COMPLETED
+        # ``needs_human``, ``failed``, ``executing`` (interrupted),
+        # ``interrupted``, ``ready``/``pending`` (somehow unchanged) all
+        # mean: the feature did not finish cleanly. Surface that to the
+        # CLI as ALL_BLOCKED so the exit code is non-zero.
+        return LoopTermination.ALL_BLOCKED
 
     async def run(self) -> LoopTermination:
         """Run the continuous orchestration loop.
@@ -2895,7 +3082,9 @@ class OrchestrationLoop:
         # flight we want to bail out BEFORE installing signal handlers
         # or doing any DB writes — the second invocation should be a
         # no-op from the project's point of view.
-        lock_handle = acquire_run_lock(self.workspace or os.getcwd())
+        lock_handle = acquire_run_lock(
+            self.workspace or os.getcwd(), force_unlock=self.force_unlock
+        )
         # R5-009: Capture the wall-clock start so the termination summary
         # log reflects the actual run time (not OrchestrationLoop init
         # time). Set inside ``run`` so re-running the same loop instance
@@ -2927,10 +3116,12 @@ class OrchestrationLoop:
             run_duration = 0.0
         else:
             run_duration = max(0.0, time.monotonic() - self._run_start_time)
-        # Project total cost is the canonical accumulator (in-memory
-        # ``total_cost`` is dead). Refresh once here in case the last
-        # path forgot to (defensive — every cost write site already
-        # refreshes today).
+        # ``self._project_total_cost`` is the only project cost
+        # accumulator now (the prior in-memory ``self.total_cost``
+        # mirror was deleted as part of the ``non-atomic-counter``
+        # structural fix). Refresh once here in case something exotic
+        # touched the DB out of band — every cost write site already
+        # refreshes via ``_increment_cost``.
         try:
             self._refresh_project_cost_cache()
         except Exception:

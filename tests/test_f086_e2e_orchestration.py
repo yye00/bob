@@ -648,12 +648,35 @@ class TestE2EReadinessGating:
 
     @pytest.mark.asyncio
     async def test_loop_terminates_blocked_with_unready_features(self, tmp_db, workspace):
-        """Orchestration loop terminates as ALL_BLOCKED when features aren't ready."""
+        """Orchestration loop terminates as ALL_BLOCKED when features aren't ready.
+
+        After commit 3d2e059's pending-no-deps recovery, a pending feature
+        with NO declared dependencies is auto-promoted to 'ready' on loop
+        startup. To keep this test meaningful (asserting that low-readiness
+        features below the risk-tier threshold stay blocked), the feature
+        here depends on an uncompleted prerequisite — recovery only
+        promotes deps-free pending features, so this one stays pending
+        and the loop terminates ALL_BLOCKED.
+        """
+        from bob3.db import add_feature_dependency
+
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             project = create_project(
                 name="test-project",
                 workspace_path=str(workspace),
             )
+            # needs_human is terminal — the orchestrator won't try to
+            # complete it, and the resume-recovery scan won't reset it
+            # back to 'ready' the way it does for stale 'executing' rows.
+            prereq = create_feature(
+                project_id=project.id,
+                name="Uncompleted Prereq",
+                description="Terminal-blocked; gates the test feature.",
+                status="needs_human",
+                priority=20,
+                risk_category="medium",
+            )
+            update_feature(prereq.id, readiness_score=0.50)
             feature = create_feature(
                 project_id=project.id,
                 name="Pending Feature",
@@ -665,6 +688,9 @@ class TestE2EReadinessGating:
             update_feature(
                 feature.id,
                 readiness_score=0.50,
+            )
+            add_feature_dependency(
+                feature_id=feature.id, depends_on_feature_id=prereq.id
             )
 
             loop = OrchestrationLoop(
@@ -737,9 +763,12 @@ class TestE2ECostTracking:
             ):
                 await loop.run()
 
-            # Bug 1 (2026-04): loop.total_cost is no longer the canonical
-            # accumulator; the DB project total is. The in-memory total
-            # must NOT exceed the DB total (no double-counting).
+            # ``self.total_cost`` was retired by the ``non-atomic-counter``
+            # structural fix. The DB project total is the only canonical
+            # accumulator and the cached mirror must equal it exactly.
             updated_project = get_project(project.id)
             assert updated_project.total_cost_usd == pytest.approx(2.50)
-            assert loop.total_cost <= updated_project.total_cost_usd + 1e-9
+            assert loop._project_total_cost == pytest.approx(
+                updated_project.total_cost_usd
+            )
+            assert not hasattr(loop, "total_cost")

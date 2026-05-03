@@ -455,8 +455,18 @@ def run_verification_checklist(
 
     if is_python_project:
         # Python project: check src/ for .py files
+        # R10-005: Previously this excluded ``__init__.py`` from the
+        # source-files count. For a feature whose acceptance criterion
+        # is ``"File exists: src/foo/__init__.py"`` (a package with the
+        # entry point IS the package itself), the agent correctly
+        # creates the file but the source_files_exist check then
+        # filters it out, finds 0 source files, FAILS the check, and
+        # the feature is wrongly marked ``needs_human`` despite all
+        # acceptance criteria passing. ``__init__.py`` is a deliberate
+        # package marker — even an empty one — so it counts. The
+        # ``__pycache__`` exclusion is kept (build artefact, not source).
         src_files = list(src_path.rglob("*.py")) if src_path.exists() else []
-        src_files = [f for f in src_files if f.name != "__init__.py" and "__pycache__" not in str(f)]
+        src_files = [f for f in src_files if "__pycache__" not in str(f)]
         src_locations_checked.append(f"{src_dir}/ (Python)")
 
     if is_opm_project:
@@ -486,6 +496,46 @@ def run_verification_checklist(
     if not has_known_project_type:
         _src_check["severity"] = "warning"
     checks.append(_src_check)
+
+    # R10-005: package_has_substance — warning-level escape valve.
+    # Now that ``__init__.py`` counts as a source file, a package whose
+    # ONLY .py files are empty ``__init__.py`` markers would still pass
+    # source_files_exist. That's correct for a deliberate "this feature
+    # creates the package skeleton" — but for an "implement function X"
+    # feature it's a stub-detection escape. Surface this as a warning
+    # (not an error) so the result is informative without being a false
+    # negative for legitimately tiny packages.
+    if is_python_project and src_files:
+        python_src_files = [f for f in src_files if f.suffix == ".py"]
+        non_init_files = [f for f in python_src_files if f.name != "__init__.py"]
+        empty_inits = []
+        for f in python_src_files:
+            if f.name == "__init__.py":
+                try:
+                    if not f.read_text(encoding="utf-8", errors="replace").strip():
+                        empty_inits.append(f)
+                except OSError:
+                    # Can't read it; don't count it as empty
+                    pass
+        all_inits_empty_and_no_other_code = (
+            not non_init_files
+            and python_src_files
+            and len(empty_inits) == len(python_src_files)
+        )
+        substance_check = {
+            "name": "package_has_substance",
+            "passed": not all_inits_empty_and_no_other_code,
+            "details": (
+                f"Package has only {len(empty_inits)} empty __init__.py marker(s) "
+                f"and no other code. May be a stub if the feature claims to implement logic."
+                if all_inits_empty_and_no_other_code
+                else f"Package has {len(non_init_files)} non-__init__ source file(s)"
+                if non_init_files
+                else f"Package has {len(python_src_files)} __init__.py file(s) with content"
+            ),
+            "severity": "warning",
+        }
+        checks.append(substance_check)
 
     # Check 2: Test files exist (adaptive based on project type)
     test_files = []

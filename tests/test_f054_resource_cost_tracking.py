@@ -326,8 +326,13 @@ class TestHandleExecutionResultCostNormalization:
     def test_records_proxy_cost_when_sdk_returns_none(
         self, project, feature_for_handler
     ):
-        """When SDK returns cost=None and num_turns>0, proxy cost is recorded."""
-        from bob3.db import get_project
+        """When SDK returns cost=None and num_turns>0, the outcome reports
+        the proxy cost so the caller can route it through
+        ``OrchestrationLoop._increment_cost``.
+
+        ``handle_execution_result`` itself no longer writes to the DB
+        (recurring pattern ``non-atomic-counter`` structural fix).
+        """
         from bob3.orchestrator.run_loop import (
             _PROXY_LOGGED_FEATURE_IDS,
             handle_execution_result,
@@ -345,12 +350,11 @@ class TestHandleExecutionResultCostNormalization:
         # Default proxy: $0.05 × 10 = $0.50
         assert outcome["cost_source"] == "turn_proxy"
         assert outcome["cost_usd"] == pytest.approx(0.50)
-        updated = get_project(project.id)
-        assert updated.total_cost_usd == pytest.approx(0.50)
 
     def test_records_sdk_cost_when_present(self, project, feature_for_handler):
-        """When SDK reports a cost, that exact value is recorded."""
-        from bob3.db import get_project
+        """When SDK reports a cost, the outcome reports that exact value
+        for routing through ``_increment_cost``.
+        """
         from bob3.orchestrator.run_loop import handle_execution_result
 
         spawn = self._make_spawn_result(total_cost_usd=2.50, num_turns=8)
@@ -362,8 +366,6 @@ class TestHandleExecutionResultCostNormalization:
 
         assert outcome["cost_source"] == "sdk"
         assert outcome["cost_usd"] == pytest.approx(2.50)
-        updated = get_project(project.id)
-        assert updated.total_cost_usd == pytest.approx(2.50)
 
 
 # ============================================================
@@ -376,17 +378,16 @@ class TestBudgetExceededWithProxy:
     """OrchestrationLoop.budget_exceeded triggers on accumulated proxy cost."""
 
     def test_proxy_accumulates_to_exceed_budget(self, db_path):
-        """Many None-cost results with high turn counts must exceed budget."""
-        import uuid
-        from unittest.mock import MagicMock
+        """Many None-cost results with high turn counts must exceed budget.
 
+        After the ``non-atomic-counter`` structural fix, the orchestration
+        loop's ``_increment_cost`` is the single canonical writer of
+        project cost. Drive it directly here to verify the proxy-driven
+        budget enforcement, since ``handle_execution_result`` no longer
+        writes the DB itself.
+        """
         from bob3.db import create_feature, create_project, get_feature, update_feature
-        from bob3.orchestrator.claude_executor import ExecutionResult, SpawnResult
-        from bob3.orchestrator.run_loop import (
-            OrchestrationLoop,
-            _PROXY_LOGGED_FEATURE_IDS,
-            handle_execution_result,
-        )
+        from bob3.orchestrator.run_loop import OrchestrationLoop
 
         # Tiny budget so the proxy crosses it quickly.
         proj = create_project(
@@ -410,34 +411,20 @@ class TestBudgetExceededWithProxy:
             conf_test_adequacy=0.9,
             readiness_score=0.9,
         )
-        feature = get_feature(f.id)
+        # Touch the feature so the create_feature side-effect is realised
+        # in the DB; the row itself isn't read by this test.
+        assert get_feature(f.id) is not None
 
         loop = OrchestrationLoop(project_id=proj.id, max_cost=1.0)
         assert loop.budget_exceeded() is False
 
         # Each None-cost result with 10 turns -> $0.50 via proxy.
-        # Three of them = $1.50, which exceeds $1.00 budget.
-        _PROXY_LOGGED_FEATURE_IDS.discard(feature.id)
+        # Three of them = $1.50, which exceeds the $1.00 budget. Routing
+        # through ``_increment_cost`` exercises the same code path the
+        # orchestration loop uses in production: DB write, expected-total
+        # bump, and cache refresh.
         for _ in range(3):
-            res = ExecutionResult(
-                text="OK", is_error=False, total_cost_usd=None, num_turns=10
-            )
-            agent_run = MagicMock()
-            agent_run.id = str(uuid.uuid4())
-            spawn = SpawnResult(execution_result=res, agent_run=agent_run)
-            handle_execution_result(
-                project_id=proj.id,
-                feature=feature,
-                spawn_result=spawn,
-            )
-
-        # ``handle_execution_result`` writes cost to the DB, but the loop
-        # caches the project's total to avoid a per-iteration re-fetch.
-        # In production the loop refreshes the cache itself right after
-        # ``handle_execution_result`` returns; this test calls the
-        # module function directly, so we replicate that refresh by
-        # hand before checking the budget.
-        loop._refresh_project_cost_cache()
+            loop._increment_cost(0.50, "turn_proxy")
 
         # Project-level budget should now report exceeded.
         assert loop.budget_exceeded() is True
@@ -477,27 +464,27 @@ class TestBudgetExceededDefensiveNone:
 
 
 # ============================================================
-# Bug 1: No double-counting of cost between self.total_cost and
-# project.total_cost_usd in execute_feature
+# Bug 1 / non-atomic-counter structural fix: cost is recorded ONCE
+# via ``OrchestrationLoop._increment_cost`` (which writes the DB,
+# bumps the tamper-detection floor, and refreshes the cache).
+# The in-memory ``self.total_cost`` mirror was deleted entirely —
+# there is now no second-class field to drift against the DB.
 # ============================================================
 
 
 class TestNoDoubleCostAccumulation:
-    """Regression: self.total_cost must NOT drift above project.total_cost_usd
-    after execute_feature() completes successfully.
+    """Regression: project.total_cost_usd must reflect exactly one cost
+    write per feature, with no second in-memory accumulator drifting
+    above it.
     """
 
     @pytest.mark.asyncio
     async def test_total_cost_matches_project_total_after_execute(
         self, project, feature_for_handler
     ):
-        """Bug 1: in-memory total must not double-count vs the DB total.
-
-        Run a single execute_feature() with a known SDK cost, then assert
-        that loop.total_cost <= project.total_cost_usd. Before the fix,
-        loop.total_cost was 2x the project total (incremented in BOTH
-        handle_execution_result via update_project_cost AND in
-        execute_feature directly).
+        """Cost is recorded exactly once per feature through
+        ``_increment_cost``. ``self.total_cost`` no longer exists; the
+        cached ``self._project_total_cost`` must equal the DB total.
         """
         import uuid
         from unittest.mock import AsyncMock, MagicMock, patch
@@ -531,13 +518,21 @@ class TestNoDoubleCostAccumulation:
         # Project DB total is the canonical accumulator and must equal the
         # one normalized cost from this single feature execution.
         assert updated_project.total_cost_usd == pytest.approx(1.25)
-        # In-memory accumulator must NOT exceed the DB total. (We removed
-        # the in-memory increment in execute_feature; a small allowance for
-        # other paths that still bump it would still satisfy <=.)
-        assert loop.total_cost <= updated_project.total_cost_usd + 1e-9, (
-            f"loop.total_cost={loop.total_cost} drifted above "
+        # The cached in-memory mirror is a copy of the canonical DB value,
+        # refreshed by ``_increment_cost`` after every write. It must
+        # match exactly — there is no other cost accumulator to drift.
+        assert loop._project_total_cost == pytest.approx(
+            updated_project.total_cost_usd
+        ), (
+            f"loop._project_total_cost={loop._project_total_cost} drifted from "
             f"project.total_cost_usd={updated_project.total_cost_usd} — "
-            "double-accumulation regression"
+            "cache refresh regression"
+        )
+        # Sanity: ``self.total_cost`` no longer exists on the loop (it
+        # was deleted by the non-atomic-counter structural fix).
+        assert not hasattr(loop, "total_cost"), (
+            "self.total_cost was retired; tests must use "
+            "_project_total_cost (the cached canonical value)"
         )
 
 
@@ -683,21 +678,23 @@ class TestProxyLoggedFeatureIdsBounded:
 
 
 # ============================================================
-# R4-001: Research cost must NOT be double-counted between
-# self.total_cost and project.total_cost_usd
+# R4-001: Research cost must NOT be double-counted. The
+# ``non-atomic-counter`` structural fix retired ``self.total_cost``
+# entirely, so by construction the only writer is now
+# ``OrchestrationLoop._increment_cost`` and the canonical total
+# lives only in project.total_cost_usd.
 # ============================================================
 
 
 class TestResearchCostNotDoubleCounted:
-    """Regression: research cost in _run_research used to bump BOTH
-    loop.total_cost and project.total_cost_usd while budget_exceeded()
-    takes max(project_total, self.total_cost). That made research
-    charges effectively count twice. Fix: only write to the DB.
+    """Regression: research cost on the research path must be recorded
+    exactly once. The ``self.total_cost`` mirror was deleted; the cached
+    ``self._project_total_cost`` must equal project.total_cost_usd.
     """
 
     @pytest.mark.asyncio
     async def test_research_cost_only_goes_to_db(self, project):
-        """R4-001: loop.total_cost must not accumulate research cost."""
+        """R4-001: research path must not double-record cost."""
         import uuid
         from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -773,18 +770,19 @@ class TestResearchCostNotDoubleCounted:
         # implementation $0.50 = $0.60.
         updated_project = get_project(project.id)
         assert updated_project.total_cost_usd == pytest.approx(0.60)
-        # loop.total_cost must NOT have accumulated the research cost
-        # (R4-001) — that was the double-count bug.
-        assert loop.total_cost <= updated_project.total_cost_usd + 1e-9, (
-            f"loop.total_cost={loop.total_cost} drifted above "
-            f"project.total_cost_usd={updated_project.total_cost_usd} — "
-            "research-cost double-accumulation regression (R4-001)"
+        # The cached canonical value must match exactly — there is no
+        # second-class in-memory accumulator any more (the
+        # ``self.total_cost`` mirror was deleted by the
+        # ``non-atomic-counter`` structural fix).
+        assert loop._project_total_cost == pytest.approx(
+            updated_project.total_cost_usd
+        ), (
+            f"loop._project_total_cost={loop._project_total_cost} drifted from "
+            f"project.total_cost_usd={updated_project.total_cost_usd}"
         )
-        # And specifically, loop.total_cost must be 0 because neither path
-        # bumps it any more.
-        assert loop.total_cost == pytest.approx(0.0), (
-            "loop.total_cost should remain 0; only the DB total is "
-            "incremented after the R4-001 fix"
+        assert not hasattr(loop, "total_cost"), (
+            "self.total_cost was retired; only _project_total_cost "
+            "(the cached canonical value) should be present"
         )
 
     @pytest.mark.asyncio
@@ -807,13 +805,12 @@ class TestResearchCostNotDoubleCounted:
         )
         from bob3.orchestrator.run_loop import OrchestrationLoop
 
-        # max_cost = $1.00. Research $0.40 + Impl $0.40 = $0.80 should NOT
-        # trip the budget. With the bug, loop.total_cost would also hold
-        # $0.40 from research, so max(0.80, 0.40) = 0.80 — wait, the
-        # double-count surfaces when budget_exceeded compares running
-        # totals at high res. The clearer test: after a research-only
-        # spend of $0.60 (limit $1.00), the budget should NOT be flagged
-        # as exceeded at the in-memory layer.
+        # max_cost = $1.00. Research $0.60 + Impl $0.10 = $0.70 should NOT
+        # trip the budget. Before the structural fix, the in-memory
+        # ``self.total_cost`` mirror could hold a stale partial that
+        # tripped the budget at the in-memory layer (the original R4-001
+        # double-count). After the fix, ``self.total_cost`` is gone and
+        # the only readable cost is the cached canonical DB total.
         proj = create_project(
             name="R4-001 budget",
             workspace_path="/tmp/r4-budget",
@@ -881,7 +878,10 @@ class TestResearchCostNotDoubleCounted:
         from bob3.db import get_project
         updated = get_project(proj.id)
         assert updated.total_cost_usd == pytest.approx(0.70)
-        assert loop.total_cost <= updated.total_cost_usd + 1e-9
+        assert loop._project_total_cost == pytest.approx(
+            updated.total_cost_usd
+        )
+        assert not hasattr(loop, "total_cost")
         assert loop.budget_exceeded() is False
 
 

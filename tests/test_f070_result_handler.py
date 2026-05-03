@@ -380,10 +380,20 @@ class TestCreateEvidenceArtifacts:
 
 
 class TestUpdateCostTracking:
-    """Test that handle_execution_result updates cost tracking."""
+    """Test that handle_execution_result returns normalized cost.
+
+    NOTE — structural ``non-atomic-counter`` fix: ``handle_execution_result``
+    no longer writes to ``project.total_cost_usd``. Cost is written
+    exclusively by ``OrchestrationLoop._increment_cost`` (the single
+    canonical entry point). These tests therefore assert on the
+    ``cost_usd`` / ``cost_source`` fields the function returns; the
+    end-to-end "DB column is incremented after a feature runs" property
+    is covered by tests that exercise the loop (e.g.
+    ``TestNoDoubleCostAccumulation`` in test_f054_resource_cost_tracking).
+    """
 
     def test_project_cost_updated_on_success(self, tmp_db, project, feature):
-        """Step 4: Project total_cost_usd is updated after successful execution."""
+        """Step 4: outcome dict reports normalized cost on success."""
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             result = ExecutionResult(
                 text="OK", is_error=False, total_cost_usd=2.50
@@ -394,17 +404,22 @@ class TestUpdateCostTracking:
                 execution_result=result, agent_run=agent_run
             )
 
-            handle_execution_result(
+            outcome = handle_execution_result(
                 project_id=project.id,
                 feature=feature,
                 spawn_result=spawn_result,
             )
 
+            # Cost is reported in the outcome dict; the orchestration
+            # loop is responsible for routing it through _increment_cost.
+            assert outcome["cost_usd"] == pytest.approx(2.50)
+            assert outcome["cost_source"] == "sdk"
+            # The DB column itself is NOT updated by handle_execution_result.
             updated_project = get_project(project.id)
-            assert updated_project.total_cost_usd == pytest.approx(2.50)
+            assert (updated_project.total_cost_usd or 0.0) == pytest.approx(0.0)
 
     def test_project_cost_updated_on_failure(self, tmp_db, project, feature):
-        """Step 4: Project cost is still updated even on failure."""
+        """Step 4: outcome dict reports cost even on failure."""
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             result = ExecutionResult(
                 text="", is_error=True, error_message="fail", total_cost_usd=0.75
@@ -415,21 +430,23 @@ class TestUpdateCostTracking:
                 execution_result=result, agent_run=agent_run
             )
 
-            handle_execution_result(
+            outcome = handle_execution_result(
                 project_id=project.id,
                 feature=feature,
                 spawn_result=spawn_result,
             )
 
+            assert outcome["cost_usd"] == pytest.approx(0.75)
+            # DB column is not written by this function any more —
+            # routing is the caller's responsibility (see class docstring).
             updated_project = get_project(project.id)
-            assert updated_project.total_cost_usd == pytest.approx(0.75)
+            assert (updated_project.total_cost_usd or 0.0) == pytest.approx(0.0)
 
     def test_cost_zero_when_no_cost_no_turns(self, tmp_db, project, feature):
-        """Step 4: When cost is None AND num_turns=0, no cost is recorded.
+        """Step 4: When cost is None AND num_turns=0, normalized cost is 0.
 
         Renamed from ``test_cost_not_updated_when_none`` to make explicit
-        what this test actually verifies. The original name implied "None
-        cost is never recorded," but the call path is:
+        what this test actually verifies. The call path is:
           ``_normalize_cost(None, 0) -> (0.0, "zero")``
         i.e. zero turns means zero proxy cost. The companion test
         ``test_cost_uses_proxy_when_only_turns_known`` covers the path
@@ -446,25 +463,23 @@ class TestUpdateCostTracking:
                 execution_result=result, agent_run=agent_run
             )
 
-            handle_execution_result(
+            outcome = handle_execution_result(
                 project_id=project.id,
                 feature=feature,
                 spawn_result=spawn_result,
             )
 
-            updated_project = get_project(project.id)
-            assert updated_project.total_cost_usd == pytest.approx(0.0)
+            assert outcome["cost_usd"] == pytest.approx(0.0)
+            assert outcome["cost_source"] == "zero"
 
     def test_cost_uses_proxy_when_only_turns_known(
         self, tmp_db, project, feature, monkeypatch
     ):
         """Step 4: When cost is None but ``num_turns > 0`` (Claude Max Pro
-        / OAuth subscription path), the project cost is still recorded
-        using the per-turn proxy.
+        / OAuth subscription path), the outcome reports the proxy cost.
 
-        This is the actual behaviour the previous test gave a false-pass
-        on. With ``num_turns=5`` and the default proxy of $0.05/turn the
-        recorded cost should be exactly 0.25 USD. We pin the proxy via
+        With ``num_turns=5`` and the default proxy of $0.05/turn the
+        normalized cost should be exactly $0.25. We pin the proxy via
         ``BOB3_COST_PER_TURN_PROXY`` so the assertion is independent of
         environmental defaults.
         """
@@ -473,10 +488,6 @@ class TestUpdateCostTracking:
         monkeypatch.setenv("BOB3_COST_PER_TURN_PROXY", "0.05")
 
         with patch("bob3.db.get_database_path", return_value=tmp_db):
-            # Capture the cost BEFORE the call so we are asserting on
-            # the *delta* and not on assumptions about prior state.
-            before = get_project(project.id).total_cost_usd or 0.0
-
             result = ExecutionResult(
                 text="OK", is_error=False, total_cost_usd=None, num_turns=5
             )
@@ -486,15 +497,15 @@ class TestUpdateCostTracking:
                 execution_result=result, agent_run=agent_run
             )
 
-            handle_execution_result(
+            outcome = handle_execution_result(
                 project_id=project.id,
                 feature=feature,
                 spawn_result=spawn_result,
             )
 
-            after = get_project(project.id).total_cost_usd or 0.0
             # 5 turns * $0.05/turn = $0.25 proxy charge.
-            assert (after - before) == pytest.approx(0.25)
+            assert outcome["cost_usd"] == pytest.approx(0.25)
+            assert outcome["cost_source"] == "turn_proxy"
 
     def test_outcome_dict_returns_cost(self, tmp_db, project, feature):
         """Step 4: The returned outcome dict contains cost information."""
@@ -634,9 +645,13 @@ class TestEndToEndFeatureCompletion:
 
             updated_project = get_project(project.id)
             assert updated_project.total_cost_usd == pytest.approx(1.75)
-            # Bug 1 (2026-04): loop.total_cost is no longer incremented in
-            # execute_feature; the DB total is the canonical accumulator.
-            assert loop.total_cost <= updated_project.total_cost_usd + 1e-9
+            # ``self.total_cost`` was retired by the ``non-atomic-counter``
+            # structural fix. The cached canonical mirror must equal the
+            # DB total exactly — there is no second accumulator to drift.
+            assert loop._project_total_cost == pytest.approx(
+                updated_project.total_cost_usd
+            )
+            assert not hasattr(loop, "total_cost")
 
     @pytest.mark.asyncio
     async def test_full_loop_creates_evidence_for_all_features(

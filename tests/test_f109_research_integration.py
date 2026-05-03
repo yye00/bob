@@ -701,17 +701,19 @@ class TestContinueToImplementation:
             # Both research and implementation costs are tracked.
             # R4-001 (2026-04, follow-up): the research path used to bump
             # BOTH ``loop.total_cost`` and ``project.total_cost_usd``, while
-            # ``budget_exceeded()`` takes ``max(project_total, self.total_cost)``
+            # ``budget_exceeded()`` took ``max(project_total, self.total_cost)``
             # — so the research charge was effectively double-counted
-            # against the budget. The fix is to write only to the canonical
-            # DB total (same shape as the impl path under R2-001). The DB
-            # holds the total of $0.60; loop.total_cost should NOT also
-            # accumulate the research cost.
+            # against the budget. The structural ``non-atomic-counter``
+            # fix retired ``self.total_cost`` entirely; cost is now
+            # written exclusively through ``OrchestrationLoop._increment_cost``.
             updated_project = db.get_project(project.id)
             assert updated_project.total_cost_usd == pytest.approx(0.60)
-            # loop.total_cost is no longer bumped by the research path;
-            # the canonical total is the DB.
-            assert loop.total_cost == pytest.approx(0.0)
+            # The canonical total lives only in the DB; the cached mirror
+            # must equal it. ``self.total_cost`` no longer exists.
+            assert loop._project_total_cost == pytest.approx(
+                updated_project.total_cost_usd
+            )
+            assert not hasattr(loop, "total_cost")
 
     @pytest.mark.asyncio
     async def test_rca_needs_research_triggers_research(self, tmp_db, project):

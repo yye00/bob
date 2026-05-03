@@ -503,9 +503,12 @@ class TestE2ECostTracking:
             assert call_count == 3
             updated_project = get_project(project.id)
             assert updated_project.total_cost_usd == pytest.approx(3.00)
-            # Bug 1 (2026-04): the canonical total is the DB project total;
-            # loop.total_cost must not drift above it.
-            assert loop.total_cost <= updated_project.total_cost_usd + 1e-9
+            # ``self.total_cost`` was retired by the ``non-atomic-counter``
+            # structural fix. The cached mirror must equal the DB total.
+            assert loop._project_total_cost == pytest.approx(
+                updated_project.total_cost_usd
+            )
+            assert not hasattr(loop, "total_cost")
 
 
 class TestE2EEvidenceCreation:

@@ -1597,3 +1597,91 @@ class TestNoForbiddenPatterns:
         run_loop_path = SRC_DIR / "bob3" / "orchestrator" / "run_loop.py"
         source = run_loop_path.read_text()
         assert "from bob3.superpowers import" in source
+
+
+# ===================================================================
+# R10-005: __init__.py is a real source file
+# ===================================================================
+
+
+class TestR10005InitPyIsSource:
+    """R10-005: source_files_exist must include ``__init__.py``.
+
+    Pre-fix bug: a feature whose acceptance criterion was
+    ``"File exists: src/foo/__init__.py"`` had the agent correctly
+    create the file, but the verifier filtered ``__init__.py`` out of
+    the source-file count, returned 0 source files, FAILed the check,
+    and the feature was wrongly marked ``needs_human``.
+    """
+
+    def test_package_only_workspace_passes_source_check(self, tmp_path):
+        """A workspace whose only Python file is ``__init__.py`` (10 LOC
+        of real code) must pass ``source_files_exist``.
+        """
+        from bob3.superpowers import run_verification_checklist
+
+        src_dir = tmp_path / "src" / "calculator"
+        src_dir.mkdir(parents=True)
+        # 10 lines of real code in __init__.py — this IS the package.
+        (src_dir / "__init__.py").write_text(textwrap.dedent("""\
+            \"\"\"calculator package.\"\"\"
+
+            def add(a, b):
+                return a + b
+
+            def subtract(a, b):
+                return a - b
+
+            def multiply(a, b):
+                return a * b
+        """))
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_basic.py").write_text(textwrap.dedent("""\
+            def test_truth():
+                assert True
+        """))
+
+        result = run_verification_checklist(workspace=str(tmp_path))
+        src_check = next(
+            c for c in result["checks"] if c["name"] == "source_files_exist"
+        )
+        assert src_check["passed"] is True, (
+            f"source_files_exist must pass when only __init__.py is present, "
+            f"got: {src_check}"
+        )
+
+    def test_empty_init_only_warns_does_not_fail(self, tmp_path):
+        """A package whose only file is an EMPTY ``__init__.py`` still
+        passes source_files_exist, but emits a ``package_has_substance``
+        warning so a real implementation feature isn't masked.
+        """
+        from bob3.superpowers import run_verification_checklist
+
+        src_dir = tmp_path / "src" / "stub_pkg"
+        src_dir.mkdir(parents=True)
+        (src_dir / "__init__.py").write_text("")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_basic.py").write_text("def test_t(): assert True\n")
+
+        result = run_verification_checklist(workspace=str(tmp_path))
+
+        src_check = next(
+            c for c in result["checks"] if c["name"] == "source_files_exist"
+        )
+        assert src_check["passed"] is True
+
+        # The warning check should be present and FAIL with severity warning.
+        substance_check = next(
+            (c for c in result["checks"] if c["name"] == "package_has_substance"),
+            None,
+        )
+        assert substance_check is not None, (
+            "package_has_substance warning check must be present when "
+            "only an empty __init__.py exists"
+        )
+        assert substance_check["passed"] is False
+        assert substance_check.get("severity") == "warning"
+        # Warnings must NOT cause overall failure.
+        assert result["passed"] is True

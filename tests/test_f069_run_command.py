@@ -113,14 +113,18 @@ class TestBudgetCheck:
         """Step 2: Budget is not exceeded when cost is under the limit."""
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             loop = OrchestrationLoop(project_id=project.id, max_cost=100.0)
-            loop.total_cost = 50.0
+            # ``self.total_cost`` was retired (recurring pattern
+            # ``non-atomic-counter`` structural fix). Drive the cached
+            # canonical value directly — that is what budget_exceeded()
+            # actually consults.
+            loop._project_total_cost = 50.0
             assert loop.budget_exceeded() is False
 
     def test_budget_exceeded_when_over_limit(self, tmp_db, project):
         """Step 2: Budget is exceeded when cost meets the limit."""
         with patch("bob3.db.get_database_path", return_value=tmp_db):
             loop = OrchestrationLoop(project_id=project.id, max_cost=100.0)
-            loop.total_cost = 100.0
+            loop._project_total_cost = 100.0
             assert loop.budget_exceeded() is True
 
     def test_budget_exceeded_when_project_cost_over_limit(self, tmp_db, project):
@@ -721,9 +725,13 @@ class TestRunFeatureScoping:
             # single-feature mode.
             assert "blocked" in result.output.lower()
 
-            # Target stayed pending; dep stayed pending.
+            # Target stayed pending (its dep is not yet completed). The
+            # dep itself was pending-with-no-declared-deps, so the
+            # orchestrator's pending-no-deps recovery (commit 3d2e059)
+            # legitimately promoted it to 'ready' — that's correct
+            # behavior, just not what this test originally asserted.
             assert get_feature(target.id).status == "pending"
-            assert get_feature(dep.id).status == "pending"
+            assert get_feature(dep.id).status in ("pending", "ready")
 
 
 # ============================================================
@@ -1699,8 +1707,10 @@ class TestPerFeatureSummaryLog:
 
 class TestInterruptionCheckpointRecordsProjectCost:
     """R5-010 / R7-004: ``_create_interruption_checkpoint`` must record the
-    actual project cost (the canonical DB total), not the dead in-memory
-    ``self.total_cost`` accumulator that the round-3 fix zeroed.
+    actual project cost (the canonical DB total). The ``self.total_cost``
+    in-memory accumulator was deleted entirely by the structural
+    ``non-atomic-counter`` fix; cost is now written exclusively through
+    ``OrchestrationLoop._increment_cost``.
 
     Before the fix, ``state_snapshot["total_cost_at_interrupt"]`` and
     ``cost_at_checkpoint`` were always 0.0 — useless for resume forensics
@@ -1722,8 +1732,10 @@ class TestInterruptionCheckpointRecordsProjectCost:
         feat = ready_features[0]
 
         # Pre-populate the project cost so we can assert that the
-        # checkpoint sees the canonical DB total (not the dead
-        # ``self.total_cost`` field).
+        # checkpoint sees the canonical DB total. The dead
+        # ``self.total_cost`` in-memory mirror was removed by the
+        # ``non-atomic-counter`` structural fix; the only writer is
+        # now ``OrchestrationLoop._increment_cost``.
         update_project(project.id, total_cost_usd=2.50)
 
         with patch("bob3.db.get_database_path", return_value=tmp_db):
@@ -1855,3 +1867,240 @@ class TestBelowThresholdReadyFeature:
                 "marked needs_human (R7-003); got "
                 f"status={updated.status!r}"
             )
+
+
+# ============================================================
+# R10-006: Stale .bob3.lock recovery
+# ============================================================
+
+
+class TestR10006StaleLockRecovery:
+    """R10-006: a SIGKILL/OOM-killed previous run can leave a stale
+    .bob3.lock that the kernel didn't release because a still-running
+    grandchild inherited the FD. We detect that case via PID probe and
+    either give an actionable error or, with --force-unlock, recover.
+    """
+
+    def test_pid_written_to_lock_file_on_acquire(self, tmp_path):
+        """After a successful acquire, the lock file contains our PID."""
+        from bob3.orchestrator.run_loop import (
+            _read_lock_pid,
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        h = acquire_run_lock(tmp_path)
+        try:
+            pid = _read_lock_pid(tmp_path / ".bob3.lock")
+            assert pid == os.getpid()
+        finally:
+            release_run_lock(h)
+
+    def test_stale_lock_with_dead_pid_gives_actionable_error(self, tmp_path):
+        """If the lock file claims a dead PID and the flock blocks, the
+        error must name the PID and tell the user how to recover.
+        """
+        from bob3.orchestrator.run_loop import (
+            AlreadyRunningError,
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        external_holder = acquire_run_lock(tmp_path)
+        try:
+            # Overwrite PID in the file with a definitely-dead PID.
+            dead_pid = 2**31 - 2  # near INT_MAX, almost certainly dead
+            (tmp_path / ".bob3.lock").write_text(f"{dead_pid}\n")
+
+            with pytest.raises(AlreadyRunningError) as exc_info:
+                acquire_run_lock(tmp_path, force_unlock=False)
+            msg = str(exc_info.value)
+            assert (
+                "stale" in msg.lower()
+                or "not running" in msg.lower()
+                or str(dead_pid) in msg
+            ), f"Error must mention stale lock; got: {msg}"
+            assert "force-unlock" in msg or "rm " in msg, (
+                f"Error must point to recovery (--force-unlock or rm); "
+                f"got: {msg}"
+            )
+        finally:
+            release_run_lock(external_holder)
+
+    def test_concurrent_run_error_points_to_recovery(self, tmp_path):
+        """Even when the holder is alive, the error must include the
+        ``rm <path>`` hint as a manual escape valve.
+        """
+        from bob3.orchestrator.run_loop import (
+            AlreadyRunningError,
+            acquire_run_lock,
+            release_run_lock,
+        )
+
+        first = acquire_run_lock(tmp_path)
+        try:
+            with pytest.raises(AlreadyRunningError) as exc_info:
+                acquire_run_lock(tmp_path)
+            msg = str(exc_info.value)
+            assert "rm " in msg, (
+                f"Error must show manual rm path so an operator can recover "
+                f"if they're sure no other run is active; got: {msg}"
+            )
+            assert ".bob3.lock" in msg
+        finally:
+            release_run_lock(first)
+
+
+# ============================================================
+# R10-007: _run_single_feature returns ALL_BLOCKED on failure
+# ============================================================
+
+
+class TestR10007SingleFeatureTerminationReflectsStatus:
+    """R10-007: ``_run_single_feature`` previously returned
+    ALL_COMPLETED unconditionally — even when the sub-agent failed
+    verification, hit a hook rejection, or otherwise ended
+    ``needs_human``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_failed_feature_returns_all_blocked(
+        self, tmp_db, project, ready_features
+    ):
+        """A sub-agent that errors out (is_error=True) must yield
+        ALL_BLOCKED, not ALL_COMPLETED.
+        """
+        feat = ready_features[0]
+
+        async def failing_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="error",
+                is_error=True,
+                duration_ms=1000,
+                num_turns=2,
+                total_cost_usd=0.01,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(
+                project_id=project.id,
+                workspace="/tmp/test-r10007",
+                target_feature_id=feat.id,
+            )
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=failing_spawn,
+            ), patch(
+                "bob3.orchestrator.run_loop.acquire_run_lock", return_value=None
+            ), patch(
+                "bob3.orchestrator.run_loop.release_run_lock", return_value=None
+            ):
+                termination = await loop.run()
+
+            updated = get_feature(feat.id)
+            assert updated.status != "completed", (
+                f"Test setup invariant: failing sub-agent must not yield "
+                f"status='completed'; got {updated.status}"
+            )
+            assert termination == LoopTermination.ALL_BLOCKED, (
+                f"R10-007: a failed feature in single-feature mode must "
+                f"return ALL_BLOCKED, not {termination}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_completed_feature_returns_all_completed(
+        self, tmp_db, project, ready_features
+    ):
+        """Sanity check: a successful single-feature run still maps to
+        ALL_COMPLETED (we did not regress the happy path).
+        """
+        feat = ready_features[0]
+
+        async def ok_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="ok",
+                is_error=False,
+                duration_ms=1000,
+                num_turns=5,
+                total_cost_usd=0.01,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            loop = OrchestrationLoop(
+                project_id=project.id,
+                workspace="/tmp/test-r10007-ok",
+                target_feature_id=feat.id,
+            )
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=ok_spawn,
+            ), patch(
+                "bob3.orchestrator.run_loop.acquire_run_lock", return_value=None
+            ), patch(
+                "bob3.orchestrator.run_loop.release_run_lock", return_value=None
+            ):
+                termination = await loop.run()
+
+            updated = get_feature(feat.id)
+            assert updated.status == "completed"
+            assert termination == LoopTermination.ALL_COMPLETED
+
+
+# ============================================================
+# R10-008: bob3 run --feature exits non-zero when feature failed
+# ============================================================
+
+
+class TestR10008CliExitCodeOnFailure:
+    """R10-008: with R10-007 fixed at the loop level, the CLI must
+    correctly map ALL_BLOCKED to a non-zero exit and print a status
+    that reflects what actually happened (not "Feature completed!").
+    """
+
+    def test_cli_exits_nonzero_when_feature_failed(
+        self, tmp_db, project, ready_features
+    ):
+        """End-to-end: `bob3 run --feature <id>` with a failing
+        sub-agent must yield exit_code != 0.
+        """
+        feat = ready_features[0]
+
+        async def failing_spawn(*args, **kwargs):
+            res = ExecutionResult(
+                text="error",
+                is_error=True,
+                duration_ms=1000,
+                num_turns=2,
+                total_cost_usd=0.01,
+            )
+            agent_run = MagicMock()
+            agent_run.id = str(uuid.uuid4())
+            return SpawnResult(execution_result=res, agent_run=agent_run)
+
+        runner = CliRunner()
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            with patch("bob3.cli.start_mcp_server"):
+                with patch(
+                    "bob3.orchestrator.run_loop.spawn_sub_agent",
+                    new_callable=AsyncMock,
+                    side_effect=failing_spawn,
+                ):
+                    result = runner.invoke(main, ["run", "--feature", feat.id])
+
+        assert result.exit_code != 0, (
+            f"R10-008: failed feature must yield non-zero exit; "
+            f"got exit_code={result.exit_code}, output={result.output!r}"
+        )
+        # Message should NOT claim success.
+        assert "Feature completed!" not in result.output, (
+            "R10-008: must not say 'Feature completed!' when feature "
+            f"failed; got: {result.output!r}"
+        )

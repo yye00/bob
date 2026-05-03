@@ -448,8 +448,9 @@ class TestOrchestrationLoopStops:
                 termination = await loop.run()
 
             # After 3 features ($60 total), loop budget of $50 is exceeded.
-            # Bug 1 (2026-04): the canonical accumulator is the DB project
-            # total, not loop.total_cost.
+            # The canonical accumulator is the DB project total; the
+            # ``self.total_cost`` mirror was deleted by the
+            # ``non-atomic-counter`` structural fix.
             assert termination == LoopTermination.BUDGET_EXCEEDED
             assert get_project(project.id).total_cost_usd >= 50.0
 

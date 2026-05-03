@@ -339,6 +339,7 @@ def _run_orchestration_loop(
     max_cost: float | None = None,
     fresh: bool = False,
     target_feature_id: str | None = None,
+    force_unlock: bool = False,
 ) -> "LoopTermination":
     """Run the orchestration loop synchronously.
 
@@ -350,6 +351,8 @@ def _run_orchestration_loop(
         fresh: If True, skip resume and reset all interrupted features.
         target_feature_id: If set, the loop runs only this single feature
             and exits after one iteration regardless of outcome.
+        force_unlock: If True, forcibly clear a stale ``.bob3.lock`` whose
+            holder PID is dead before acquiring (R10-006).
 
     Returns:
         The LoopTermination reason.
@@ -382,6 +385,7 @@ def _run_orchestration_loop(
         workspace=workspace,
         fresh=fresh,
         target_feature_id=target_feature_id,
+        force_unlock=force_unlock,
     )
 
     try:
@@ -474,7 +478,17 @@ these codes — only exit 0 means "build is healthy and complete".
     default=False,
     help="Skip starting the bob3-memory MCP server (for environments where embeddings are unavailable).",
 )
-def run(feature, run_all, max_cost, fresh, no_mcp):
+@click.option(
+    "--force-unlock",
+    is_flag=True,
+    default=False,
+    help=(
+        "Forcibly clear a stale .bob3.lock whose holder PID is dead "
+        "(recovery from a SIGKILL/OOM-killed prior run). Has no effect "
+        "if a real bob3 run is currently active."
+    ),
+)
+def run(feature, run_all, max_cost, fresh, no_mcp, force_unlock):
     """Execute the build plan using Claude Code sub-agents.
 
     Spawns sub-agents to implement features and run tests.
@@ -489,6 +503,9 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
     --all         runs the continuous orchestration loop, picking the
                   highest-priority ready feature each iteration until all
                   features are completed/blocked or the budget is exceeded.
+    --force-unlock  recovers from a stale .bob3.lock left behind by a
+                  SIGKILLed / OOM-killed previous run. Only takes effect
+                  if the lock holder PID is dead.
 
     The process exit code reflects how the loop terminated; see the
     Exit codes section below. CI pipelines should treat anything other
@@ -570,15 +587,56 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
             max_cost=max_cost,
             fresh=fresh,
             target_feature_id=feature,
+            force_unlock=force_unlock,
         )
 
-        _TERMINATION_MESSAGES = {
-            LoopTermination.ALL_COMPLETED: "[green]Feature completed![/green]",
-            LoopTermination.ALL_BLOCKED: "[yellow]Feature is blocked.[/yellow]",
-            LoopTermination.BUDGET_EXCEEDED: "[red]Budget limit exceeded.[/red]",
-            LoopTermination.SHUTDOWN_REQUESTED: "[yellow]Shutdown requested.[/yellow]",
-        }
-        console.print(_TERMINATION_MESSAGES.get(termination, str(termination)))
+        # R10-008: Re-read the feature's actual final status so the
+        # user-facing message reflects what really happened. Previously
+        # ALL_BLOCKED could mean "not runnable" OR "ran but ended
+        # needs_human" (since R10-007 made the latter map to
+        # ALL_BLOCKED) — print the specific status to disambiguate.
+        feature_status = None
+        try:
+            db_path2 = get_database_path()
+            conn2 = get_connection(db_path=db_path2)
+            try:
+                row = conn2.execute(
+                    "SELECT status FROM features WHERE id = ?",
+                    (feature,),
+                ).fetchone()
+                if row is not None:
+                    feature_status = row[0]
+            finally:
+                conn2.close()
+        except Exception:
+            logger.debug(
+                "Could not re-read feature status post-run", exc_info=True
+            )
+
+        if termination == LoopTermination.ALL_COMPLETED:
+            console.print("[green]Feature completed![/green]")
+        elif termination == LoopTermination.ALL_BLOCKED:
+            if feature_status == "needs_human":
+                console.print(
+                    "[yellow]Feature ended: needs_human "
+                    "(verification, hook, or sub-agent error). "
+                    "See `bob3 status --feature` for details.[/yellow]"
+                )
+            elif feature_status in {"failed", "interrupted"}:
+                console.print(
+                    f"[yellow]Feature ended: {feature_status}.[/yellow]"
+                )
+            else:
+                console.print(
+                    f"[yellow]Feature is blocked "
+                    f"(status={feature_status or 'unknown'}).[/yellow]"
+                )
+        elif termination == LoopTermination.BUDGET_EXCEEDED:
+            console.print("[red]Budget limit exceeded.[/red]")
+        elif termination == LoopTermination.SHUTDOWN_REQUESTED:
+            console.print("[yellow]Shutdown requested.[/yellow]")
+        else:
+            console.print(str(termination))
         # Map termination reason to a non-zero exit code so CI pipelines
         # (e.g. ``bob3 run --feature X && deploy.sh``) do not treat a
         # budget-exceeded or blocked run as success. ALL_COMPLETED is the
@@ -628,7 +686,12 @@ def run(feature, run_all, max_cost, fresh, no_mcp):
 
         from bob3.orchestrator.run_loop import LoopTermination
 
-        termination = _run_orchestration_loop(project_id, max_cost=max_cost, fresh=fresh)
+        termination = _run_orchestration_loop(
+            project_id,
+            max_cost=max_cost,
+            fresh=fresh,
+            force_unlock=force_unlock,
+        )
 
         _TERMINATION_MESSAGES = {
             LoopTermination.ALL_COMPLETED: "[green]All features completed![/green]",
