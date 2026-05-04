@@ -2143,8 +2143,8 @@ findings:
     \ error message should include the tail from BOTH attempts."
 - id: R10-013
   title: Sub-agent spawn-time failures have empty stderr in evidence
-  pattern: subprocess error surfaced through SDK loses real diagnostic; placeholder
-    string captured instead of actual stderr
+  pattern: subprocess error surfaced through SDK loses real diagnostic; placeholder string
+    captured instead of actual stderr
   files:
   - src/bob3/orchestrator/claude_executor.py
   severity: medium
@@ -2155,19 +2155,18 @@ findings:
   - subprocess-pitfalls
   fixed_in: pending-r10-013-stderr-capture
   fixed_at: '2026-05-02'
-  notes: 'When the SDK process dies before the message loop starts, the SDK raises
-    ProcessError("Command failed with exit code 1\nError output: Check stderr output
-    for details") and the bob3 evidence captures error_message that literal placeholder
-    with output_text="". The actual stderr is lost. Fix: pass a debug_stderr buffer
-    via ClaudeCodeOptions plus extra_args={"debug-to-stderr": None} so the subprocess
-    stderr is captured by bob3, and on Exception in spawn_sub_agent include the last
-    ~1000 chars of that buffer plus exception cause/args in the error_message. F013
-    (PyQt6 main window) surfaced this: is_error=True, duration_ms=0, num_turns=0,
-    cost_usd=null, no diagnostic to act on.'
+  notes: 'When the SDK process dies before the message loop starts, the SDK raises ProcessError("Command
+    failed with exit code 1\nError output: Check stderr output for details") and the bob3
+    evidence captures error_message that literal placeholder with output_text="". The actual
+    stderr is lost. Fix: pass a debug_stderr buffer via ClaudeCodeOptions plus extra_args={"debug-to-stderr":
+    None} so the subprocess stderr is captured by bob3, and on Exception in spawn_sub_agent
+    include the last ~1000 chars of that buffer plus exception cause/args in the error_message.
+    F013 (PyQt6 main window) surfaced this: is_error=True, duration_ms=0, num_turns=0, cost_usd=null,
+    no diagnostic to act on.'
 - id: R10-014
   title: handle_execution_result skips verification on is_error=True
-  pattern: verification gap; sub-agent failure treated as terminal even though workspace
-    may already contain correct work from a prior attempt
+  pattern: verification gap; sub-agent failure treated as terminal even though workspace may
+    already contain correct work from a prior attempt
   files:
   - src/bob3/orchestrator/run_loop.py
   severity: high
@@ -2176,24 +2175,23 @@ findings:
   - verification-gap
   - state-machine
   - data-loss
-  related:
-  - R1-002
   fixed_in: pending-r10-014-reverify-on-error
   fixed_at: '2026-05-02'
-  notes: 'When a sub-agent fails with is_error=True, execute_feature previously skipped
-    run_verification_checklist entirely and went straight to refinement-attempts /
-    needs_human. But the workspace may already contain correct work from an earlier
-    attempt: F013 (PyQt6 main window) attempt 3 had is_error=True/duration_ms=0/num_turns=0
-    (sub-agent died at process spawn), yet the 5 PyQt6 acceptance tests pass when
-    invoked manually — the work was already done by attempt 1 or 2. Fix: before treating
-    is_error=True as terminal, run run_verification_checklist against the workspace.
-    If it passes, the feature is genuinely done despite the sub-agent crash and is
-    treated as completed. Verification, not the sub-agent exit status, is the source
-    of truth.'
+  related:
+  - R1-002
+  notes: 'When a sub-agent fails with is_error=True, execute_feature previously skipped run_verification_checklist
+    entirely and went straight to refinement-attempts / needs_human. But the workspace may
+    already contain correct work from an earlier attempt: F013 (PyQt6 main window) attempt
+    3 had is_error=True/duration_ms=0/num_turns=0 (sub-agent died at process spawn), yet the
+    5 PyQt6 acceptance tests pass when invoked manually — the work was already done by attempt
+    1 or 2. Fix: before treating is_error=True as terminal, run run_verification_checklist
+    against the workspace. If it passes, the feature is genuinely done despite the sub-agent
+    crash and is treated as completed. Verification, not the sub-agent exit status, is the
+    source of truth.'
 - id: R10-015
   title: No distinction between "sub-agent never ran" and "sub-agent ran but errored"
-  pattern: error-classification gap; transient process-spawn failures consume refinement
-    attempts identically to substantive failures
+  pattern: error-classification gap; transient process-spawn failures consume refinement attempts
+    identically to substantive failures
   files:
   - src/bob3/orchestrator/run_loop.py
   - src/bob3/orchestrator/claude_executor.py
@@ -2204,15 +2202,39 @@ findings:
   fixed_in: pending-r10-015-spawn-failure-free-retry
   fixed_at: '2026-05-02'
   notes: 'A sub-agent that died at process spawn (duration_ms=0, num_turns=0) is currently
-    treated identically to one that ran 25 turns and errored. The first should be
-    a free retry (no refinement_attempts charge, no confidence decay, no _PROXY_LOGGED_FEATURE_IDS
-    bump); the second should count toward refinement_attempts. Fix: in execute_feature
-    failure path, when result.duration_ms < 100 AND result.num_turns == 0 AND verification
-    did not pass, treat as a transient spawn-time failure: skip increment_refinement_attempts,
-    skip confidence decay, leave the feature at ``ready``, and let the loop pick it
-    up next iteration. Cap at _MAX_SPAWN_RETRIES=3 free retries per feature (tracked
-    in OrchestrationLoop._spawn_failure_counts) so a permanently broken environment
-    cannot create an infinite loop.'
+    treated identically to one that ran 25 turns and errored. The first should be a free retry
+    (no refinement_attempts charge, no confidence decay, no _PROXY_LOGGED_FEATURE_IDS bump);
+    the second should count toward refinement_attempts. Fix: in execute_feature failure path,
+    when result.duration_ms < 100 AND result.num_turns == 0 AND verification did not pass,
+    treat as a transient spawn-time failure: skip increment_refinement_attempts, skip confidence
+    decay, leave the feature at ``ready``, and let the loop pick it up next iteration. Cap
+    at _MAX_SPAWN_RETRIES=3 free retries per feature (tracked in OrchestrationLoop._spawn_failure_counts)
+    so a permanently broken environment cannot create an infinite loop.'
+- id: R10-018
+  title: 'R10-013 StringIO stderr capture broken: SDK calls .fileno() and StringIO raises
+    UnsupportedOperation'
+  pattern: in-memory buffer used where SDK requires a real file descriptor
+  files:
+  - src/bob3/orchestrator/claude_executor.py
+  severity: critical
+  status: fixed
+  tags:
+  - regression
+  - sdk-integration
+  - subprocess-pitfalls
+  fixed_in: pending-r10-018-namedtempfile-stderr
+  fixed_at: '2026-05-02'
+  related:
+  - R10-013
+  notes: 'swedish-circle resume failure case: every sub-agent spawn fails with CLIConnectionError:
+    Failed to start Claude Code: fileno (UnsupportedOperation: fileno) after R10-013 wired
+    options.debug_stderr = io.StringIO(). The SDK calls .fileno() on the stream to set up
+    an OS-level redirect; StringIO has no fileno(). Confirmed via log: every sub-agent spawn
+    fails with UnsupportedOperation: fileno after R10-013. Free-retry-on-spawn (R10-015) could
+    not help because the bug is permanent (every retry fails identically) — three features
+    in the swedish-circle resume hit needs_human because their sub-agent retries all hit this
+    error. Fix: NamedTemporaryFile (real fd, w+ text mode, delete=False, unlink in finally)
+    instead of StringIO.'
 recurring_patterns:
 - tag: refactor-debt
   occurrences:

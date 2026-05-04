@@ -908,3 +908,117 @@ class TestSpawnFailureStderrCapture:
         assert "exit_code" in msg, (
             f"R10-013: error_message must include exit_code; got: {msg!r}"
         )
+
+
+# ===================================================================
+# R10-018: stderr capture must use a real file descriptor
+# ===================================================================
+
+
+class TestR10_018_StderrCaptureFileDescriptor:
+    """R10-018: R10-013 wired ``options.debug_stderr = io.StringIO()`` but
+    the SDK calls ``.fileno()`` on the stream to set up an OS-level
+    redirect. ``io.StringIO`` raises ``UnsupportedOperation: fileno`` and
+    every sub-agent spawn fails with
+    ``CLIConnectionError: Failed to start Claude Code: fileno``.
+
+    The fix is to use ``tempfile.NamedTemporaryFile`` (which has a real
+    fd) and clean it up after the spawn returns.
+    """
+
+    @pytest.mark.asyncio
+    async def test_spawn_succeeds_when_stderr_capture_active(self, project, tmp_path):
+        """A normal spawn — no exception in the SDK — must succeed even
+        though stderr capture is active. Regression for R10-018."""
+        from bob3.orchestrator.claude_executor import spawn_sub_agent
+        from claude_code_sdk import AssistantMessage, ResultMessage, TextBlock
+
+        captured_stderr_paths: list[str] = []
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            # Inspect the buffer the spawn wired in: it must have a real
+            # fileno() (R10-018 regression — StringIO would raise here).
+            buf = getattr(options, "debug_stderr", None)
+            assert buf is not None, (
+                "R10-018: spawn_sub_agent must wire options.debug_stderr"
+            )
+            fd = buf.fileno()
+            assert isinstance(fd, int), (
+                f"R10-018: debug_stderr.fileno() must return int; got {fd!r}"
+            )
+            # Remember the path so we can verify cleanup after spawn.
+            buf_name = getattr(buf, "name", None)
+            if buf_name:
+                captured_stderr_paths.append(buf_name)
+            yield AssistantMessage(content=[TextBlock(text="ok")], model="m")
+            yield ResultMessage(
+                subtype="success", duration_ms=10, duration_api_ms=8,
+                is_error=False, num_turns=1, session_id="s",
+                total_cost_usd=0.0, usage=None, result=None,
+            )
+
+        with patch("bob3.orchestrator.claude_executor.query", mock_query):
+            result = await spawn_sub_agent(
+                project_id=project.id,
+                purpose="implement_feature",
+                prompt="trivial prompt",
+            )
+
+        # The spawn must have succeeded — no CLIConnectionError, no
+        # is_error path triggered.
+        assert result.execution_result.is_error is False, (
+            f"R10-018: spawn must succeed; got error: "
+            f"{result.execution_result.error_message!r}"
+        )
+        # The tempfile-backed buffer must be cleaned up after the spawn.
+        import os as _os
+        assert captured_stderr_paths, (
+            "R10-018 test setup: mock_query did not see a buffer with .name"
+        )
+        for path in captured_stderr_paths:
+            assert not _os.path.exists(path), (
+                f"R10-018: stderr tempfile must be cleaned up after spawn; "
+                f"{path!r} still exists"
+            )
+
+    @pytest.mark.asyncio
+    async def test_stderr_capture_uses_real_file_descriptor(self, project):
+        """Directly verify ``options.debug_stderr.fileno()`` returns an
+        int instead of raising ``UnsupportedOperation``. This is the
+        narrowest regression test for R10-018: the bug was that
+        ``io.StringIO.fileno()`` raises ``UnsupportedOperation`` and the
+        SDK propagates it as ``CLIConnectionError``."""
+        import io as _io
+        from bob3.orchestrator.claude_executor import spawn_sub_agent
+        from claude_code_sdk import ResultMessage
+
+        observed: dict[str, object] = {}
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            buf = getattr(options, "debug_stderr", None)
+            observed["buf_type"] = type(buf).__name__
+            try:
+                observed["fileno"] = buf.fileno()
+            except _io.UnsupportedOperation as exc:
+                observed["fileno_error"] = repr(exc)
+            yield ResultMessage(
+                subtype="success", duration_ms=1, duration_api_ms=1,
+                is_error=False, num_turns=1, session_id="s",
+                total_cost_usd=0.0, usage=None, result=None,
+            )
+
+        with patch("bob3.orchestrator.claude_executor.query", mock_query):
+            await spawn_sub_agent(
+                project_id=project.id,
+                purpose="implement_feature",
+                prompt="probe stderr",
+            )
+
+        assert "fileno_error" not in observed, (
+            f"R10-018: debug_stderr.fileno() raised "
+            f"{observed.get('fileno_error')!r} — buffer is not file-backed"
+        )
+        assert isinstance(observed.get("fileno"), int), (
+            f"R10-018: debug_stderr.fileno() must return int; "
+            f"observed={observed!r}"
+        )

@@ -14,15 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import io
 import json
 import logging
 import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import IO, Any, AsyncIterator, Awaitable, Callable
 
 from claude_code_sdk import (
     AssistantMessage,
@@ -250,7 +250,7 @@ def build_sub_agent_options(
 
 def _attach_stderr_capture(
     options: "ClaudeCodeOptions | None",
-    buffer: io.StringIO,
+    buffer: "IO[str]",
 ) -> "ClaudeCodeOptions":
     """Return a ClaudeCodeOptions configured to mirror SDK stderr to ``buffer``.
 
@@ -258,6 +258,11 @@ def _attach_stderr_capture(
     ``"debug-to-stderr"`` is present in ``options.extra_args``. We set both
     so the underlying ``claude`` Node.js process's stderr is captured into
     ``buffer`` for diagnostic surfacing on spawn-time failures (R10-013).
+
+    ``buffer`` MUST be a real file-backed text stream (e.g. one returned
+    by :func:`tempfile.NamedTemporaryFile`) — the SDK calls ``.fileno()``
+    on it to wire up an OS-level redirect (R10-018). An ``io.StringIO``
+    does NOT have a ``fileno()`` and will fail every spawn.
 
     A new options object is constructed (rather than mutating in place)
     because the caller may reuse ``options`` across multiple sub-agent
@@ -313,7 +318,7 @@ def _attach_stderr_capture(
 
 def _format_spawn_exception(
     exc: BaseException,
-    stderr_buffer: io.StringIO | None = None,
+    captured_stderr: str | None = None,
     *,
     max_stderr_chars: int = 1000,
 ) -> str:
@@ -321,9 +326,10 @@ def _format_spawn_exception(
 
     Combines the exception's str() with any ``exit_code``/``stderr``
     attributes (set by ``ProcessError``), the ``__cause__`` chain, and
-    the tail of ``stderr_buffer``. The output replaces the SDK's
-    unhelpful ``"Check stderr output for details"`` placeholder so
-    operators see the actual stderr the subprocess emitted.
+    the tail of ``captured_stderr`` (already-read string from the
+    file-backed stderr buffer; see R10-018). The output replaces the
+    SDK's unhelpful ``"Check stderr output for details"`` placeholder
+    so operators see the actual stderr the subprocess emitted.
     """
     parts: list[str] = [f"{type(exc).__name__}: {exc}"]
 
@@ -339,11 +345,9 @@ def _format_spawn_exception(
     if cause is not None and cause is not exc:
         parts.append(f"cause={type(cause).__name__}: {cause}")
 
-    if stderr_buffer is not None:
-        captured = stderr_buffer.getvalue()
-        if captured:
-            tail = captured[-max_stderr_chars:]
-            parts.append(f"captured_stderr_tail=\n{tail}")
+    if captured_stderr:
+        tail = captured_stderr[-max_stderr_chars:]
+        parts.append(f"captured_stderr_tail=\n{tail}")
 
     return "\n".join(parts)
 
@@ -709,7 +713,7 @@ async def spawn_sub_agent(
     # If the SDK still leaks (older versions, transport changes), we
     # also emit a SECURITY warning so the operator knows to inspect.
     result = ExecutionResult()
-    # R10-013: Wire a writable in-memory buffer into ``options.debug_stderr``
+    # R10-013: Wire a writable text buffer into ``options.debug_stderr``
     # plus ``extra_args={"debug-to-stderr": None}`` so the SDK's CLI
     # subprocess streams its stderr into our buffer. When the subprocess
     # dies before producing any messages (the F013 sub-agent spawn-time
@@ -717,8 +721,24 @@ async def spawn_sub_agent(
     # ``ProcessError(stderr="Check stderr output for details")`` with no
     # diagnostic. The buffer below captures the actual stderr we can
     # surface in ``error_message`` so operators can act on the failure.
-    stderr_buffer = io.StringIO()
-    options = _attach_stderr_capture(options, stderr_buffer)
+    #
+    # R10-018: The buffer MUST be a real file-backed stream because the
+    # SDK calls ``.fileno()`` on it to set up an OS-level subprocess
+    # redirect. ``io.StringIO`` raises ``UnsupportedOperation: fileno``
+    # and breaks every spawn — that bug landed with R10-013 and made
+    # every sub-agent in the swedish-circle resume fail with
+    # ``CLIConnectionError: Failed to start Claude Code: fileno``.
+    # ``NamedTemporaryFile`` has a real fd; we ``unlink`` it after
+    # reading so it does not litter ``/tmp``.
+    stderr_buf = tempfile.NamedTemporaryFile(
+        mode="w+",
+        encoding="utf-8",
+        delete=False,
+        prefix="bob3_subagent_stderr_",
+    )
+    stderr_path = stderr_buf.name
+    captured_stderr = ""
+    options = _attach_stderr_capture(options, stderr_buf)
     stream: AsyncIterator[Message] | None = None
     # R9-001: Track whether we obtained a clean result so the finally
     # block can pick the right terminal status. Without this flag, a
@@ -766,7 +786,15 @@ async def spawn_sub_agent(
         # "Command failed with exit code 1\nError output: Check stderr output for details"
         # with the actual stderr we captured via ``debug_stderr`` plus
         # ``exit_code`` / ``__cause__`` / ``args`` for diagnostic value.
-        result.error_message = _format_spawn_exception(exc, stderr_buffer)
+        # R10-018: pull the captured stderr out of the file-backed buffer
+        # before the finally block deletes it.
+        try:
+            stderr_buf.flush()
+            stderr_buf.seek(0)
+            captured_stderr = stderr_buf.read()
+        except Exception:
+            captured_stderr = ""
+        result.error_message = _format_spawn_exception(exc, captured_stderr)
     finally:
         # Best-effort close of the SDK stream so the SDK's own
         # ``query.close()`` finally-block runs (it terminates the
@@ -788,6 +816,22 @@ async def spawn_sub_agent(
                         "`pgrep -f claude` and kill if needed.",
                         exc_info=True,
                     )
+
+        # R10-018: clean up the tempfile-backed stderr buffer. We close
+        # then unlink so the file does not litter ``/tmp`` even if the
+        # spawn succeeded. ``delete=False`` was required so the SDK
+        # subprocess could open the fd by name on platforms where the
+        # temporary directory and the cwd differ. Failures here are
+        # best-effort: the in-flight exception (if any) must not be
+        # masked.
+        try:
+            stderr_buf.close()
+        except Exception:
+            pass
+        try:
+            os.unlink(stderr_path)
+        except OSError:
+            pass
 
         # R9-001: Always update the agent_run row before unwinding, even
         # when the coroutine was cancelled. Previously this update lived
