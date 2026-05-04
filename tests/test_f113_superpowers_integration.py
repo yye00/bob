@@ -1703,3 +1703,117 @@ class TestR10005InitPyIsSource:
         assert substance_check.get("severity") == "warning"
         # Warnings must NOT cause overall failure.
         assert result["passed"] is True
+
+
+class TestR10020ScaledTestRunTimeout:
+    """R10-020: pytest timeout must scale with project test count.
+
+    Regression: a fixed 300 s default rejected verifier-correct features on
+    real V&V suites (swedish-circle) that legitimately take >5 minutes for
+    the full suite. Failure mode: every acceptance criterion individually
+    passes but the bundled tests_pass sub-check times out.
+    """
+
+    def test_count_tests_in_counts_def_test_lines(self, tmp_path):
+        from bob3.superpowers import _count_tests_in
+
+        td = tmp_path / "tests"
+        td.mkdir()
+        (td / "test_a.py").write_text(
+            "def test_one():\n    pass\n"
+            "def test_two():\n    pass\n"
+            "async def test_three():\n    pass\n"
+        )
+        (td / "test_b.py").write_text(
+            "class TestX:\n"
+            "    def test_x_one(self):\n        pass\n"
+            "    def test_x_two(self):\n        pass\n"
+        )
+        # Non-test file should be ignored.
+        (td / "helper.py").write_text("def test_should_not_count():\n    pass\n")
+        # __pycache__ should be skipped.
+        cache = td / "__pycache__"
+        cache.mkdir()
+        (cache / "test_x.cpython.py").write_text("def test_pyc():\n    pass\n")
+
+        assert _count_tests_in(td) == 5
+
+    def test_count_tests_in_handles_missing_dir(self, tmp_path):
+        from bob3.superpowers import _count_tests_in
+
+        assert _count_tests_in(tmp_path / "nope") == 0
+
+    def test_floor_when_target_dir_is_none(self, monkeypatch):
+        from bob3.superpowers import _test_run_timeout, DEFAULT_TEST_RUN_TIMEOUT_S
+
+        monkeypatch.delenv("BOB3_TEST_RUN_TIMEOUT", raising=False)
+        monkeypatch.delenv("BOB3_TEST_RUN_PER_TEST_S", raising=False)
+        monkeypatch.delenv("BOB3_TEST_RUN_CAP", raising=False)
+        assert _test_run_timeout() == DEFAULT_TEST_RUN_TIMEOUT_S
+
+    def test_explicit_env_override_wins(self, tmp_path, monkeypatch):
+        from bob3.superpowers import _test_run_timeout
+
+        td = tmp_path / "tests"
+        td.mkdir()
+        (td / "test_x.py").write_text(
+            "\n".join(f"def test_{i}(): pass" for i in range(50)) + "\n"
+        )
+        monkeypatch.setenv("BOB3_TEST_RUN_TIMEOUT", "42")
+        # Even with 50 tests, the verbatim override wins.
+        assert _test_run_timeout(td) == 42
+
+    def test_small_project_uses_floor(self, tmp_path, monkeypatch):
+        from bob3.superpowers import _test_run_timeout, DEFAULT_TEST_RUN_TIMEOUT_S
+
+        td = tmp_path / "tests"
+        td.mkdir()
+        (td / "test_x.py").write_text("def test_one(): pass\n")
+        monkeypatch.delenv("BOB3_TEST_RUN_TIMEOUT", raising=False)
+        monkeypatch.setenv("BOB3_TEST_RUN_PER_TEST_S", "60")
+        monkeypatch.delenv("BOB3_TEST_RUN_CAP", raising=False)
+        # 60 * 1 = 60s, far below the 300s floor.
+        assert _test_run_timeout(td) == DEFAULT_TEST_RUN_TIMEOUT_S
+
+    def test_medium_project_scales_above_floor(self, tmp_path, monkeypatch):
+        from bob3.superpowers import _test_run_timeout
+
+        td = tmp_path / "tests"
+        td.mkdir()
+        (td / "test_x.py").write_text(
+            "\n".join(f"def test_{i}(): pass" for i in range(20)) + "\n"
+        )
+        monkeypatch.delenv("BOB3_TEST_RUN_TIMEOUT", raising=False)
+        monkeypatch.setenv("BOB3_TEST_RUN_PER_TEST_S", "60")
+        monkeypatch.setenv("BOB3_TEST_RUN_CAP", "3600")
+        # 20 * 60 = 1200s -- between 300 floor and 3600 cap.
+        assert _test_run_timeout(td) == 1200
+
+    def test_huge_project_clamped_to_cap(self, tmp_path, monkeypatch):
+        from bob3.superpowers import _test_run_timeout
+
+        td = tmp_path / "tests"
+        td.mkdir()
+        (td / "test_x.py").write_text(
+            "\n".join(f"def test_{i}(): pass" for i in range(500)) + "\n"
+        )
+        monkeypatch.delenv("BOB3_TEST_RUN_TIMEOUT", raising=False)
+        monkeypatch.setenv("BOB3_TEST_RUN_PER_TEST_S", "60")
+        monkeypatch.setenv("BOB3_TEST_RUN_CAP", "1800")
+        # 500 * 60 = 30000s -- must be clamped to 1800s cap.
+        assert _test_run_timeout(td) == 1800
+
+    def test_invalid_env_override_falls_back_to_scaling(self, tmp_path, monkeypatch):
+        from bob3.superpowers import _test_run_timeout
+
+        td = tmp_path / "tests"
+        td.mkdir()
+        (td / "test_x.py").write_text(
+            "\n".join(f"def test_{i}(): pass" for i in range(20)) + "\n"
+        )
+        # Garbage values must not crash and must fall through to scaling.
+        monkeypatch.setenv("BOB3_TEST_RUN_TIMEOUT", "not-a-number")
+        monkeypatch.setenv("BOB3_TEST_RUN_PER_TEST_S", "negative-please")
+        monkeypatch.delenv("BOB3_TEST_RUN_CAP", raising=False)
+        # Falls back to default per-test (60) * 20 = 1200s.
+        assert _test_run_timeout(td) == 1200

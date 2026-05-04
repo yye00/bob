@@ -34,19 +34,97 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TEST_RUN_TIMEOUT_S = 300
 
+# R10-020: per-test budget when scaling the timeout to project size.
+# A tight unit test takes <0.1s; a numerical V&V test can legitimately
+# take 8-10 minutes. 60 s/test (the default) is a generous upper bound
+# for typical projects without forcing the orchestrator to wait forever
+# on a runaway. Operators can tighten or loosen via
+# ``BOB3_TEST_RUN_PER_TEST_S``.
+DEFAULT_TEST_RUN_PER_TEST_S = 60
 
-def _test_run_timeout() -> int:
-    """Return the per-run pytest timeout in seconds (BOB3_TEST_RUN_TIMEOUT)."""
-    raw = os.environ.get("BOB3_TEST_RUN_TIMEOUT")
+# R10-020: hard ceiling so a project with thousands of tests doesn't
+# blow up the orchestrator's wall-clock budget. 1 hour is the same
+# shape as ``BOB3_FEATURE_TIMEOUT_SECONDS`` — by then we want bob3 to
+# escalate, not keep waiting.
+DEFAULT_TEST_RUN_CAP_S = 3600
+
+
+def _env_int(name: str, default: int) -> int:
+    """Parse a positive integer from ``os.environ[name]`` or fall back."""
+    raw = os.environ.get(name)
     if not raw:
-        return DEFAULT_TEST_RUN_TIMEOUT_S
+        return default
     try:
         value = int(raw)
         if value > 0:
             return value
     except (TypeError, ValueError):
         pass
-    return DEFAULT_TEST_RUN_TIMEOUT_S
+    return default
+
+
+def _count_tests_in(target_dir: pathlib.Path) -> int:
+    """Count test functions/methods in a pytest test directory.
+
+    Cheap glob-and-scan: walks every ``test_*.py`` file under
+    ``target_dir`` and counts lines matching ``def test_``. This
+    over-counts methods on a base class that doesn't run, and
+    under-counts parametrized tests (one ``def`` -> N test ids), but
+    it's a reasonable proxy for scaling the timeout. Returns 0 if the
+    directory doesn't exist.
+    """
+    if not target_dir.exists() or not target_dir.is_dir():
+        return 0
+    count = 0
+    for path in target_dir.rglob("test_*.py"):
+        if "__pycache__" in str(path):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # Match `def test_` and `async def test_`. Loose but cheap.
+        count += len(re.findall(r"^\s*(?:async\s+)?def\s+test_", text, re.MULTILINE))
+    return count
+
+
+def _test_run_timeout(target_dir: pathlib.Path | None = None) -> int:
+    """Resolve the per-run pytest timeout, scaling with project size.
+
+    R10-020: a project with 100+ tests including slow numerical V&V can
+    legitimately take 15-30 minutes to run the full suite. The 300 s
+    default was rejecting verifier-correct work. The new behaviour:
+
+    * If ``BOB3_TEST_RUN_TIMEOUT`` is set, honor it verbatim (operator
+      override; covers projects where the user has tighter constraints).
+    * Otherwise, scale with the test-function count under
+      ``target_dir`` using ``per_test_s * n_tests`` clamped to
+      ``[DEFAULT_TEST_RUN_TIMEOUT_S, DEFAULT_TEST_RUN_CAP_S]`` so a
+      5-test project still gets a 300 s floor and a 1000-test project
+      doesn't get an hour-long wait.
+    * If ``target_dir`` is None or has no tests, fall back to the
+      300 s floor.
+    """
+    raw = os.environ.get("BOB3_TEST_RUN_TIMEOUT")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+
+    floor = DEFAULT_TEST_RUN_TIMEOUT_S
+    cap = _env_int("BOB3_TEST_RUN_CAP", DEFAULT_TEST_RUN_CAP_S)
+    per_test = _env_int("BOB3_TEST_RUN_PER_TEST_S", DEFAULT_TEST_RUN_PER_TEST_S)
+
+    if target_dir is None:
+        return floor
+    n_tests = _count_tests_in(target_dir)
+    if n_tests <= 0:
+        return floor
+    scaled = per_test * n_tests
+    return max(floor, min(scaled, cap))
 
 
 def _tail(text: str, limit: int = 800) -> str:
@@ -178,7 +256,7 @@ def _check_tests_pass(workspace: pathlib.Path, src_dir: str, test_dir: str) -> d
         }
 
     # Run pytest as a subprocess (one of the legitimate subprocess uses in bob3).
-    timeout_s = _test_run_timeout()
+    timeout_s = _test_run_timeout(target_dir)
     target_rel = target_dir.relative_to(workspace).as_posix()
     cmd = [
         sys.executable,
