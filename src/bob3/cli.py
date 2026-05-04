@@ -36,6 +36,7 @@ def get_database_path():
 from bob3.logging_config import setup_logging
 from bob3.mcp_lifecycle import MCPStartupError, start_mcp_server, stop_mcp_server
 from bob3.pdf_utils import extract_pdf_text
+from bob3.superpowers import run_verification_checklist
 
 logger = logging.getLogger(__name__)
 
@@ -1337,6 +1338,105 @@ def show_feature(feature_id):
                     console.print(f"  {i}. {c}")
         except (_json.JSONDecodeError, TypeError):
             console.print(f"\n[bold]Acceptance Criteria:[/bold] {feature.acceptance_criteria}")
+
+
+# ============================================================
+# VERIFY-FEATURE COMMAND (R10-014)
+# ============================================================
+
+
+@main.command("verify-feature")
+@click.argument("feature_id")
+def verify_feature_cmd(feature_id):
+    """Re-run verification on a feature's workspace.
+
+    Useful for:
+    - Manually checking a needs_human feature after fixing the underlying issue
+    - Confirming work that completed despite a sub-agent crash (R10-014)
+
+    If verification passes, marks the feature as 'completed' (and cascades
+    dependents). If it fails, prints the failed checks and leaves the
+    feature's status unchanged.
+    """
+    from bob3.db import complete_feature_and_cascade, get_project
+
+    logger.info("Manually verifying feature: %s", feature_id)
+    console = Console()
+
+    feature = get_feature(feature_id)
+    if feature is None:
+        console.print(f"[red]Feature not found:[/red] {feature_id}")
+        raise SystemExit(2)
+
+    project = get_project(feature.project_id)
+    if project is None:
+        console.print(
+            f"[red]Project {feature.project_id} not found for feature "
+            f"{feature_id}[/red]"
+        )
+        raise SystemExit(2)
+
+    workspace = project.workspace_path
+    if not workspace:
+        console.print(
+            "[yellow]Project has no workspace_path; cannot run verification.[/yellow]"
+        )
+        raise SystemExit(2)
+
+    console.print(f"[dim]Workspace:[/dim] {workspace}")
+    console.print(f"[dim]Feature:[/dim] {feature.name} (status={feature.status})")
+
+    try:
+        verification = run_verification_checklist(
+            workspace=workspace,
+            acceptance_criteria=feature.acceptance_criteria,
+            feature_description=feature.description,
+        )
+    except Exception as exc:
+        console.print(f"[red]Verification crashed:[/red] {type(exc).__name__}: {exc}")
+        raise SystemExit(3) from exc
+
+    passed = bool(verification.get("passed", False))
+    summary = verification.get("summary") or ""
+    checks = verification.get("checks") or []
+
+    if passed:
+        console.print("[green]Verification passed.[/green]")
+        if summary:
+            console.print(f"  {summary}")
+        # Mark completed and cascade dependents.
+        try:
+            unlocked = complete_feature_and_cascade(feature.id)
+        except Exception as exc:
+            console.print(
+                f"[red]Failed to mark feature completed:[/red] "
+                f"{type(exc).__name__}: {exc}"
+            )
+            raise SystemExit(3) from exc
+        console.print(
+            f"[green]Feature {feature.id} marked completed.[/green]"
+        )
+        if unlocked:
+            console.print(
+                f"  Unlocked {len(unlocked)} dependent feature(s): "
+                f"{', '.join(f[:8] for f in unlocked)}"
+            )
+        return
+
+    console.print("[red]Verification failed.[/red]")
+    if summary:
+        console.print(f"  {summary}")
+    for chk in checks:
+        if chk.get("passed"):
+            continue
+        name = chk.get("name", "?")
+        details = chk.get("details", "")
+        console.print(f"  [red]FAIL[/red] {name}: {details}")
+    console.print(
+        f"\n[yellow]Feature {feature.id} status unchanged "
+        f"(currently '{feature.status}').[/yellow]"
+    )
+    raise SystemExit(1)
 
 
 # ============================================================

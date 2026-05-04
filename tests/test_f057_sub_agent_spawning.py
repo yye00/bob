@@ -270,8 +270,18 @@ class TestUsesClaudeSDK:
             )
 
         passed = captured_options["options"]
-        # When no MCP injection happens, identity should be preserved.
-        assert passed is opts
+        # R10-013: spawn_sub_agent now ALWAYS wraps options to install a
+        # debug-stderr buffer for diagnostic capture, so identity is no
+        # longer preserved. The contract under test is that the user's
+        # salient fields (model, max_turns, ...) survive intact on
+        # whatever options object reaches the SDK.
+        assert passed is not None
+        assert passed.model == opts.model
+        assert passed.max_turns == opts.max_turns
+        assert passed.permission_mode == opts.permission_mode
+        # The R10-013 wrapping must add the debug-to-stderr extra arg so
+        # the SDK actually streams subprocess stderr into the buffer.
+        assert "debug-to-stderr" in (passed.extra_args or {})
 
 
 # ===================================================================
@@ -841,3 +851,60 @@ class TestDecomposerVerifiesSkillIntegrity:
         )
         verify_arg = mock_verify.call_args[0][0]
         assert str(verify_arg) == str(tmp_path)
+
+
+# ===================================================================
+# R10-013: Spawn-time failure stderr capture
+# ===================================================================
+
+
+class TestSpawnFailureStderrCapture:
+    """R10-013: When the SDK process dies before yielding messages, the
+    SDK's ``ProcessError`` carries the placeholder stderr
+    "Check stderr output for details". bob3 must surface a richer
+    diagnostic in ``error_message``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_spawn_failure_includes_stderr_in_error_message(self, project):
+        """An SDK-raised ``ProcessError`` is unpacked into ``error_message``
+        with exit_code, captured stderr (when present), and the exception
+        type — not just the placeholder string."""
+        from bob3.orchestrator.claude_executor import spawn_sub_agent
+        from claude_code_sdk._errors import ProcessError
+
+        async def mock_query(*, prompt, options=None, transport=None):
+            # Simulate the SDK's spawn-time failure path: a ProcessError
+            # is raised before any messages are yielded. The placeholder
+            # stderr is what the SDK actually emits.
+            raise ProcessError(
+                "Command failed with exit code 1",
+                exit_code=1,
+                stderr="Check stderr output for details",
+            )
+            yield  # noqa: F821 — keep async-generator semantics
+
+        with patch("bob3.orchestrator.claude_executor.query", mock_query):
+            result = await spawn_sub_agent(
+                project_id=project.id,
+                purpose="implement_feature",
+                prompt="Trigger a spawn failure",
+            )
+
+        assert result.execution_result.is_error is True
+        msg = result.execution_result.error_message
+        # The unhelpful placeholder must NOT be the entire message.
+        assert msg != (
+            "Command failed with exit code 1\n"
+            "Error output: Check stderr output for details"
+        ), (
+            "R10-013: error_message must include diagnostic context "
+            f"beyond the SDK placeholder; got: {msg!r}"
+        )
+        # Diagnostic context: exception type and exit_code surfaced.
+        assert "ProcessError" in msg, (
+            f"R10-013: error_message must include exception type; got: {msg!r}"
+        )
+        assert "exit_code" in msg, (
+            f"R10-013: error_message must include exit_code; got: {msg!r}"
+        )

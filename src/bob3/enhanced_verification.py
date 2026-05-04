@@ -627,20 +627,32 @@ def _run_python_criterion(
     )
 
 
+_DEFAULT_CRITERION_EXEC_TIMEOUT = 600
+
+
 def _criterion_exec_timeout() -> int:
     """Resolve the per-criterion executable timeout from the environment.
 
-    Falls back to 60s when ``BOB3_CRITERION_EXEC_TIMEOUT`` is unset or not a
-    positive integer.
+    Falls back to ``_DEFAULT_CRITERION_EXEC_TIMEOUT`` (600s) when
+    ``BOB3_CRITERION_EXEC_TIMEOUT`` is unset or not a positive integer.
+
+    R10-016: bumped from 60s to 600s after the swedish-circle attempts
+    showed that V&V tests exercising the full search pipeline (5 slope
+    angles × ~6000 candidate circles each, with Bishop's iterative
+    method) legitimately take 8-9 minutes. 60s and even 300s were too
+    aggressive and were flagging correct V&V code as failing the
+    timeout. 600s covers realistic numerical V&V while still bounding
+    runaway tests. Operators with cheap tests can tighten via the env
+    var; operators with extreme V&V can loosen further.
     """
     raw = os.environ.get("BOB3_CRITERION_EXEC_TIMEOUT")
     if not raw:
-        return 60
+        return _DEFAULT_CRITERION_EXEC_TIMEOUT
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        return 60
-    return value if value > 0 else 60
+        return _DEFAULT_CRITERION_EXEC_TIMEOUT
+    return value if value > 0 else _DEFAULT_CRITERION_EXEC_TIMEOUT
 
 
 def _check_criterion_with_details(

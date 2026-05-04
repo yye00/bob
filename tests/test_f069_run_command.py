@@ -1998,6 +1998,23 @@ class TestR10007SingleFeatureTerminationReflectsStatus:
                 "bob3.orchestrator.run_loop.acquire_run_lock", return_value=None
             ), patch(
                 "bob3.orchestrator.run_loop.release_run_lock", return_value=None
+            ), patch(
+                # R10-014: verification now runs even on is_error=True.
+                # Force a failing verification so the substantive
+                # failure path is exercised here (this test is about
+                # exit-code mapping, not the R10-014 promotion case).
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                return_value={
+                    "passed": False,
+                    "summary": "no source files",
+                    "checks": [
+                        {
+                            "name": "source_files_exist",
+                            "passed": False,
+                            "details": "0 files",
+                        }
+                    ],
+                },
             ):
                 termination = await loop.run()
 
@@ -2092,6 +2109,23 @@ class TestR10008CliExitCodeOnFailure:
                     "bob3.orchestrator.run_loop.spawn_sub_agent",
                     new_callable=AsyncMock,
                     side_effect=failing_spawn,
+                ), patch(
+                    # R10-014: verification now runs on is_error=True too.
+                    # Force a failing verification so this exit-code test
+                    # exercises the substantive failure path, not the
+                    # R10-014 promotion path.
+                    "bob3.orchestrator.run_loop.run_verification_checklist",
+                    return_value={
+                        "passed": False,
+                        "summary": "no source files",
+                        "checks": [
+                            {
+                                "name": "source_files_exist",
+                                "passed": False,
+                                "details": "0 files",
+                            }
+                        ],
+                    },
                 ):
                     result = runner.invoke(main, ["run", "--feature", feat.id])
 
@@ -2104,3 +2138,102 @@ class TestR10008CliExitCodeOnFailure:
             "R10-008: must not say 'Feature completed!' when feature "
             f"failed; got: {result.output!r}"
         )
+
+
+# ============================================================
+# R10-014: ``bob3 verify-feature`` CLI command
+# ============================================================
+
+
+class TestVerifyFeatureCommand:
+    """The verify-feature CLI provides a manual recovery path (R10-014)."""
+
+    def test_verify_feature_passes_marks_completed(self, tmp_db, project, tmp_path):
+        """When verification passes the feature is marked 'completed'."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import update_project
+            update_project(project.id, workspace_path=str(workspace))
+            feat = create_feature(
+                project_id=project.id,
+                name="Manual feature",
+                description="needs verification",
+                status="needs_human",
+                priority=10,
+                risk_category="medium",
+            )
+
+            runner = CliRunner()
+            with patch(
+                "bob3.cli.run_verification_checklist",
+                return_value={
+                    "passed": True,
+                    "summary": "All checks pass",
+                    "checks": [],
+                },
+            ):
+                result = runner.invoke(main, ["verify-feature", feat.id])
+
+            assert result.exit_code == 0, result.output
+            assert "Verification passed" in result.output
+            updated = get_feature(feat.id)
+            assert updated.status == "completed", (
+                f"verify-feature should mark feature completed on pass; "
+                f"got {updated.status}"
+            )
+
+    def test_verify_feature_fails_keeps_status_unchanged(
+        self, tmp_db, project, tmp_path
+    ):
+        """When verification fails the feature's status is left alone."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            from bob3.db import update_project
+            update_project(project.id, workspace_path=str(workspace))
+            feat = create_feature(
+                project_id=project.id,
+                name="Manual feature",
+                description="needs verification",
+                status="needs_human",
+                priority=10,
+                risk_category="medium",
+            )
+
+            runner = CliRunner()
+            with patch(
+                "bob3.cli.run_verification_checklist",
+                return_value={
+                    "passed": False,
+                    "summary": "src/foo.py missing",
+                    "checks": [
+                        {
+                            "name": "source_files_exist",
+                            "passed": False,
+                            "details": "no .py files",
+                        }
+                    ],
+                },
+            ):
+                result = runner.invoke(main, ["verify-feature", feat.id])
+
+            # Non-zero exit on failure
+            assert result.exit_code != 0
+            assert "Verification failed" in result.output
+            assert "source_files_exist" in result.output
+            updated = get_feature(feat.id)
+            assert updated.status == "needs_human", (
+                f"verify-feature must NOT change status when verification "
+                f"fails; got {updated.status}"
+            )
+
+    def test_verify_feature_unknown_id_errors_cleanly(self, tmp_db, project):
+        """An unknown feature_id produces a clean error, not a stack trace."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            runner = CliRunner()
+            result = runner.invoke(
+                main, ["verify-feature", "definitely-not-a-real-id"]
+            )
+            assert result.exit_code != 0
+            assert "Feature not found" in result.output

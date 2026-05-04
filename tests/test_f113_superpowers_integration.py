@@ -773,8 +773,16 @@ class TestVerificationOnCompletion:
         )
 
     @pytest.mark.asyncio
-    async def test_verification_not_run_on_failure(self, project, feature_with_criteria):
-        """Verification checklist should NOT run when execution fails."""
+    async def test_verification_runs_on_failure_to_check_for_prior_work(
+        self, project, feature_with_criteria
+    ):
+        """R10-014: Verification IS run when the sub-agent reports
+        ``is_error=True`` because the workspace may already contain
+        correct work from a prior attempt. The feature stays not-completed
+        when verification fails (this test exercises the failure path),
+        but the verification evidence MUST be recorded so the operator
+        can see what the verifier found.
+        """
         from bob3.orchestrator.run_loop import OrchestrationLoop
         from claude_code_sdk import ResultMessage
 
@@ -809,12 +817,22 @@ class TestVerificationOnCompletion:
             feature = db.get_feature(feature_with_criteria.id)
             await loop.execute_feature(feature)
 
-        # On failure, there should be no verification_checklist evidence
+        # R10-014: verification now runs on failure too, so the evidence
+        # IS produced. The feature is not promoted to 'completed' because
+        # the verification fails substantively (acceptance criteria not
+        # met) — the failure path still applies.
         evidence_list = db.query_evidence(project_id=project.id)
         verification_evidence = [
             e for e in evidence_list if e.type == "verification_checklist"
         ]
-        assert len(verification_evidence) == 0
+        assert len(verification_evidence) == 1, (
+            "R10-014: verification runs even on sub-agent error so the "
+            "operator can see whether the workspace already has the work; "
+            "evidence must be recorded."
+        )
+        # Feature is NOT completed (verification failed substantively).
+        updated = db.get_feature(feature_with_criteria.id)
+        assert updated.status != "completed"
 
     @pytest.mark.asyncio
     async def test_all_prompts_include_verification_section(self, project, feature_with_criteria):

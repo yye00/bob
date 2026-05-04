@@ -1899,3 +1899,329 @@ class TestInterruptionCheckpointNoDoubleCount:
                 f"got {cp.cost_at_checkpoint}; the +result.total_cost_usd "
                 f"term double-counts the feature's $1.50"
             )
+
+
+# ============================================================
+# R10-014: Re-verify on sub-agent error
+# ============================================================
+
+
+class TestReverifyOnSubagentError:
+    """R10-014: ``execute_feature`` must re-verify the workspace even when
+    the sub-agent reports ``is_error=True``. The workspace may already
+    contain correct work from an earlier attempt — the F013 / PyQt6 case
+    proved a sub-agent that died at process spawn was wrongly treating
+    the feature as dead despite all acceptance tests passing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_workspace_passes_verification_despite_subagent_error_treated_as_completed(
+        self, tmp_db, project, feature, tmp_path
+    ):
+        """When verification passes the feature is marked completed even
+        if the sub-agent set ``is_error=True``."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            loop = OrchestrationLoop(
+                project_id=project.id, workspace=str(workspace)
+            )
+
+            mock_result = ExecutionResult(
+                text="",
+                is_error=True,
+                error_message=(
+                    "Command failed with exit code 1\n"
+                    "Error output: Check stderr output for details"
+                ),
+                duration_ms=0,
+                num_turns=0,
+                total_cost_usd=None,
+            )
+            mock_agent_run = MagicMock()
+            mock_agent_run.id = str(uuid.uuid4())
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                return_value=SpawnResult(
+                    execution_result=mock_result, agent_run=mock_agent_run
+                ),
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                return_value={
+                    "passed": True,
+                    "summary": "All acceptance criteria pass",
+                    "checks": [
+                        {
+                            "name": "source_files_exist",
+                            "passed": True,
+                            "details": "Found 3 source file(s)",
+                        },
+                        {
+                            "name": "tests_exist",
+                            "passed": True,
+                            "details": "Found 5 test file(s)",
+                        },
+                        {
+                            "name": "acceptance_criteria_met",
+                            "passed": True,
+                            "details": "5/5 criteria met",
+                        },
+                    ],
+                },
+            ):
+                await loop.execute_feature(feature)
+
+            updated = get_feature(feature.id)
+            assert updated.status == "completed", (
+                f"R10-014: workspace verification passed, feature should be "
+                f"'completed' regardless of sub-agent error; got {updated.status}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_workspace_fails_verification_after_subagent_error_marked_needs_human(
+        self, tmp_db, project, feature, tmp_path
+    ):
+        """When verification fails AND the sub-agent errored substantively
+        the feature must NOT be marked completed (negative case for R10-014).
+
+        The sub-agent here ran 10 turns and errored, so this is NOT a
+        spawn-time failure — the standard refinement-attempts retry
+        logic applies. After F071's first-failure-resets-to-ready, status
+        is 'ready' with refinement_attempts incremented.
+        """
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            loop = OrchestrationLoop(
+                project_id=project.id, workspace=str(workspace)
+            )
+
+            mock_result = ExecutionResult(
+                text="Tried but failed",
+                is_error=True,
+                error_message="Compilation error in main.py",
+                duration_ms=15_000,
+                num_turns=10,
+                total_cost_usd=0.50,
+            )
+            mock_agent_run = MagicMock()
+            mock_agent_run.id = str(uuid.uuid4())
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                return_value=SpawnResult(
+                    execution_result=mock_result, agent_run=mock_agent_run
+                ),
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                return_value={
+                    "passed": False,
+                    "summary": "src/foo.py missing",
+                    "checks": [
+                        {
+                            "name": "source_files_exist",
+                            "passed": False,
+                            "details": "no .py files",
+                        }
+                    ],
+                },
+            ):
+                await loop.execute_feature(feature)
+
+            updated = get_feature(feature.id)
+            # Real sub-agent error (10 turns) + verification failure ->
+            # F071 retry path: first failure resets to 'ready'.
+            assert updated.status == "ready", (
+                f"R10-014 negative case: sub-agent errored AND verification "
+                f"failed; expected 'ready' (under F071 retry limit), "
+                f"got {updated.status}"
+            )
+            assert updated.refinement_attempts == 1
+
+
+# ============================================================
+# R10-015: Free retry on spawn-time failures
+# ============================================================
+
+
+class TestSpawnTimeFailureFreeRetry:
+    """R10-015: A sub-agent that died at process spawn (duration_ms < 100,
+    num_turns == 0) should be a free retry — not consume a refinement
+    attempt and not decay confidence. Capped at 3 free retries to avoid
+    infinite loops when the local environment is permanently broken.
+    """
+
+    @pytest.mark.asyncio
+    async def test_subagent_zero_duration_zero_turns_is_free_retry(
+        self, tmp_db, project, feature, tmp_path
+    ):
+        """A spawn-time failure leaves the feature at 'ready' with
+        refinement_attempts unchanged."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            loop = OrchestrationLoop(
+                project_id=project.id, workspace=str(workspace)
+            )
+
+            mock_result = ExecutionResult(
+                text="",
+                is_error=True,
+                error_message="Command failed with exit code 1",
+                duration_ms=0,
+                num_turns=0,
+                total_cost_usd=None,
+            )
+            mock_agent_run = MagicMock()
+            mock_agent_run.id = str(uuid.uuid4())
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                return_value=SpawnResult(
+                    execution_result=mock_result, agent_run=mock_agent_run
+                ),
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                return_value={
+                    "passed": False,
+                    "summary": "no source",
+                    "checks": [],
+                },
+            ):
+                await loop.execute_feature(feature)
+
+            updated = get_feature(feature.id)
+            assert updated.status == "ready", (
+                f"R10-015: spawn-time failure should leave feature at "
+                f"'ready' for free retry; got {updated.status}"
+            )
+            assert updated.refinement_attempts == 0, (
+                "R10-015: refinement_attempts must NOT increment on a "
+                "spawn-time failure (free retry)"
+            )
+            assert loop._spawn_failure_counts.get(feature.id) == 1
+
+    @pytest.mark.asyncio
+    async def test_subagent_zero_duration_capped_at_3_retries(
+        self, tmp_db, project, feature, tmp_path
+    ):
+        """After 3 spawn-time failures in a row the feature is treated as
+        a real failure (refinement_attempts begins to count)."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            loop = OrchestrationLoop(
+                project_id=project.id, workspace=str(workspace)
+            )
+
+            mock_result = ExecutionResult(
+                text="",
+                is_error=True,
+                error_message="Command failed with exit code 1",
+                duration_ms=0,
+                num_turns=0,
+                total_cost_usd=None,
+            )
+
+            def _fresh_spawn_result(*_a, **_kw):
+                ar = MagicMock()
+                ar.id = str(uuid.uuid4())
+                return SpawnResult(
+                    execution_result=ExecutionResult(
+                        text="",
+                        is_error=True,
+                        error_message="Command failed with exit code 1",
+                        duration_ms=0,
+                        num_turns=0,
+                        total_cost_usd=None,
+                    ),
+                    agent_run=ar,
+                )
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                side_effect=_fresh_spawn_result,
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                return_value={
+                    "passed": False,
+                    "summary": "no source",
+                    "checks": [],
+                },
+            ):
+                # 3 free retries
+                for i in range(3):
+                    feat = get_feature(feature.id)
+                    await loop.execute_feature(feat)
+                    assert loop._spawn_failure_counts[feature.id] == i + 1
+                    assert get_feature(feature.id).refinement_attempts == 0
+
+                # 4th call: cap exhausted, falls through to real failure path.
+                feat = get_feature(feature.id)
+                await loop.execute_feature(feat)
+
+            updated = get_feature(feature.id)
+            # After the 4th spawn-time failure, the cap is exhausted and
+            # increment_refinement_attempts runs. F071 first-failure resets
+            # to 'ready' under the limit.
+            assert updated.refinement_attempts == 1, (
+                "R10-015: 4th spawn-time failure must charge a refinement "
+                "attempt (cap exhausted)"
+            )
+
+    @pytest.mark.asyncio
+    async def test_subagent_with_real_turns_charges_refinement_attempt_normally(
+        self, tmp_db, project, feature, tmp_path
+    ):
+        """A sub-agent that ran turns and then errored is a real failure
+        and should consume a refinement attempt (positive case)."""
+        with patch("bob3.db.get_database_path", return_value=tmp_db):
+            workspace = tmp_path / "workspace"
+            workspace.mkdir()
+            loop = OrchestrationLoop(
+                project_id=project.id, workspace=str(workspace)
+            )
+
+            mock_result = ExecutionResult(
+                text="Tried hard but compilation failed",
+                is_error=True,
+                error_message="Compilation error in main.py",
+                duration_ms=20_000,
+                num_turns=12,
+                total_cost_usd=0.40,
+            )
+            mock_agent_run = MagicMock()
+            mock_agent_run.id = str(uuid.uuid4())
+
+            with patch(
+                "bob3.orchestrator.run_loop.spawn_sub_agent",
+                new_callable=AsyncMock,
+                return_value=SpawnResult(
+                    execution_result=mock_result, agent_run=mock_agent_run
+                ),
+            ), patch(
+                "bob3.orchestrator.run_loop.run_verification_checklist",
+                return_value={
+                    "passed": False,
+                    "summary": "no source",
+                    "checks": [],
+                },
+            ):
+                await loop.execute_feature(feature)
+
+            updated = get_feature(feature.id)
+            # 12 turns of work counts as a real failure, charged via
+            # F071's increment_refinement_attempts.
+            assert updated.refinement_attempts == 1, (
+                "R10-015 positive: a sub-agent with real turns must "
+                "charge a refinement attempt"
+            )
+            assert feature.id not in loop._spawn_failure_counts, (
+                "R10-015 positive: a real failure must NOT touch the "
+                "spawn-failure counter"
+            )

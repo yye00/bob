@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import json
 import logging
 import os
@@ -240,6 +241,111 @@ def build_sub_agent_options(
         kwargs["env"] = env_dict
 
     return ClaudeCodeOptions(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Stderr-capture helper (R10-013)
+# ---------------------------------------------------------------------------
+
+
+def _attach_stderr_capture(
+    options: "ClaudeCodeOptions | None",
+    buffer: io.StringIO,
+) -> "ClaudeCodeOptions":
+    """Return a ClaudeCodeOptions configured to mirror SDK stderr to ``buffer``.
+
+    The SDK only writes to ``options.debug_stderr`` when
+    ``"debug-to-stderr"`` is present in ``options.extra_args``. We set both
+    so the underlying ``claude`` Node.js process's stderr is captured into
+    ``buffer`` for diagnostic surfacing on spawn-time failures (R10-013).
+
+    A new options object is constructed (rather than mutating in place)
+    because the caller may reuse ``options`` across multiple sub-agent
+    spawns and we don't want our debug-stderr config to leak.
+    """
+    if options is None:
+        return ClaudeCodeOptions(
+            extra_args={"debug-to-stderr": None},
+            debug_stderr=buffer,
+        )
+    # Build a new options object preserving every set field. Mirroring
+    # the same key list as ``_merge_mcp`` below so we keep field coverage
+    # in sync if the SDK adds more options.
+    kwargs: dict[str, Any] = {}
+    if options.cwd is not None:
+        kwargs["cwd"] = options.cwd
+    if options.model is not None:
+        kwargs["model"] = options.model
+    if options.max_turns is not None:
+        kwargs["max_turns"] = options.max_turns
+    if options.system_prompt is not None:
+        kwargs["system_prompt"] = options.system_prompt
+    if options.append_system_prompt is not None:
+        kwargs["append_system_prompt"] = options.append_system_prompt
+    if options.allowed_tools is not None:
+        kwargs["allowed_tools"] = list(options.allowed_tools)
+    if options.disallowed_tools is not None:
+        kwargs["disallowed_tools"] = list(options.disallowed_tools)
+    if options.permission_mode is not None:
+        kwargs["permission_mode"] = options.permission_mode
+    if options.env is not None:
+        kwargs["env"] = dict(options.env)
+    if options.mcp_servers is not None:
+        kwargs["mcp_servers"] = dict(options.mcp_servers)
+    # Preserve any caller-supplied extra_args; merge in debug-to-stderr.
+    extra = dict(options.extra_args) if options.extra_args else {}
+    extra.setdefault("debug-to-stderr", None)
+    kwargs["extra_args"] = extra
+    kwargs["debug_stderr"] = buffer
+    try:
+        return ClaudeCodeOptions(**kwargs)
+    except TypeError:
+        # Older SDK versions may not accept every key here. Drop the
+        # debug fields and return the original options on the assumption
+        # that capturing stderr is best-effort.
+        kwargs.pop("extra_args", None)
+        kwargs.pop("debug_stderr", None)
+        try:
+            return ClaudeCodeOptions(**kwargs)
+        except TypeError:
+            return options
+
+
+def _format_spawn_exception(
+    exc: BaseException,
+    stderr_buffer: io.StringIO | None = None,
+    *,
+    max_stderr_chars: int = 1000,
+) -> str:
+    """Return a diagnostic-rich error message for a spawn failure (R10-013).
+
+    Combines the exception's str() with any ``exit_code``/``stderr``
+    attributes (set by ``ProcessError``), the ``__cause__`` chain, and
+    the tail of ``stderr_buffer``. The output replaces the SDK's
+    unhelpful ``"Check stderr output for details"`` placeholder so
+    operators see the actual stderr the subprocess emitted.
+    """
+    parts: list[str] = [f"{type(exc).__name__}: {exc}"]
+
+    exit_code = getattr(exc, "exit_code", None)
+    if exit_code is not None:
+        parts.append(f"exit_code={exit_code}")
+
+    sdk_stderr = getattr(exc, "stderr", None)
+    if sdk_stderr and sdk_stderr != "Check stderr output for details":
+        parts.append(f"sdk_stderr={sdk_stderr!s}")
+
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None and cause is not exc:
+        parts.append(f"cause={type(cause).__name__}: {cause}")
+
+    if stderr_buffer is not None:
+        captured = stderr_buffer.getvalue()
+        if captured:
+            tail = captured[-max_stderr_chars:]
+            parts.append(f"captured_stderr_tail=\n{tail}")
+
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +709,16 @@ async def spawn_sub_agent(
     # If the SDK still leaks (older versions, transport changes), we
     # also emit a SECURITY warning so the operator knows to inspect.
     result = ExecutionResult()
+    # R10-013: Wire a writable in-memory buffer into ``options.debug_stderr``
+    # plus ``extra_args={"debug-to-stderr": None}`` so the SDK's CLI
+    # subprocess streams its stderr into our buffer. When the subprocess
+    # dies before producing any messages (the F013 sub-agent spawn-time
+    # failure pattern: duration_ms=0, num_turns=0), the SDK raises
+    # ``ProcessError(stderr="Check stderr output for details")`` with no
+    # diagnostic. The buffer below captures the actual stderr we can
+    # surface in ``error_message`` so operators can act on the failure.
+    stderr_buffer = io.StringIO()
+    options = _attach_stderr_capture(options, stderr_buffer)
     stream: AsyncIterator[Message] | None = None
     # R9-001: Track whether we obtained a clean result so the finally
     # block can pick the right terminal status. Without this flag, a
@@ -646,7 +762,11 @@ async def spawn_sub_agent(
         raise
     except Exception as exc:
         result.is_error = True
-        result.error_message = str(exc)
+        # R10-013: Replace the SDK's placeholder
+        # "Command failed with exit code 1\nError output: Check stderr output for details"
+        # with the actual stderr we captured via ``debug_stderr`` plus
+        # ``exit_code`` / ``__cause__`` / ``args`` for diagnostic value.
+        result.error_message = _format_spawn_exception(exc, stderr_buffer)
     finally:
         # Best-effort close of the SDK stream so the SDK's own
         # ``query.close()`` finally-block runs (it terminates the

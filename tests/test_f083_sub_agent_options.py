@@ -486,10 +486,14 @@ class TestSpawnAgentWithOptions:
 
         assert len(captured_options) == 1
         passed_opts = captured_options[0]
-        assert passed_opts is opts
+        # R10-013: spawn_sub_agent now wraps options to install a
+        # debug-stderr buffer for diagnostic capture, so identity is no
+        # longer preserved. The contract under test is that the user's
+        # salient fields survive intact.
         assert "haiku" in passed_opts.model
         assert passed_opts.cwd == "/tmp/spawn-workspace"
         assert passed_opts.max_turns == 10
+        assert "debug-to-stderr" in (passed_opts.extra_args or {})
 
     def test_research_agent_uses_configured_options(self):
         """spawn_research_agent builds options with Perplexity MCP and model."""

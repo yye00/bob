@@ -227,6 +227,37 @@ class LoopTermination(enum.Enum):
     SHUTDOWN_REQUESTED = "shutdown_requested"
 
 
+# R10-015: Maximum number of free retries granted to a feature whose
+# sub-agent died at process spawn time (duration_ms < 100, num_turns == 0).
+# These transient failures should not consume the feature's
+# refinement-attempt budget, but we still cap them to avoid an infinite
+# loop when the local environment is permanently broken.
+_MAX_SPAWN_RETRIES = 3
+
+# R10-015: Threshold (in milliseconds) below which a result with
+# num_turns == 0 is treated as a process-spawn-time failure rather than
+# a substantive sub-agent error. The F013 incident showed
+# duration_ms == 0; we allow a small margin (100 ms) for clock jitter
+# and SDK setup overhead before classifying as "really ran".
+_SPAWN_FAILURE_DURATION_MS = 100
+
+
+def _looks_like_spawn_failure(result: "ExecutionResult") -> bool:
+    """Return True when ``result`` looks like a process-spawn-time failure.
+
+    A sub-agent that died before the message loop started has
+    ``num_turns == 0`` and a sub-100ms ``duration_ms`` (typically 0).
+    A sub-agent that ran 25 turns and errored has both fields populated.
+    The two cases must be distinguished so the orchestrator only grants
+    a free retry to the former (R10-015).
+    """
+    if not getattr(result, "is_error", False):
+        return False
+    duration = result.duration_ms or 0
+    turns = result.num_turns or 0
+    return turns == 0 and duration < _SPAWN_FAILURE_DURATION_MS
+
+
 # ---------------------------------------------------------------
 # Per-project advisory file lock
 # ---------------------------------------------------------------
@@ -1689,6 +1720,11 @@ class OrchestrationLoop:
         self._expected_total_cost: float = 0.0
         self._refresh_project_cost_cache(_priming=True)
         self._expected_total_cost = self._project_total_cost
+        # R10-015: per-feature counter of free retries granted for
+        # process-spawn-time failures (duration_ms < 100ms, num_turns == 0).
+        # Capped at ``_MAX_SPAWN_RETRIES`` so a permanently broken local
+        # environment cannot trigger an infinite loop. Keys are feature.id.
+        self._spawn_failure_counts: dict[str, int] = {}
 
     def request_shutdown(self) -> None:
         """Request graceful shutdown of the loop."""
@@ -2650,20 +2686,29 @@ class OrchestrationLoop:
             agent_run = type("_FakeRun", (), {"id": None})()
             return SpawnResult(execution_result=timeout_exec, agent_run=agent_run)
 
-        # F113: Run verification BEFORE marking the feature completed so
-        # that a verification failure does NOT cascade 'ready' status to
-        # dependent features. Verification only runs when the sub-agent
-        # didn't itself error.
+        # F113 + R10-014: Run verification BEFORE marking the feature
+        # completed so that a verification failure does NOT cascade
+        # 'ready' status to dependent features. Verification runs even
+        # when the sub-agent reported is_error=True — the workspace may
+        # already contain correct work from an earlier attempt, in which
+        # case the feature is genuinely done despite the sub-agent crash
+        # (the F013 / PyQt6 case). Verification, not the sub-agent exit
+        # status, is the source of truth.
         result = spawn_result.execution_result
         verification_passed: bool = True
         verification_summary: str | None = None
         verification_result: dict | None = None
+        # Track whether the sub-agent actually reported an error before
+        # we possibly clear it via the R10-014 reverification path. This
+        # is needed for the spawn-time-failure detection (R10-015) and
+        # for accurate logging.
+        sub_agent_reported_error = bool(result.is_error)
         # Set if a git hook rejected the post-verification commit. When True,
         # the feature is reverted to 'needs_human' and dependent features must
         # NOT be cascaded as if the feature had completed successfully.
         git_hook_failed: bool = False
 
-        if not result.is_error and self.workspace:
+        if self.workspace:
             try:
                 verification_result = run_verification_checklist(
                     workspace=self.workspace,
@@ -2672,20 +2717,87 @@ class OrchestrationLoop:
                 )
                 verification_passed = bool(verification_result.get("passed", True))
                 verification_summary = verification_result.get("summary")
+                # R10-014: a "passed" result with no acceptance-criteria
+                # check is NOT positive evidence that the feature's work
+                # is done. The base verification checklist passes vacuously
+                # for an empty workspace (tests not required, no source
+                # to scan, no acceptance criteria to fail). Only promote
+                # an erroring sub-agent's feature to ``completed`` when
+                # the ``acceptance_criteria_met`` check is present AND
+                # passed — that's the one check that actually proves
+                # the spec is satisfied.
+                _ac_check = next(
+                    (
+                        c
+                        for c in verification_result.get("checks") or ()
+                        if c.get("name") == "acceptance_criteria_met"
+                    ),
+                    None,
+                )
+                verification_substantive = bool(
+                    _ac_check and _ac_check.get("passed")
+                )
                 if verification_passed:
-                    logger.info(
-                        "Feature %s passed verification checklist", feature.id
-                    )
+                    if sub_agent_reported_error and verification_substantive:
+                        # R10-014: workspace already contains correct work
+                        # despite the sub-agent crash (typical pattern: an
+                        # earlier attempt produced the artefacts; the
+                        # current spawn died at process startup before
+                        # discovering they're already there). Clear the
+                        # error flags so handle_execution_result marks
+                        # the feature 'completed' and cascades dependents.
+                        logger.info(
+                            "Sub-agent for feature %s reported error "
+                            "(error_message=%r) but verification passes "
+                            "against the existing workspace — treating as "
+                            "completed (R10-014).",
+                            feature.id,
+                            result.error_message,
+                        )
+                        result.is_error = False
+                        result.error_message = ""
+                    elif sub_agent_reported_error:
+                        # Verification passed vacuously — no
+                        # ``acceptance_criteria_met`` check was recorded
+                        # OR the criteria check did not pass. Without a
+                        # positive substantive check we don't have
+                        # evidence the workspace really contains the
+                        # feature's work. Leave ``is_error`` alone so the
+                        # failure path applies — better to retry / mark
+                        # needs_human than to silently promote a crashed
+                        # run to completed.
+                        logger.info(
+                            "Sub-agent for feature %s errored; verification "
+                            "returned passed=True but no substantive "
+                            "acceptance-criteria check was recorded "
+                            "(summary=%r). Treating as a real failure to "
+                            "avoid silent completion (R10-014 guard).",
+                            feature.id,
+                            verification_summary,
+                        )
+                    else:
+                        logger.info(
+                            "Feature %s passed verification checklist",
+                            feature.id,
+                        )
                 else:
-                    logger.warning(
-                        "Feature %s failed verification checklist: %s",
-                        feature.id,
-                        verification_summary,
-                    )
-                    logger.error(
-                        "Feature %s will be marked needs_human due to failed verification",
-                        feature.id,
-                    )
+                    if sub_agent_reported_error:
+                        logger.warning(
+                            "Feature %s: sub-agent errored AND verification "
+                            "failed — treating as a real failure: %s",
+                            feature.id,
+                            verification_summary,
+                        )
+                    else:
+                        logger.warning(
+                            "Feature %s failed verification checklist: %s",
+                            feature.id,
+                            verification_summary,
+                        )
+                        logger.error(
+                            "Feature %s will be marked needs_human due to failed verification",
+                            feature.id,
+                        )
             except Exception as exc:
                 logger.error(
                     "Verification crashed for feature %s; treating as failure (severity: needs human review)",
@@ -2754,8 +2866,50 @@ class OrchestrationLoop:
                     "Feature %s interrupted during graceful shutdown",
                     feature.id,
                 )
+            elif _looks_like_spawn_failure(result) and (
+                self._spawn_failure_counts.get(feature.id, 0) < _MAX_SPAWN_RETRIES
+            ):
+                # R10-015: Sub-agent died at process spawn time
+                # (duration_ms < 100ms, num_turns == 0). This is almost
+                # always a transient SDK / MCP startup issue and should
+                # NOT consume a refinement attempt — the sub-agent never
+                # got a chance to do real work. Skip
+                # ``increment_refinement_attempts``, the confidence decay
+                # (R10-011), and the proxy-cost log bump; just leave the
+                # feature at ``ready`` so the loop picks it up again on
+                # the next iteration. Capped at ``_MAX_SPAWN_RETRIES`` so
+                # a permanently broken local environment cannot create an
+                # infinite loop.
+                self._spawn_failure_counts[feature.id] = (
+                    self._spawn_failure_counts.get(feature.id, 0) + 1
+                )
+                db.update_feature(feature.id, status="ready")
+                logger.warning(
+                    "Sub-agent for feature %s appears to have failed at "
+                    "process spawn (duration_ms=%s, num_turns=%s). "
+                    "Treating as transient; retrying without charging "
+                    "refinement_attempts (free retry %d/%d). "
+                    "error_message=%r",
+                    feature.id,
+                    result.duration_ms,
+                    result.num_turns,
+                    self._spawn_failure_counts[feature.id],
+                    _MAX_SPAWN_RETRIES,
+                    result.error_message,
+                )
+                # Skip the rest of the failure-handling path (no RCA,
+                # no decay, no refinement increment).
+                updated_feature = None
             else:
                 # F071: Retry logic — check refinement attempts before giving up
+                if _looks_like_spawn_failure(result):
+                    logger.warning(
+                        "Feature %s exceeded the %d-spawn-failure cap; "
+                        "treating subsequent spawn-time errors as a real "
+                        "failure to avoid an infinite retry loop.",
+                        feature.id,
+                        _MAX_SPAWN_RETRIES,
+                    )
                 updated_feature = db.increment_refinement_attempts(feature.id)
 
                 # R10-011: Decay confidence so the low-confidence research
