@@ -1195,3 +1195,184 @@ class TestValidatorFailsClosedOnException:
             f"Old permissive language leaked into new fail-closed path: "
             f"{details!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# R10-012: pytest: criterion fails on test-in-class — fallback to -k
+# ---------------------------------------------------------------------------
+#
+# Real bob3 run against examples/04_swedish_circle_spec.yaml exposed this:
+# specs declare strict pytest nodeids like
+# ``pytest: tests/test_geometry.py::test_ground_y_interpolates_linearly``.
+# When the agent (correctly, idiomatically) groups related tests in a class
+# the actual nodeid becomes
+# ``tests/test_geometry.py::TestGroundSurfaceInterpolation::test_ground_y_interpolates_linearly``
+# and the strict path::name lookup fails with exit 4 / "not found", which
+# is wrongly interpreted as a verification failure.
+#
+# Fix: when the strict lookup fails AND pytest output reports "not found" /
+# "no tests ran" AND the expression contains ``::``, retry as
+# ``pytest <file_prefix> -k <test_name>``. ``-k`` substring-matches on the
+# test name, finding both free-function and class-based variants.
+#
+# The fallback is gated tightly: real test failures (exit 1, "FAILED" /
+# "AssertionError") are NOT re-run with -k — that would mask genuine bugs.
+
+
+@pytest.fixture
+def workspace_with_class_based_test(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Workspace where the test the spec references lives inside a class.
+
+    Mirrors the swedish-circle F003 case: spec writes
+    ``tests/test_geometry.py::test_ground_y_interpolates_linearly`` while
+    the agent organizes that test inside ``TestGroundSurfaceInterpolation``.
+    """
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_file = tests_dir / "test_geometry.py"
+    test_file.write_text(
+        textwrap.dedent(
+            """
+            class TestGroundSurfaceInterpolation:
+                def test_ground_y_interpolates_linearly(self):
+                    assert 1 + 1 == 2
+
+                def test_ground_y_outside_range_raises(self):
+                    raise AssertionError("intentionally failing test")
+            """
+        ).strip()
+        + "\n"
+    )
+    return tmp_path
+
+
+class TestPytestCriterionClassFallback:
+    """R10-012 — strict nodeid + ``-k`` fallback for test-in-class."""
+
+    def test_pytest_criterion_finds_free_function(self, workspace_with_passing_test):
+        """Baseline regression: a free-function test still resolves on the
+        strict path::name nodeid without any fallback."""
+        passed, details = _check_criterion_with_details(
+            criterion="pytest: tests/test_real.py::test_passes",
+            workspace=workspace_with_passing_test,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, f"strict free-function lookup failed: {details!r}"
+        assert details == ""
+
+    def test_pytest_criterion_finds_class_based_test_via_fallback(
+        self, workspace_with_class_based_test
+    ):
+        """The fix: the spec asks for ``test_ground_y_interpolates_linearly``
+        with the bare path::name nodeid; the agent put the test in a class.
+        The verifier must fall back to ``-k`` and find it.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion=(
+                "pytest: tests/test_geometry.py::test_ground_y_interpolates_linearly"
+            ),
+            workspace=workspace_with_class_based_test,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, (
+            f"R10-012: class-based test was not found via -k fallback: {details!r}"
+        )
+        assert details == ""
+
+    def test_pytest_criterion_falls_back_only_on_not_found(
+        self, workspace_with_class_based_test
+    ):
+        """A real test failure (assertion error) must NOT trigger the -k
+        fallback. The fallback is gated on "not found" / "no tests ran" —
+        actual failures should surface as failures, not get silently retried.
+
+        We point at the class-based ``test_ground_y_outside_range_raises``
+        via its full nodeid (so the strict lookup finds it and runs it);
+        the test itself raises AssertionError, so it must stay a failure.
+        """
+        passed, details = _check_criterion_with_details(
+            criterion=(
+                "pytest: tests/test_geometry.py"
+                "::TestGroundSurfaceInterpolation"
+                "::test_ground_y_outside_range_raises"
+            ),
+            workspace=workspace_with_class_based_test,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        # We should see the strict-attempt failure surface, not a -k
+        # fallback summary (the test was found and failed; no fallback
+        # should have happened).
+        assert "exit=" in details
+        # If the fallback wrongly fired we'd see the "-k fallback" tag in
+        # the message. Make sure we did not.
+        assert "-k fallback" not in details, (
+            f"fallback wrongly fired for a real test failure: {details!r}"
+        )
+
+    def test_pytest_criterion_reports_both_attempts_on_dual_failure(
+        self, workspace_with_passing_test
+    ):
+        """When the strict nodeid is missing AND the -k name is also missing,
+        the error message must include details from BOTH attempts so the
+        spec author can tell the two failure modes apart.
+        """
+        # The test name "test_does_not_exist_anywhere" matches no test in
+        # the workspace by either strict nodeid or -k substring.
+        passed, details = _check_criterion_with_details(
+            criterion=(
+                "pytest: tests/test_real.py::test_does_not_exist_anywhere"
+            ),
+            workspace=workspace_with_passing_test,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is False
+        # The dual-failure error message should mention BOTH attempts.
+        assert "strict" in details.lower(), (
+            f"missing strict-attempt section in dual-failure message: {details!r}"
+        )
+        assert "-k" in details or "fallback" in details.lower(), (
+            f"missing fallback-attempt section in dual-failure message: {details!r}"
+        )
+        # Both exits should be reported.
+        assert "strict exit=" in details
+        assert "fallback exit=" in details
+
+    def test_pytest_criterion_strict_pass_does_not_trigger_fallback(
+        self, workspace_with_passing_test, monkeypatch
+    ):
+        """Performance/correctness: when the strict nodeid lookup succeeds,
+        the fallback subprocess must NEVER be spawned. We assert this by
+        counting calls into ``_run_with_pgroup_timeout``.
+        """
+        from bob3 import enhanced_verification as ev
+
+        call_count = {"n": 0}
+        original = ev._run_with_pgroup_timeout
+
+        def counting(*args, **kwargs):
+            call_count["n"] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(ev, "_run_with_pgroup_timeout", counting)
+
+        passed, details = _check_criterion_with_details(
+            criterion="pytest: tests/test_real.py::test_passes",
+            workspace=workspace_with_passing_test,
+            is_python_project=True,
+            is_cmake_project=False,
+            is_opm_project=False,
+        )
+        assert passed is True, details
+        assert call_count["n"] == 1, (
+            f"strict pass must not spawn the -k fallback subprocess; "
+            f"got {call_count['n']} pytest invocations"
+        )

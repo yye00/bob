@@ -2115,6 +2115,32 @@ findings:
     trigger never re-fires. Confidence should decrement (e.g., subtract 0.15 per failed attempt,
     configurable via BOB3_CONFIDENCE_DECAY_PER_FAILURE) so research becomes more likely on
     the second attempt regardless of the failure-count threshold.
+- id: R10-012
+  title: 'pytest: criterion fails on test-in-class even when test name matches'
+  pattern: strict pytest nodeid lookup; ignores conventional class-based test organization
+  files:
+  - src/bob3/enhanced_verification.py
+  severity: high
+  status: fixed
+  tags:
+  - verification
+  - spec-strictness
+  - test-organization
+  fixed_in: pending-r10-012-pytest-class-fallback
+  fixed_at: '2026-05-04'
+  notes: "Real bob3 run against examples/04_swedish_circle_spec.yaml exposed this. Spec F003\
+    \ declares: pytest: tests/test_geometry.py::test_ground_y_interpolates_linearly. The agent\
+    \ (correctly, idiomatically) writes tests organized in classes:\n    class TestGroundSurfaceInterpolation:\n\
+    \        def test_ground_y_interpolates_linearly(self): ...\nStrict pytest nodeid resolution\
+    \ then sees nodeid tests/test_geometry.py::TestGroundSurfaceInterpolation::test_ground_y_interpolates_linearly\
+    \ and reports 'not found' / exit 4 when the spec asked for the bare path::test_x form.\
+    \ The criterion is wrongly marked failed and the feature flips to needs_human, even though\
+    \ the test is present and passes. User-facing impact: a sub-agent doing the right thing\
+    \ (grouping related tests in a class) is punished by the verifier's spec-strictness. Fix:\
+    \ when the strict nodeid lookup fails with exit 4 and stdout/stderr says 'not found' or\
+    \ 'no tests ran', re-run as 'pytest <prefix> -k <test_name>' so the substring matcher\
+    \ finds the test whether it is a free function or in a class. If both attempts fail, the\
+    \ error message should include the tail from BOTH attempts."
 recurring_patterns:
 - tag: refactor-debt
   occurrences:

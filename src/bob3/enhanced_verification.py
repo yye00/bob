@@ -391,6 +391,18 @@ def _run_with_pgroup_timeout(
 # instead of crashing the verification pipeline.
 
 
+# R10-012: phrases pytest emits when a strict nodeid does not resolve to any
+# collected test. We use these markers as the trigger for the test-in-class
+# fallback (re-running with ``-k <test_name>``) so a sub-agent that organizes
+# its tests in a class (idiomatic Python) is not punished by spec-strict
+# nodeid matching. Matching is case-insensitive and substring-based against
+# the combined stdout+stderr.
+_PYTEST_NOT_FOUND_MARKERS: tuple[str, ...] = (
+    "not found",
+    "no tests ran",
+)
+
+
 def _run_pytest_criterion(
     workspace: pathlib.Path,
     expression: str,
@@ -407,6 +419,14 @@ def _run_pytest_criterion(
     is collected, but some configs/plugins make that exit 0; double-check
     the stdout summary either way).
 
+    R10-012: when the strict nodeid lookup fails AND pytest's output reports
+    "not found" / "no tests ran" (i.e. the test was missing, not failing),
+    we fall back to ``pytest <file_prefix> -k <test_name>`` so a test that
+    the agent organized inside a class still resolves. ``-k`` filters by
+    substring on the test name, finding free-function and class-based tests
+    alike. Real test failures (assertion errors, fixture errors, ...) do
+    NOT trigger the fallback — only the "missing test" exit path does.
+
     All exceptional outcomes — timeout, missing python, missing workspace,
     or arbitrary errors — return ``(False, <human-readable reason>)``.
     """
@@ -416,6 +436,8 @@ def _run_pytest_criterion(
     if not expression:
         return False, "pytest criterion is empty"
 
+    # First attempt: strict nodeid lookup with the ``--`` sentinel.
+    #
     # The ``--`` sentinel separates pytest's own flags from positional
     # arguments. Without it, an attacker-controlled criterion like
     # ``pytest: --co tests/`` would land in the flag-position of the
@@ -460,6 +482,74 @@ def _run_pytest_criterion(
     passed = exit_code == 0 and "passed" in stdout.lower()
     if passed:
         return True, ""
+
+    # ------------------------------------------------------------------
+    # R10-012: test-in-class fallback. Detect "missing test" output and,
+    # if the expression carries a ``::`` separator, retry with ``-k``.
+    # ------------------------------------------------------------------
+    combined = (stdout + stderr).lower()
+    looks_missing = any(marker in combined for marker in _PYTEST_NOT_FOUND_MARKERS)
+    if (
+        exit_code != 0
+        and looks_missing
+        and "::" in expression
+    ):
+        # Split off the final ``::``-separated component as the test name
+        # and treat everything before it as the file prefix. Typical input:
+        #   ``tests/test_geometry.py::test_ground_y_interpolates_linearly``
+        # yields prefix=``tests/test_geometry.py`` and
+        # name=``test_ground_y_interpolates_linearly``. The ``-k`` flag
+        # matches by substring on the test name, so the test resolves
+        # whether it lives free at module scope or inside a class.
+        prefix, _, test_name = expression.rpartition("::")
+        prefix = prefix.strip()
+        test_name = test_name.strip()
+        if prefix and test_name:
+            fallback_cmd = [
+                sys.executable,
+                "-m",
+                "pytest",
+                "--tb=no",
+                "-q",
+                "--color=no",
+                prefix,
+                "-k",
+                test_name,
+            ]
+            try:
+                fb_stdout, fb_stderr, fb_exit, fb_timed_out = _run_with_pgroup_timeout(
+                    fallback_cmd,
+                    cwd=workspace,
+                    timeout_s=timeout,
+                )
+            except FileNotFoundError as e:
+                return False, f"pytest criterion failed to launch python: {e}"
+            except Exception as e:  # pragma: no cover - defensive
+                return False, f"pytest criterion errored: {e}"
+
+            if fb_timed_out:
+                return (
+                    False,
+                    f"pytest criterion timed out after {timeout}s on -k fallback: "
+                    f"{expression!r}",
+                )
+
+            fb_passed = fb_exit == 0 and "passed" in fb_stdout.lower()
+            if fb_passed:
+                return True, ""
+
+            # Both attempts failed. Surface details from BOTH so the spec
+            # author can see whether the strict nodeid was wrong or the
+            # test itself is failing.
+            strict_tail = (stdout + stderr)[-300:].strip()
+            fallback_tail = (fb_stdout + fb_stderr)[-300:].strip()
+            return (
+                False,
+                f"pytest criterion failed (strict exit={exit_code}, "
+                f"-k fallback exit={fb_exit}) for {expression!r}: "
+                f"strict: {strict_tail} | "
+                f"fallback (-k {test_name}): {fallback_tail}",
+            )
 
     tail = (stdout + stderr)[-600:]
     return (
