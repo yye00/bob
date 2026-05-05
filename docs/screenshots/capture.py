@@ -24,7 +24,7 @@ from swedish_circle.material import Material, STIFF_CLAY
 from swedish_circle.search import search_critical_circle
 
 
-WINDOW_W, WINDOW_H = 1280, 800
+WINDOW_W, WINDOW_H = 1600, 900  # 16:9 for slides
 
 
 def process_events(times: int = 6) -> None:
@@ -41,8 +41,13 @@ def grab(widget, out: Path) -> None:
 
 
 def fit_view(canvas, xmin: float, xmax: float, ymin: float, ymax: float,
-             margin: float = 1.0) -> None:
-    """Frame the canvas to a specific world-space bounding box."""
+             margin: float = 1.0, fill: float = 0.99) -> None:
+    """Frame the canvas to a specific world-space bounding box.
+
+    ``fill`` controls how aggressively the bounding box stretches to the
+    edges of the canvas (1.0 = touch the edges; default 0.99 leaves a
+    1% safety margin so axes labels aren't cut by the dock border).
+    """
     xmin -= margin; xmax += margin
     ymin -= margin; ymax += margin
     w = canvas.width(); h = canvas.height()
@@ -50,7 +55,7 @@ def fit_view(canvas, xmin: float, xmax: float, ymin: float, ymax: float,
     world_h = ymax - ymin
     if world_w <= 0 or world_h <= 0:
         return
-    scale = min(w / world_w, h / world_h) * 0.92
+    scale = min(w / world_w, h / world_h) * fill
     cx = (xmin + xmax) / 2
     cy = (ymin + ymax) / 2
     t = QTransform()
@@ -133,7 +138,7 @@ def main() -> int:
     w.slope_profile = slope
     w.material = slope.material
     w.canvas.set_slope(slope)
-    fit_view(w.canvas, 0.0, 35.0, 0.0, 12.0, margin=2.0)
+    fit_view(w.canvas, 0.0, 35.0, 0.0, 11.0, margin=1.0)
     w.property_panel.update_from_window(w)
     grab(w, out_dir / "02_slope_geometry.png")
 
@@ -151,7 +156,7 @@ def main() -> int:
     w.last_search_result = result
     # Suppress the FoS contour for this engineering-clean view.
     overlay._render_fos_contour = lambda painter: None
-    fit_view(w.canvas, 0.0, 35.0, -2.0, 12.0, margin=1.5)
+    fit_view(w.canvas, 0.0, 35.0, -1.0, 11.0, margin=1.0)
     w.canvas.update()
     w.property_panel.update_from_window(w)
     grab(w, out_dir / "03_critical_circle.png")
@@ -161,10 +166,10 @@ def main() -> int:
     overlay._render_fos_contour = AnalysisOverlay._render_fos_contour.__get__(
         overlay, AnalysisOverlay,
     )
-    xmin, xmax, ymin, ymax = result.grid_extents
-    fx_min = min(0.0, xmin); fx_max = max(35.0, xmax)
-    fy_min = min(-2.0, ymin); fy_max = max(12.0, ymax)
-    fit_view(w.canvas, fx_min, fx_max, fy_min, fy_max, margin=1.0)
+    # The heatmap is now clipped to the slope's x-domain and to the
+    # bottom half of the FoS range, so we can frame to slope + a bit
+    # of headroom above to capture the critical-center neighborhood.
+    fit_view(w.canvas, 0.0, 35.0, -1.0, 24.0, margin=1.0)
     w.canvas.update()
     grab(w, out_dir / "04_fos_contour.png")
 
@@ -190,10 +195,9 @@ def main() -> int:
         overlay, AnalysisOverlay,
     )
     w.last_search_result = result3
-    xmin, xmax, ymin, ymax = result3.grid_extents
-    fx_min = min(0.0, xmin); fx_max = max(55.0, xmax)
-    fy_min = min(-2.0, ymin); fy_max = max(18.0, ymax)
-    fit_view(w.canvas, fx_min, fx_max, fy_min, fy_max, margin=1.0)
+    # Frame to slope footprint plus enough vertical room to show the
+    # heatmap above the upper plateau.
+    fit_view(w.canvas, 0.0, 55.0, -1.0, 38.0, margin=1.0)
     w.canvas.update()
     w.property_panel.update_from_window(w)
     grab(w, out_dir / "05_multi_bench.png")
@@ -216,7 +220,7 @@ def main() -> int:
     overlay._search_result = result2
     overlay._render_fos_contour = lambda painter: None
     w.last_search_result = result2
-    fit_view(w.canvas, 0.0, 25.0, -2.0, 10.0, margin=1.5)
+    fit_view(w.canvas, 0.0, 25.0, -1.0, 9.0, margin=1.0)
     w.canvas.update()
     w.property_panel.update_from_window(w)
     grab(w, out_dir / "06_steeper_slope.png")
