@@ -318,33 +318,52 @@ zoomable/pannable canvas, drawing tools, file I/O, and a background
 search engine.
 
 **Empty MainWindow on launch** — menus (File / Edit / View / Analysis /
-Help), toolbar with primary actions, dockable Properties panel, and a
-status bar that shows the current grid spacing as you zoom.
+Help), toolbar with primary actions, dockable Properties panel showing
+the current state (default material, no slope yet), and a status bar
+that shows the grid spacing as you zoom.
 
 ![Empty main window](docs/screenshots/01_empty_window.png)
 
 **Abramson textbook slope loaded** — 2H:1V slope, 10 m height, with a
-flat bench beyond the crest. The canvas autoscales to fit the geometry
-and the grid spacing adapts to the zoom level (5 m here).
+flat bench beyond the crest. Properties panel updates with geometry
+and material parameters as soon as the slope is set.
 
 ![Slope loaded](docs/screenshots/02_slope_geometry.png)
 
 **Bishop critical-circle result** — slip surface in red, per-slice
-boundaries drawn through the failure mass, framed for engineering
-review. Bob3's grid search converges on FoS ≈ 1.90 for this geometry.
+boundaries drawn through the failure mass. Properties panel shows the
+analysis results live: FoS = 1.902, critical center, radius, and how
+many circles were evaluated.
 
 ![Critical circle result](docs/screenshots/03_critical_circle.png)
 
-**Steeper 1.5H:1V slope, lower FoS** — same workflow, different
-geometry and material (c′=15 kPa, φ′=18°). The critical surface is
-shallower and FoS drops to 1.46, illustrating how the search adapts.
+**Full FoS heatmap** — same analysis with the smooth FoS contour
+overlay turned on. Red marks where critical (low-FoS) circle centers
+cluster; green marks safe centers; the colormap is RdYlGn-reversed and
+the heatmap is hole-filled to the immediate halo of valid centers
+rather than bleeding across the entire search box.
 
-![Steeper slope result](docs/screenshots/04_steeper_slope.png)
+![FoS contour heatmap](docs/screenshots/04_fos_contour.png)
+
+**Multi-bench cut slope with phreatic surface** — seven-vertex
+geometry (toe → bench → mid-crest → bench → upper plateau, 16 m
+overall), water table running through the lower benches, stiff-clay
+material (c′=75 kPa, φ′=20°). The properties panel reflects the new
+state in full. Bishop's search returns FoS = 2.71 for this much
+heavier-section problem.
+
+![Multi-bench slope](docs/screenshots/05_multi_bench.png)
+
+**Steeper 1.5H:1V slope** — different geometry and material (c′=15
+kPa, φ′=18°). The critical surface is shallower and FoS drops to 1.46,
+showing how a small geometry change shifts the result.
+
+![Steeper slope result](docs/screenshots/06_steeper_slope.png)
 
 **Material editor** — Mohr-Coulomb soil parameters with a preset
 library, unit-aware spinbox inputs, and OK / Cancel commit semantics.
 
-![Material dialog](docs/screenshots/05_material_dialog.png)
+![Material dialog](docs/screenshots/07_material_dialog.png)
 
 The build encountered (and exposed) several real bugs along the way —
 documented in `reviews/findings.yaml` as `R10-*` entries. They include
