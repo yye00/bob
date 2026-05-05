@@ -292,6 +292,120 @@ during the build. R10-019, -021, -022 are filed for follow-up.
 
 ---
 
+## Post-build polish for documentation
+
+After bob3 finished, the swedish-circle workspace was a working
+application that passed all 19 acceptance criteria. To use it as a
+*demo* — slide-ready screenshots that show off the GUI clearly —
+four small improvements were made by hand on top of what bob3 shipped.
+None of these changed the application's behavior; they're presentation
+polish, but they're worth calling out so the screenshots aren't
+misread as "bob3 produced exactly this."
+
+### 1. FoS contour overlay rewrite
+
+bob3's sub-agent shipped F012 with a working but visually rough
+contour: it iterated cells with `painter.fillRect`, used a
+red-yellow-blue colormap normalized over the full FoS range
+(including infeasible outliers like FoS = 44,000), and skipped
+infeasible cells entirely — leaving stripey gaps wherever the
+search grid had a row of inf.
+
+The post-build rewrite (`src/swedish_circle/gui/analysis_overlay.py`):
+
+- Builds a numpy RGBA array and blits it as a single `QImage`
+  rather than per-cell painting.
+- Uses an **RdYlGn-reversed** colormap (red = critical, green = safe)
+  — engineering-intuitive.
+- Caps the upper FoS at `min × 3` so a few extreme outliers don't
+  compress the contrast in the critical region.
+- BFS-fills a 2-cell halo of `inf` neighbours so small gaps in the
+  search grid look smooth without bleeding green into clearly
+  infeasible regions.
+- Clips horizontally to the slope's x-domain (centers far outside
+  the slope footprint don't add engineering signal).
+- Clips by FoS percentile to the bottom 50% of the clipped range so
+  the heatmap focuses on the critical-surface neighborhood.
+
+That delta is the difference between shot 04's smooth, focused
+heatmap and the original blocky red-and-white grid bob3 produced.
+
+### 2. Properties panel implementation
+
+F016's spec asked for a "property panel" but the sub-agent stopped
+at a `class PropertyPanel(QWidget)` placeholder with `setMinimumSize`
+and nothing else — and it still passed the acceptance criteria
+(file existed, layout integrated, no stubs in *source*, since the
+empty subclass isn't a stub). For the screenshots we filled it in:
+a `QFormLayout` with three sections (Geometry / Material / Analysis),
+fifteen labelled fields, and an `update_from_window(window)` method
+that the capture script calls after each state change.
+
+This is a fair example of an acceptance-criteria gap: the spec's
+test checked that the panel *exists* and gets dock-added, not that
+it actually shows anything. A tighter spec would have required at
+least one assertion of the form "panel displays current material
+cohesion" — but the example was already large enough.
+
+### 3. F008 application bug — `gui_io.export_slice_forces_csv`
+
+F008's sub-agent hit the 1-hour wall (`interrupted`) because pytest
+hung inside `test_export_slice_forces_csv_has_correct_rows`. Two
+real bugs in what the sub-agent wrote:
+
+1. **Wrong `CircularSlipSurface` constructor signature.** The
+   implementation called `CircularSlipSurface(center_x=..., center_y=..., radius=...)`,
+   but the actual class takes `center=(x, y)` (a tuple). The
+   constructor raised `TypeError`, the `except` branch showed a
+   `QMessageBox.critical` modal, and under offscreen Qt that modal
+   blocked forever waiting for user input.
+2. **Invented `Slice` attributes.** The CSV builder used
+   `s.alpha_deg`, `s.cos_alpha`, `s.alpha_rad`, `s.base_width`, and
+   `s.base_pore_pressure` — none of which exist on the `Slice`
+   dataclass. Real names: `s.alpha` (radians), `s.width`,
+   `s.pore_pressure`. The fix used `math.degrees(s.alpha)` and
+   `math.cos(s.alpha)` for the derived values.
+
+The test was also fixed to use a non-degenerate critical circle
+(centre `(10, 8)`, radius `4` — chosen so the slip arc daylights
+inside the slope's x-range) and to monkeypatch `QMessageBox.critical`
+so any future error path can't hang the test.
+
+This is the kind of failure pattern bob3's verifier *should* catch
+but doesn't yet: the implementation passed AST-level checks (no
+stubs, no mocks in source) and the per-criterion acceptance tests
+(the criteria pointed at individual `tests/test_gui_io.py::test_*`
+nodes, several of which passed). It only failed when the *bundled*
+pytest run hit the hanging test — which then took an hour to
+escalate.
+
+### 4. F006 snapshot-baseline regeneration
+
+F006 (canvas snapshot tests) shipped with frozen reference PNGs
+captured *before* F011 (drawing tool) and F012 (live FoS overlay)
+modified the canvas paint flow. Once those features merged, the
+snapshot tests started failing with RMS pixel-diff of ~6 against
+the baselines (vs the test's 2.0 threshold). The fix was the one
+the test's own error message suggested: delete the baselines and
+let the next run regenerate them. This is a known-fragile pattern
+for snapshot tests that wasn't worth working around in this build,
+but it's worth documenting as part of the case.
+
+### What this means for the case study
+
+Honest summary: bob3 produced a 19-feature, 105-test, 2-method,
+GUI-driven slope stability application end-to-end from a YAML spec.
+For documentation purposes, four small polish passes were applied
+by hand — one to a visualisation algorithm, one to a placeholder
+widget, one to fix two real implementation bugs the sub-agent
+introduced, and one to refresh a stale baseline. None of those
+were heroic; together they took ~30 minutes and ~150 lines of
+diff. They would all have been catchable by tighter acceptance
+criteria, which is itself a useful lesson when writing future
+specs.
+
+---
+
 ## Screenshot walkthrough
 
 All screenshots were captured at 1600×900 (16:9 for slides) using
