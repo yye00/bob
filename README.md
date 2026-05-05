@@ -312,6 +312,11 @@ on circular slip surfaces, with critical-circle search and a PyQt6 GUI).
 Bob3 built it end-to-end from the spec, including V&V tests against
 Taylor's stability chart and Abramson's textbook example.
 
+For the full case study — what the Swedish Circle method is, how the
+build was driven, what got escalated, which bob3 features it
+exercised, and a per-shot walkthrough — see
+[`docs/swedish_circle_example.md`](docs/swedish_circle_example.md).
+
 The screenshots below were captured from the GUI bob3 produced — a
 PyQt6 desktop application with menus, toolbar, dockable property panel,
 zoomable/pannable canvas, drawing tools, file I/O, and a background
