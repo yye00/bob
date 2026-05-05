@@ -312,30 +312,39 @@ on circular slip surfaces, with critical-circle search and a PyQt6 GUI).
 Bob3 built it end-to-end from the spec, including V&V tests against
 Taylor's stability chart and Abramson's textbook example.
 
-The screenshots below were captured from the GUI bob3 produced.
+The screenshots below were captured from the GUI bob3 produced — a
+PyQt6 desktop application with menus, toolbar, dockable property panel,
+zoomable/pannable canvas, drawing tools, file I/O, and a background
+search engine.
 
-**Empty MainWindow on launch** — menus, toolbar, dockable Properties panel,
-status bar with current grid spacing.
+**Empty MainWindow on launch** — menus (File / Edit / View / Analysis /
+Help), toolbar with primary actions, dockable Properties panel, and a
+status bar that shows the current grid spacing as you zoom.
 
 ![Empty main window](docs/screenshots/01_empty_window.png)
 
 **Abramson textbook slope loaded** — 2H:1V slope, 10 m height, with a
-flat bench beyond the crest. Geometry is autoscaled to fit the canvas.
+flat bench beyond the crest. The canvas autoscales to fit the geometry
+and the grid spacing adapts to the zoom level (5 m here).
 
-![Slope loaded](docs/screenshots/02_with_slope.png)
+![Slope loaded](docs/screenshots/02_slope_geometry.png)
 
-**After Bishop search** — critical slip circle (red), per-slice
-boundaries (vertical lines), and the FoS contour overlay across the
-search grid. For this geometry bob3 finds critical FoS ≈ 1.9 with
-Bishop's Simplified, vs the textbook value of ~1.37 — within the
-expected variability of grid search density.
+**Bishop critical-circle result** — slip surface in red, per-slice
+boundaries drawn through the failure mass, framed for engineering
+review. Bob3's grid search converges on FoS ≈ 1.90 for this geometry.
 
-![Analysis result](docs/screenshots/03_with_analysis.png)
+![Critical circle result](docs/screenshots/03_critical_circle.png)
 
-**Material editor** — Mohr-Coulomb soil parameters with preset library
-and validated numeric inputs.
+**Steeper 1.5H:1V slope, lower FoS** — same workflow, different
+geometry and material (c′=15 kPa, φ′=18°). The critical surface is
+shallower and FoS drops to 1.46, illustrating how the search adapts.
 
-![Material dialog](docs/screenshots/04_material_dialog.png)
+![Steeper slope result](docs/screenshots/04_steeper_slope.png)
+
+**Material editor** — Mohr-Coulomb soil parameters with a preset
+library, unit-aware spinbox inputs, and OK / Cancel commit semantics.
+
+![Material dialog](docs/screenshots/05_material_dialog.png)
 
 The build encountered (and exposed) several real bugs along the way —
 documented in `reviews/findings.yaml` as `R10-*` entries. They include
