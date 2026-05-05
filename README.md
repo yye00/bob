@@ -304,6 +304,52 @@ features:
 - Keep dependency chains shallow; deep chains mean fewer features can run in parallel.
 - See `examples/` for full-scale examples.
 
+## Built with bob3 — slope stability example
+
+`examples/04_swedish_circle_spec.yaml` is a 19-feature spec for a 2-D
+limit-equilibrium slope stability tool (Fellenius / Bishop's Simplified
+on circular slip surfaces, with critical-circle search and a PyQt6 GUI).
+Bob3 built it end-to-end from the spec, including V&V tests against
+Taylor's stability chart and Abramson's textbook example.
+
+The screenshots below were captured from the GUI bob3 produced.
+
+**Empty MainWindow on launch** — menus, toolbar, dockable Properties panel,
+status bar with current grid spacing.
+
+![Empty main window](docs/screenshots/01_empty_window.png)
+
+**Abramson textbook slope loaded** — 2H:1V slope, 10 m height, with a
+flat bench beyond the crest. Geometry is autoscaled to fit the canvas.
+
+![Slope loaded](docs/screenshots/02_with_slope.png)
+
+**After Bishop search** — critical slip circle (red), per-slice
+boundaries (vertical lines), and the FoS contour overlay across the
+search grid. For this geometry bob3 finds critical FoS ≈ 1.9 with
+Bishop's Simplified, vs the textbook value of ~1.37 — within the
+expected variability of grid search density.
+
+![Analysis result](docs/screenshots/03_with_analysis.png)
+
+**Material editor** — Mohr-Coulomb soil parameters with preset library
+and validated numeric inputs.
+
+![Material dialog](docs/screenshots/04_material_dialog.png)
+
+The build encountered (and exposed) several real bugs along the way —
+documented in `reviews/findings.yaml` as `R10-*` entries. They include
+recurring patterns like "verifier-correct work rejected because mtimes
+were stale on a re-run" and "fixed test-run timeout doesn't scale with
+project size." Each is filed with a reproducer and a fix; the registry
+itself is part of how bob3 learns across runs.
+
+To regenerate the screenshots from a freshly-built workspace:
+```bash
+# from inside a workspace where swedish-circle is installed
+QT_QPA_PLATFORM=offscreen python /path/to/bob3.1/docs/screenshots/capture.py docs/screenshots
+```
+
 ## Development
 
 ### Running the test suite

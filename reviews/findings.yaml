@@ -2258,6 +2258,52 @@ findings:
     to a sane floor (e.g., 0.85) so the gate does not immediately reject the
     feature. Alternative: have R7-003 trigger a single re-research after a
     needs_human reset.'
+- id: R10-021
+  title: code_changes_made check rejects features that were already correctly implemented
+  pattern: mtime-window check fails when sub-agent re-run finds work already done
+  files:
+  - src/bob3/superpowers.py
+  severity: high
+  status: open
+  tags:
+  - false-negative
+  - dead-code-tested-path
+  - real-world-only
+  notes: 'swedish-circle resume after R10-020 fix: F016 (Material editor) sub-agent
+    ran 14:42 and spent $0.72, then verification reported tests_pass=true,
+    acceptance_criteria_met=true (6/6), but code_changes_made=false ("No
+    recently modified files found"). Root cause: src/swedish_circle/gui/material_dialog.py
+    was implemented by a prior sub-agent attempt; the new sub-agent verified
+    the work was already correct and did not need to modify files. The
+    mtime-window check rejected this as "no work done", marking needs_human
+    despite the feature being verifiably correct (acceptance + tests both
+    pass). Same shape as R10-014 (verify-on-error). Fix candidates:
+    (1) when tests_pass AND acceptance_criteria_met both pass, treat
+    code_changes_made as a warning not an error;
+    (2) widen the mtime window to include the sub-agent run window
+    (created_at of the implement_feature run, not "recent");
+    (3) drop code_changes_made entirely — it is a tautology when the
+    real verification checks pass.'
+- id: R10-022
+  title: pytest snapshot timeout does not scale (uses fixed 300s default)
+  pattern: half-fixed timeout — verification scaled but baseline snapshot did not
+  files:
+  - src/bob3/orchestrator/run_loop.py
+  severity: low
+  status: open
+  tags:
+  - tunable-defaults
+  - degraded-but-not-broken
+  fixed_in: pending
+  notes: '_snapshot_timeout_s in run_loop.py honors BOB3_SNAPSHOT_TIMEOUT
+    or BOB3_TEST_RUN_TIMEOUT env vars but falls back to a fixed 300s
+    default. R10-020 scaled the verification timeout but missed this
+    sibling call site. On swedish-circle (83 tests) the snapshot times
+    out and the regression baseline is degraded (no per-test snapshot,
+    so detect_regression has nothing to compare to). Non-blocking but
+    weakens regression detection. Fix: thread target_dir through
+    _snapshot_timeout_s the same way R10-020 did for _test_run_timeout,
+    or just call _test_run_timeout directly.'
 - id: R10-020
   title: BOB3_TEST_RUN_TIMEOUT 300s default rejects verifier-correct work on real V&V suites
   pattern: fixed timeout that does not scale with project size
