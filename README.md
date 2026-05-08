@@ -8,8 +8,9 @@ Bob3 reads a spec describing the project you want built, decomposes it into feat
 
 - **MCP plugin integration** — Research-mode sub-agents have access to Perplexity (web research). Implementation sub-agents have access to Bob3 Memory (local semantic memory backed by mem0ai + FastEmbed + Qdrant) and, when `PERPLEXITY_API_KEY` is set, Perplexity as well. Puppeteer (browser automation) is enabled per-feature when needed.
 - **Semantic verification** — Completed features are checked against acceptance criteria with stub/mock detection, not just "did tests pass."
-- **Research fallback** — Stuck features automatically trigger a research agent that queries the web before another implementation attempt.
-- **Feature decomposition** — Oversized features are split into sub-features on demand.
+- **Graduated failure recovery** — When a sub-agent fails, bob3 doesn't just retry blindly: it free-retries spawn-time crashes, runs verification even on errored runs, decays confidence between attempts, spawns a Root Cause Analysis agent past the second failure, and routes its recommendation (research / decompose / escalate). See [`docs/failure_handling.md`](docs/failure_handling.md) for the full pipeline.
+- **Research fallback** — Stuck or low-confidence features automatically trigger a research agent that queries the web before another implementation attempt.
+- **Feature decomposition** — Oversized features (or features RCA recommends splitting) are decomposed into sub-features on demand.
 - **Resume on interrupt** — SIGINT/SIGTERM triggers checkpoint creation; work continues on the next `bob3 run`.
 - **Self-verifiable** — The included `examples/00_bootstrap_spec.yaml` is the spec that describes bob3 itself.
 
