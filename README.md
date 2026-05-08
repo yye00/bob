@@ -6,13 +6,25 @@ Bob3 reads a spec describing the project you want built, decomposes it into feat
 
 ## What makes it different
 
-- **MCP plugin integration** — Research-mode sub-agents have access to Perplexity (web research). Implementation sub-agents have access to Bob3 Memory (local semantic memory backed by mem0ai + FastEmbed + Qdrant) and, when `PERPLEXITY_API_KEY` is set, Perplexity as well. Puppeteer (browser automation) is enabled per-feature when needed.
-- **Semantic verification** — Completed features are checked against acceptance criteria with stub/mock detection, not just "did tests pass."
-- **Graduated failure recovery** — When a sub-agent fails, bob3 doesn't just retry blindly: it free-retries spawn-time crashes, runs verification even on errored runs, decays confidence between attempts, spawns a Root Cause Analysis agent past the second failure, and routes its recommendation (research / decompose / escalate). See [`docs/failure_handling.md`](docs/failure_handling.md) for the full pipeline.
-- **Research fallback** — Stuck or low-confidence features automatically trigger a research agent that queries the web before another implementation attempt.
-- **Feature decomposition** — Oversized features (or features RCA recommends splitting) are decomposed into sub-features on demand.
-- **Resume on interrupt** — SIGINT/SIGTERM triggers checkpoint creation; work continues on the next `bob3 run`.
-- **Self-verifiable** — The included `examples/00_bootstrap_spec.yaml` is the spec that describes bob3 itself.
+A short tour of the distinctive pieces. Each bullet links to a
+deeper doc; [`docs/architecture.md`](docs/architecture.md) is the
+big-picture index.
+
+- **Graduated failure recovery with RCA** — when a sub-agent fails, bob3 doesn't just retry: free-retries spawn-time crashes, runs verification even on errored runs, decays confidence between attempts, spawns a Root Cause Analysis agent past the second failure, and routes its recommendation (`research` / `decompose` / `mark_needs_human`). [`docs/failure_handling.md`](docs/failure_handling.md).
+- **Adversarial-self-review skill + persistent findings registry** — every sub-agent red-teams its own diff before claiming done. Findings are filed to a version-controlled registry (`reviews/findings.yaml`); recurring patterns are aggregated; future sub-agents query the registry *before* writing code. [`docs/adversarial_review.md`](docs/adversarial_review.md).
+- **Auto-installed skills system** — nine bundled skills (TDD, no-stubs-no-mocks, systematic debugging, brainstorming-approaches, researching-unknowns, implementing-acceptance-criteria, using-bob3-memory, checking-review-registry, adversarial-self-review) are symlinked into every sub-agent's `.claude/skills/` at spawn time. Integrity-audited per spawn.
+- **Defense-in-depth verification checklist** — eight checks run after every sub-agent spawn (even on `is_error=True`): file existence, package substance, test files, AST-level stub detection, AST-level mock detection in source, project-size-aware pytest, recent file changes, per-criterion acceptance evaluation.
+- **Acceptance-criterion DSL** — criteria are first-class: `File exists: <path>`, `Function defined: <module.func>`, `pytest: tests/...::test_x`, `python: <expression>` (sandboxed). Each criterion is evaluated individually with its own timeout.
+- **In-process semantic memory** — Bob3 Memory uses mem0ai + FastEmbed (ONNX, CPU) + on-disk Qdrant. Four pools (`facts`, `preferences`, `lessons`, `context`) with semantic search across runs. No external embedding API, no daemon, no `OPENAI_API_KEY`.
+- **MCP integration** — implementation sub-agents always get Bob3 Memory; research sub-agents get Perplexity (when `PERPLEXITY_API_KEY` is set); Puppeteer is enabled per-feature when a feature opts in.
+- **Confidence calibration tracking** — every attempt records `(task_class, predicted_confidence, actual_outcome)`; `bob3 show-calibration` surfaces over-/under-confidence per bucket. Bob3 learns whether its own predictions are trustworthy.
+- **Per-test regression detection + rollback cascade** — pre/post pytest snapshots are diffed after each feature; tests that flipped pass→fail are recorded as `regression_event`s; `db.rollback_feature_cascade` walks the dependency tree and `git_ops.revert_feature` reverts commits transactionally.
+- **Resume-after-interruption** — async-signal-safe SIGINT/SIGTERM handler sets a flag; in-flight features are checkpointed as `interrupted`; the next `bob3 run` auto-resumes them via `_resume_interrupted_work`.
+- **Cost normalization with turn proxy** — works with both `ANTHROPIC_API_KEY` and Claude Code Max Pro OAuth. When the SDK returns `total_cost_usd=None` (typical on OAuth), bob3 falls back to a `num_turns × $0.05` proxy so budget enforcement still works.
+- **Self-verifiable bootstrap spec** — `examples/00_bootstrap_spec.yaml` is the spec describing bob3 itself, used as a stress test: changes to the loop must update the bootstrap spec to match.
+
+For a worked end-to-end example with screenshots and cost data, see
+[`docs/swedish_circle_example.md`](docs/swedish_circle_example.md).
 
 ## Requirements
 
