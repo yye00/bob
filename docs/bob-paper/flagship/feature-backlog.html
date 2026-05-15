@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>bob99 feature backlog - flagship paper</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --muted: #555;
+    --accent: #b34700;
+    --rule: #d4d4d4;
+    --bg: #fafaf7;
+    --code-bg: #f0eee6;
+    --warn-bg: #fff6e0;
+    --block: #c62828;
+    --strong: #1565c0;
+    --stretch: #6a4c93;
+  }
+  html { box-sizing: border-box; }
+  *, *:before, *:after { box-sizing: inherit; }
+  body {
+    font-family: Charter, Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--fg);
+    background: var(--bg);
+    margin: 0;
+    padding: 2.5rem 1rem 4rem;
+  }
+  main { max-width: 56rem; margin: 0 auto; }
+  h1, h2, h3 { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 1.8rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.25rem; margin: 2.5rem 0 .8rem; padding-bottom: .25rem; border-bottom: 1px solid var(--rule); }
+  h3 { font-size: 1.05rem; margin: 1.8rem 0 .4rem; color: var(--accent); }
+  .subtitle { color: var(--muted); margin: 0 0 1.5rem; font-style: italic; }
+  .meta { font-size: .85rem; color: var(--muted); border-left: 3px solid var(--accent); padding: .25rem .75rem; margin-bottom: 2rem; background: rgba(255,255,255,0.5); }
+  p { margin: .6rem 0; }
+  code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: .9em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre { background: var(--code-bg); padding: .75rem 1rem; border-radius: 4px; overflow-x: auto; font-size: .85rem; line-height: 1.4; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { text-align: left; padding: .55rem .65rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { background: rgba(0,0,0,0.03); font-weight: 600; font-family: -apple-system, system-ui, sans-serif; }
+  tr:hover td { background: rgba(179, 71, 0, 0.04); }
+  ul, ol { margin: .5rem 0 .8rem; padding-left: 1.5rem; }
+  li { margin: .25rem 0; }
+  strong { font-weight: 600; }
+  blockquote { border-left: 3px solid var(--rule); margin: 1rem 0; padding: .25rem 1rem; color: var(--muted); }
+  .toc { background: rgba(255,255,255,0.6); border: 1px solid var(--rule); border-radius: 4px; padding: 1rem 1.25rem; margin: 1.5rem 0 2.5rem; font-size: .92rem; }
+  .toc h3 { margin: 0 0 .4rem; color: var(--fg); font-size: .95rem; font-family: -apple-system, system-ui, sans-serif; }
+  .toc ol { margin: 0; padding-left: 1.25rem; }
+  .toc a { color: var(--fg); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+  .note { background: var(--warn-bg); padding: .75rem 1rem; border-left: 3px solid #c8a000; border-radius: 0 4px 4px 0; margin: 1rem 0; font-size: .92rem; }
+  hr { border: none; border-top: 1px solid var(--rule); margin: 2.5rem 0; }
+  footer { color: var(--muted); font-size: .85rem; text-align: center; margin-top: 3rem; }
+
+  .fid { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: .85em; color: var(--muted); white-space: nowrap; }
+  .prio { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .04em; padding: 2px 7px; border-radius: 3px; color: white; text-transform: uppercase; font-family: -apple-system, system-ui, sans-serif; vertical-align: middle; }
+  .prio.block   { background: var(--block); }
+  .prio.strong  { background: var(--strong); }
+  .prio.stretch { background: var(--stretch); }
+  .htag { display: inline-block; font-size: .72rem; padding: 1px 6px; border-radius: 3px; background: rgba(0,0,0,0.07); color: var(--fg); font-family: ui-monospace, monospace; margin-left: .3rem; }
+  .summary-row td { font-weight: 600; }
+  .col-fid    { width: 4.5rem; }
+  .col-prio   { width: 5.5rem; }
+  .col-hyp    { width: 6rem; }
+  .feat-name  { font-weight: 600; font-family: -apple-system, system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>bob99 - feature backlog for the flagship paper</h1>
+<p class="subtitle">Features that are required (or strongly desirable) to land the flagship paper but are <em>not</em> in bob3 today.</p>
+
+<div class="meta">
+  <strong>Companion to:</strong> <a href="first-draft.html">first-draft.html</a> (experiment spec) &middot;
+  <strong>Branch:</strong> <code>claude/enhance-bob-ai-joR12</code> &middot;
+  <strong>Id namespace:</strong> <code>F-1xx</code> (paper backlog; disjoint from bob3's <code>F0xx</code> product features)
+</div>
+
+<p>
+Each feature has a stable id (<code>F-101</code> through <code>F-157</code>), a priority tag, and where
+applicable a link to the falsifiable hypothesis it serves (<code>H1</code>-<code>H6</code> as defined in
+the experiment spec).
+</p>
+
+<table>
+  <thead>
+    <tr><th>Priority</th><th>Meaning</th><th>Count</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="prio block">Block</span></td>
+      <td>Experiments cannot run without this feature.</td>
+      <td>21</td>
+    </tr>
+    <tr>
+      <td><span class="prio strong">Strong</span></td>
+      <td>Substantially deepens a paper claim (or closes a known threat to validity).</td>
+      <td>19</td>
+    </tr>
+    <tr>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td>Paper-worthy on its own, or enables follow-on work (e.g. HPC track, EARS bridge).</td>
+      <td>17</td>
+    </tr>
+    <tr class="summary-row"><td colspan="2">Total</td><td>57</td></tr>
+  </tbody>
+</table>
+
+<div class="toc">
+  <h3>Categories</h3>
+  <ol>
+    <li><a href="#A">Experiment infrastructure</a> (F-101 .. F-110)</li>
+    <li><a href="#B">New verification primitives</a> (F-111 .. F-122)</li>
+    <li><a href="#C">Sandbox upgrades</a> (F-123 .. F-127)</li>
+    <li><a href="#D">Calibration and decision policy</a> (F-128 .. F-132)</li>
+    <li><a href="#E">Memory and registry</a> (F-133 .. F-140)</li>
+    <li><a href="#F">Skill-system telemetry</a> (F-141 .. F-144)</li>
+    <li><a href="#G">Durable and parallel execution</a> (F-145 .. F-148)</li>
+    <li><a href="#H">Spec language</a> (F-149 .. F-152)</li>
+    <li><a href="#I">Paper artifacts</a> (F-153 .. F-157)</li>
+  </ol>
+</div>
+
+
+<h2 id="A">A. Experiment infrastructure</h2>
+<p>The "make the ablation runnable" layer.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="col-fid">Id</th><th>Feature</th>
+      <th class="col-prio">Priority</th><th class="col-hyp">Tests</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fid">F-101</td>
+      <td>
+        <span class="feat-name"><code>BOB3_ABLATION_MODE</code> switch</span><br>
+        Env var plus CLI flag flipping V&minus;1 / V0 / V1 / V2 / V3 as a unit; each maps to a frozen
+        config struct controlling skills, MCP plugins, verification depth, registry writes,
+        confidence decay, RCA gating, regression cascade.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H1</span><span class="htag">H6</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-102</td>
+      <td>
+        <span class="feat-name">Uniform predicted-confidence elicitor</span><br>
+        Post-spawn lightweight LLM probe (<code>src/bob3/calibration_probe.py</code>) that runs identically
+        in <em>every</em> variant. Only fair way to compute ECE across V0 and V3.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H2</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-103</td>
+      <td>
+        <span class="feat-name">Spec perturbation generator</span><br>
+        Deterministic, seedable transforms: <code>P_rename</code>, <code>P_reorder</code>, <code>P_redherring</code>.
+        Round-trip identity at seed=0.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H6</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-104</td>
+      <td>
+        <span class="feat-name">Reward-hacking detector</span><br>
+        Post-hoc LLM-judge with a 5-attack Jain rubric (LRU-injection, <code>site-customize.py</code> hijack,
+        try/except swallow, test-impl coupling, hardcoded I/O). Validated on hand-labels;
+        precision &ge; 0.85, recall &ge; 0.80 before deployment.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-105</td>
+      <td>
+        <span class="feat-name">Unified telemetry exporter</span><br>
+        <code>run.jsonl</code> per run with a fixed schema (variant, spec, seed, completion, cost, turns,
+        predicted_confidence, task_class, hack_detections, registry_hits, regression_flips, ...).
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">all H</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-106</td>
+      <td>
+        <span class="feat-name">Sweep orchestrator</span><br>
+        <code>tools/sweep.py</code> consumes a run-plan (variant &times; spec &times; seed grid), dispatches
+        cells in parallel, enforces a hard cost-budget guard rail, resumable via
+        <code>resource_checkpoints</code>.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-107</td>
+      <td>
+        <span class="feat-name">External baseline runners</span><br>
+        <code>tools/run_aider.py</code> and <code>tools/run_claude_code.py</code> emitting the F-105 schema.
+        Same sandbox, same spec format.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H1</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-108</td>
+      <td>
+        <span class="feat-name">Hermetic per-run containerisation</span><br>
+        Every run in a fresh Docker container with a pinned base image, no cross-run state
+        outside the explicit registry / checkpoint files.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-109</td>
+      <td>
+        <span class="feat-name">Model and SDK version pinning</span><br>
+        Hard-pin <code>claude-code-sdk</code> and the model id; record both in every telemetry line.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-110</td>
+      <td>
+        <span class="feat-name">Reproducibility bundle</span><br>
+        <code>bob3 export-bundle &lt;feature&gt;</code> emits a tarball with spec, transcript, diff,
+        telemetry, env lockfile - one command to give a reviewer.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2 id="B">B. New verification primitives</h2>
+<p>DSL criteria that make the showcase demos (D1 nanoGPT, D2 WASM, D3 Navier-Stokes) legible to the verifier
+and resistant to reward hacking.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="col-fid">Id</th><th>Feature</th>
+      <th class="col-prio">Priority</th><th class="col-hyp">Tests</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fid">F-111</td>
+      <td>
+        <span class="feat-name"><code>external_match:</code> criterion</span><br>
+        Diff bob's output against a versioned external artifact (Karpathy loss CSV, Ghia 1982 tables,
+        WASM-spec test-suite SHA).
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">D1-D3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-112</td>
+      <td>
+        <span class="feat-name"><code>convergence_order_at_least:</code> criterion</span><br>
+        Run a numerical solver at N grid resolutions, fit the slope, assert order &ge; X. Reuses
+        design from <code>paper-planning/bob-for-hpc/03-verification-harness.md</code>.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H3</span><span class="htag">D3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-113</td>
+      <td>
+        <span class="feat-name"><code>forbidden_imports:</code> criterion</span><br>
+        Banlist (e.g. <code>transformers</code>, <code>torch.autograd</code>) - closes the "delegate to a library"
+        reward-hack on D1 and D3.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-114</td>
+      <td>
+        <span class="feat-name"><code>behavioral_signature:</code> criterion</span><br>
+        Checks loss-curve <em>shape</em>, not just final scalar. Catches fake training scripts that
+        return the expected number without actually training.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H3</span><span class="htag">D1</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-115</td>
+      <td>
+        <span class="feat-name"><code>deterministic_output:</code> criterion</span><br>
+        Run with seed=0,1,2,3 - assert identical output. Inherits design from the HPC harness plan.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-116</td>
+      <td>
+        <span class="feat-name"><code>resource_limit:</code> criterion</span><br>
+        Hard caps on wall-clock and peak memory; prevents "let it run forever" gaming.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-117</td>
+      <td>
+        <span class="feat-name">AST-grade plagiarism detector</span><br>
+        Fingerprint generated source against known reference implementations (Karpathy nanoGPT,
+        AMReX kernels, etc.). Flag near-verbatim copies.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H3</span><span class="htag">D1</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-118</td>
+      <td>
+        <span class="feat-name">Test - implementation coupling detector</span><br>
+        AST flag when tests import internals or share fixtures with implementation in suspicious
+        ways. The "tests pass because tests match the impl bug" defense.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-119</td>
+      <td>
+        <span class="feat-name">Hardcoded-reference-value detector</span><br>
+        Flag float literals matching known benchmark values (e.g. Ghia's <code>0.1147</code>) in source
+        rather than tests.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H3</span><span class="htag">D3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-120</td>
+      <td>
+        <span class="feat-name">Coverage-based hack detector</span><br>
+        Reject implementations whose passing tests cover &lt; threshold% of source lines.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-121</td>
+      <td>
+        <span class="feat-name">Property-based test generator</span><br>
+        Hypothesis integration. Derive properties from EARS-style unwanted-behavior clauses in
+        the spec - feeds the paper-#2 EARS bridge.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-122</td>
+      <td>
+        <span class="feat-name">Differential-testing harness</span><br>
+        bob's implementation run side-by-side with a reference implementation on fuzzed inputs;
+        flag any divergence. Essential for D2 (WASM) where 10k spec tests exist.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H3</span><span class="htag">D2</span></td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2 id="C">C. Sandbox upgrades</h2>
+<p>What the demos require to run at all.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="col-fid">Id</th><th>Feature</th>
+      <th class="col-prio">Priority</th><th class="col-hyp">Tests</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fid">F-123</td>
+      <td>
+        <span class="feat-name">GPU sandbox</span><br>
+        Docker with CUDA or Apple-Silicon MPS, resource caps, pinned drivers. D1 (nanoGPT training)
+        is impossible without it.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">D1</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-124</td>
+      <td>
+        <span class="feat-name">WASM toolchain sandbox</span><br>
+        <code>wabt</code> + <code>wasmtime</code> available inside the container for differential testing of D2.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">D2</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-125</td>
+      <td>
+        <span class="feat-name">Scientific-compute sandbox</span><br>
+        Pinned NumPy / SciPy / JAX with deterministic BLAS (e.g. <code>OPENBLAS_NUM_THREADS=1</code>).
+        Required for D3 reproducibility.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">D3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-126</td>
+      <td>
+        <span class="feat-name">Network-egress allowlist</span><br>
+        Prevent agents from downloading reference solutions mid-run. The most direct defense
+        against bench leakage.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-127</td>
+      <td>
+        <span class="feat-name">Long-running spawn support</span><br>
+        D3 convergence tests run 30+ min; current SDK assumptions break. Audit timeouts,
+        watchdogs, heartbeat semantics.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">D3</span></td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2 id="D">D. Calibration and decision policy</h2>
+<p>Use the data bob already collects.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="col-fid">Id</th><th>Feature</th>
+      <th class="col-prio">Priority</th><th class="col-hyp">Tests</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fid">F-128</td>
+      <td>
+        <span class="feat-name">Per-task-class calibration buckets</span><br>
+        bob3 tracks confidence today but doesn't bucket by task type. Needed to compute
+        per-bucket ECE.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H2</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-129</td>
+      <td>
+        <span class="feat-name">Calibration-aware budget allocator</span><br>
+        <em>Actually use</em> the calibration signal to allocate retries. Currently it is recorded but
+        not acted on. The novel mechanism the paper claims is load-bearing.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td><span class="htag">H1</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-130</td>
+      <td>
+        <span class="feat-name">Bayesian confidence aggregator</span><br>
+        Combine self-reported confidence + registry-hit rate + AST-complexity heuristic + prior
+        similar-task outcomes into a single calibrated probability.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-131</td>
+      <td>
+        <span class="feat-name">Online threshold tuning</span><br>
+        Adjust RCA trigger / decomposition depth based on accumulated outcomes. Currently
+        hard-coded constants.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-132</td>
+      <td>
+        <span class="feat-name">Per-spec compute-budget cap</span><br>
+        <code>max_cost_usd:</code> in the YAML; escalate when hit instead of burning the global budget.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2 id="E">E. Memory and registry</h2>
+<p>The transfer-learning story for H4 and H5.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="col-fid">Id</th><th>Feature</th>
+      <th class="col-prio">Priority</th><th class="col-hyp">Tests</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fid">F-133</td>
+      <td>
+        <span class="feat-name">Cross-project registry transfer</span><br>
+        Load findings learned on project A when working on project B. Currently project-local.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H4</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-134</td>
+      <td>
+        <span class="feat-name">Frozen-registry mode</span><br>
+        Pin the registry at a point in time so the transfer experiment is reproducible (train
+        on S1-S4, freeze, run on S5).
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H4</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-135</td>
+      <td>
+        <span class="feat-name">Pattern-promotion config knob</span><br>
+        Expose <code>promote_on_n</code> so we can ablate promotion vs accumulation. Required to test H5
+        cleanly.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H5</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-136</td>
+      <td>
+        <span class="feat-name">Typed memory pools</span><br>
+        Replace free-text <code>lessons</code> with Pydantic entity schemas (per Chalef / Zep, Topic 08).
+        Seed for paper #3.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-137</td>
+      <td>
+        <span class="feat-name">Memory decay and recency weighting</span><br>
+        Currently no aging. Topic 08 argues decay is what separates "context" from "memory".
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-138</td>
+      <td>
+        <span class="feat-name">Workflow memory</span><br>
+        Explicit <code>(spec, attempt, outcome)</code> traces with case-based retrieval (Alake, Topic 08).
+        Beyond the existing <code>lessons</code> pool.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-139</td>
+      <td>
+        <span class="feat-name">Public registry release</span><br>
+        Export <code>reviews/findings.yaml</code> as a versioned, citable artifact (the R1-R10 longitudinal
+        dataset is publication-worthy on its own).
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-140</td>
+      <td>
+        <span class="feat-name">Embedded reproducer per finding</span><br>
+        Each registry item gets a minimal failing case + fix diff.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2 id="F">F. Skill-system telemetry</h2>
+<p>Which skills actually matter.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="col-fid">Id</th><th>Feature</th>
+      <th class="col-prio">Priority</th><th class="col-hyp">Tests</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fid">F-141</td>
+      <td>
+        <span class="feat-name">Per-spawn skill-activation log</span><br>
+        Record which skill fired on which spawn. Not currently tracked.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H5</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-142</td>
+      <td>
+        <span class="feat-name">Skill-effectiveness scoring</span><br>
+        Measure refinement-attempt delta when a skill is active vs not.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-143</td>
+      <td>
+        <span class="feat-name">Per-domain skill bundles</span><br>
+        HPC bundle, ML bundle, PL bundle - swap based on spec metadata. Required if the HPC
+        paper merges with the flagship.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-144</td>
+      <td>
+        <span class="feat-name">Skill SHA and provenance</span><br>
+        Record skill content hash with each spawn. Defends against silent skill drift mid-experiment.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2 id="G">G. Durable and parallel execution</h2>
+<p>The architectural debt. Item F-145 is what makes the 700-run sweep fit in 4 weeks instead of 4 months.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="col-fid">Id</th><th>Feature</th>
+      <th class="col-prio">Priority</th><th class="col-hyp">Tests</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fid">F-145</td>
+      <td>
+        <span class="feat-name">Async parallel sub-agent execution</span><br>
+        <code>OrchestrationLoop</code> is <em>strictly serial</em> today. Major bottleneck for a 700-run sweep.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-146</td>
+      <td>
+        <span class="feat-name">Durable orchestration loop</span><br>
+        Temporal or <code>pydantic-ai.TemporalAgent</code> integration (Davis OpenAI talk; Topic 03).
+        Survives multi-hour HPC verification cycles.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-147</td>
+      <td>
+        <span class="feat-name">Distributed sweep coordination</span><br>
+        Run cells across a cluster, not just one node.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-148</td>
+      <td>
+        <span class="feat-name">Sub-spawn checkpoint granularity</span><br>
+        Currently per-feature; HPC kernel compile + verify cycles want finer (per-stage).
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2 id="H">H. Spec language</h2>
+<p>The EARS bridge - paper #2 seed.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="col-fid">Id</th><th>Feature</th>
+      <th class="col-prio">Priority</th><th class="col-hyp">Tests</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fid">F-149</td>
+      <td>
+        <span class="feat-name">EARS frontend</span><br>
+        Compile the 5 EARS patterns (ubiquitous / event-driven / state-driven / optional-feature /
+        unwanted-behavior) to bob3's existing DSL backend.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-150</td>
+      <td>
+        <span class="feat-name">Spec linter</span><br>
+        Catch ambiguous criteria, missing edge cases, redundant requirements <em>before</em> any agent
+        spawns.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-151</td>
+      <td>
+        <span class="feat-name">Spec versioning and diff</span><br>
+        Track which spec version each run used. Mid-experiment edits otherwise silently
+        invalidate the grid.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-152</td>
+      <td>
+        <span class="feat-name">Spec-to-test-plan generator</span><br>
+        Produce a human-readable test plan from the spec, for review before running anything.
+      </td>
+      <td><span class="prio stretch">Stretch</span></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2 id="I">I. Paper artifacts</h2>
+<p>The deliverables themselves.</p>
+<table>
+  <thead>
+    <tr>
+      <th class="col-fid">Id</th><th>Feature</th>
+      <th class="col-prio">Priority</th><th class="col-hyp">Tests</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="fid">F-153</td>
+      <td>
+        <span class="feat-name">D1, D2, D3 YAML specs</span><br>
+        <code>examples/05_nanogpt.yaml</code>, <code>examples/06_wasm_interp.yaml</code>,
+        <code>examples/07_navier_stokes_cavity.yaml</code> authored with full
+        acceptance-criterion coverage. See ideation track for final selection.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-154</td>
+      <td>
+        <span class="feat-name">Hand-written reference implementations</span><br>
+        Gold-standard implementations of D1, D2, D3 under
+        <code>paper-planning/harness-hypothesis/references/</code>, for differential testing and
+        as the "no AI" baseline.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td></td>
+    </tr>
+    <tr>
+      <td class="fid">F-155</td>
+      <td>
+        <span class="feat-name">Hand-labeled hack-attack corpus</span><br>
+        100 features (50 clean + 50 with injected attacks) for validating F-104. Stored under
+        <code>paper-planning/harness-hypothesis/labels/</code>.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">H3</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-156</td>
+      <td>
+        <span class="feat-name">Analysis notebooks</span><br>
+        Reliability diagrams, ablation tables, bootstrap CIs, transfer plots, hack-incidence
+        bars. Reproducible from the raw jsonl artifacts.
+      </td>
+      <td><span class="prio block">Block</span></td>
+      <td><span class="htag">all H</span></td>
+    </tr>
+    <tr>
+      <td class="fid">F-157</td>
+      <td>
+        <span class="feat-name">A / B comparison CLI</span><br>
+        <code>bob3 compare run_a run_b</code> - side-by-side telemetry. Useful for debugging the
+        sweep and for the paper's qualitative case-studies section.
+      </td>
+      <td><span class="prio strong">Strong</span></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+
+
+<h2 id="cost">Summary by priority</h2>
+<table>
+  <thead><tr><th>Priority</th><th>Feature count</th><th>Engineering estimate (focused team of 1-2)</th></tr></thead>
+  <tbody>
+    <tr><td><span class="prio block">Block</span></td><td>21</td><td>~6 - 8 weeks</td></tr>
+    <tr><td><span class="prio strong">Strong</span></td><td>19</td><td>~4 - 6 additional weeks</td></tr>
+    <tr><td><span class="prio stretch">Stretch</span></td><td>17</td><td>Open-ended; several are paper-sized on their own</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>Critical-path note.</strong> Items F-145 (async parallel) and F-146 (durable execution)
+  aren't strictly Block, but the latency they avoid is what makes the 14-week timeline
+  feasible vs 6 months. If only one Stretch can land before the main sweep, it should be
+  F-145.
+</div>
+
+<hr>
+
+<footer>
+  paper-planning / flagship / feature-backlog. Bob3, branch <code>claude/enhance-bob-ai-joR12</code>.
+</footer>
+
+</main>
+</body>
+</html>
