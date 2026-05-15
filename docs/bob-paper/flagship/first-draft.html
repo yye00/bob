@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flagship paper - first draft - the Harness Hypothesis, Tested</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --muted: #555;
+    --accent: #b34700;
+    --rule: #d4d4d4;
+    --bg: #fafaf7;
+    --code-bg: #f0eee6;
+    --warn-bg: #fff6e0;
+  }
+  html { box-sizing: border-box; }
+  *, *:before, *:after { box-sizing: inherit; }
+  body {
+    font-family: Charter, Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--fg);
+    background: var(--bg);
+    margin: 0;
+    padding: 2.5rem 1rem 4rem;
+  }
+  main { max-width: 50rem; margin: 0 auto; }
+  h1, h2, h3 { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 1.8rem; margin: 0 0 .3rem; }
+  h2 { font-size: 1.25rem; margin: 2.5rem 0 .8rem; padding-bottom: .25rem; border-bottom: 1px solid var(--rule); }
+  h3 { font-size: 1.05rem; margin: 1.8rem 0 .4rem; color: var(--accent); }
+  .subtitle { color: var(--muted); margin: 0 0 1.5rem; font-style: italic; }
+  .meta { font-size: .85rem; color: var(--muted); border-left: 3px solid var(--accent); padding: .25rem .75rem; margin-bottom: 2rem; background: rgba(255,255,255,0.5); }
+  p { margin: .6rem 0; }
+  code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: .9em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre { background: var(--code-bg); padding: .75rem 1rem; border-radius: 4px; overflow-x: auto; font-size: .85rem; line-height: 1.4; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { background: rgba(0,0,0,0.03); font-weight: 600; font-family: -apple-system, system-ui, sans-serif; }
+  tr:hover td { background: rgba(179, 71, 0, 0.04); }
+  ul, ol { margin: .5rem 0 .8rem; padding-left: 1.5rem; }
+  li { margin: .25rem 0; }
+  strong { font-weight: 600; }
+  blockquote { border-left: 3px solid var(--rule); margin: 1rem 0; padding: .25rem 1rem; color: var(--muted); }
+  .toc { background: rgba(255,255,255,0.6); border: 1px solid var(--rule); border-radius: 4px; padding: 1rem 1.25rem; margin: 1.5rem 0 2.5rem; font-size: .92rem; }
+  .toc h3 { margin: 0 0 .4rem; color: var(--fg); font-size: .95rem; font-family: -apple-system, system-ui, sans-serif; }
+  .toc ol { margin: 0; padding-left: 1.25rem; }
+  .toc a { color: var(--fg); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+  .note { background: var(--warn-bg); padding: .75rem 1rem; border-left: 3px solid #c8a000; border-radius: 0 4px 4px 0; margin: 1rem 0; font-size: .92rem; }
+  hr { border: none; border-top: 1px solid var(--rule); margin: 2.5rem 0; }
+  footer { color: var(--muted); font-size: .85rem; text-align: center; margin-top: 3rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>The Harness Hypothesis, Tested</h1>
+<p class="subtitle">Flagship paper experiment spec - first draft</p>
+
+<div class="meta">
+  <strong>Status:</strong> first draft, open for revision &middot;
+  <strong>Track:</strong> flagship (sibling to <code>paper-planning/bob-for-hpc/</code>) &middot;
+  <strong>Branch:</strong> <code>claude/enhance-bob-ai-joR12</code>
+</div>
+
+<p>
+This document is the experiment-design spec for the flagship paper claim:
+<em>holding the model fixed, an orchestration harness that tracks its own confidence calibration,
+accumulates a versioned findings registry with RecurringPattern promotion, and routes recovery
+actions through a cost-aware policy strictly dominates undifferentiated retry budgets on
+completion rate, $ / feature, and reward-hacking incidence.</em>
+</p>
+
+<p>
+Five open decisions are flagged at the bottom. Everything else is concrete enough that the
+engineering items map directly to issues.
+</p>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#h1">The falsifiable claims</a></li>
+    <li><a href="#h2">System under test - five variants</a></li>
+    <li><a href="#h3">Workload</a></li>
+    <li><a href="#h4">The experiments</a></li>
+    <li><a href="#h5">What bob3 needs to <em>do</em> - engineering work</a></li>
+    <li><a href="#h6">Statistical methodology</a></li>
+    <li><a href="#h7">Threats to validity</a></li>
+    <li><a href="#h8">Timeline</a></li>
+    <li><a href="#h9">Open decisions</a></li>
+  </ol>
+</div>
+
+<h2 id="h1">1. The falsifiable claims</h2>
+
+<p>Six tightly scoped hypotheses. Each is operationalised as a metric difference with a sign.</p>
+
+<table>
+  <thead><tr><th>ID</th><th>Claim</th><th>Falsifies if</th></tr></thead>
+  <tbody>
+    <tr><td><strong>H1</strong></td>
+        <td>Holding the model fixed, completion-rate-per-dollar increases monotonically V0 &rarr; V1 &rarr; V2 &rarr; V3.</td>
+        <td>Any adjacent pair shows V<sub>i+1</sub> &le; V<sub>i</sub> with overlapping 95% bootstrap CIs.</td></tr>
+    <tr><td><strong>H2</strong></td>
+        <td>bob3's predicted task-class confidence has ECE &le; 0.10 in V3; V0's elicited confidence has ECE &ge; 0.20.</td>
+        <td>V3's ECE &ge; V0's, or both are &ge; 0.25 (the system is uniformly miscalibrated).</td></tr>
+    <tr><td><strong>H3</strong></td>
+        <td>Reward-hacking incidence (Jain rubric - LRU injection, <code>site-customize.py</code> hijack,
+            try/except: pass swallow, test-impl coupling, hardcoded I/O) drops V0 &rarr; V3 by &ge; 2&times;.</td>
+        <td>V3 incidence &ge; V0 / 1.5.</td></tr>
+    <tr><td><strong>H4</strong></td>
+        <td>A findings registry trained on specs {S1..S4} reduces refinement attempts on held-out S5 by &ge; 25%
+            vs an empty-registry V3.</td>
+        <td>Reduction &lt; 10% or the CI crosses zero.</td></tr>
+    <tr><td><strong>H5</strong></td>
+        <td>RecurringPattern <em>promotion</em> (vs accumulation alone) accounts for &ge; 30% of the V2 &rarr; V3 gap.</td>
+        <td>Disabling promotion changes the gap by &lt; 10%.</td></tr>
+    <tr><td><strong>H6</strong></td>
+        <td>Semantic-preserving spec perturbations (rename / reorder / red-herring) do not erase the V3 advantage.</td>
+        <td>Perturbed-spec gap &lt; 50% of original-spec gap.</td></tr>
+  </tbody>
+</table>
+
+<p>H1 and H3 are the headline results. H2 is the most novel measurement. H4 is the transfer
+claim. H5 is the mechanism test. H6 is the bench-leakage defence.</p>
+
+
+<h2 id="h2">2. System under test - five variants forming an inclusion chain</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Variant</th><th>Verification</th><th>Skills</th><th>Registry</th>
+      <th>Calibration routing</th><th>RCA</th><th>Regression cascade</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>V&minus;1</strong> <em>naive single-shot</em></td>
+        <td>none</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td></tr>
+    <tr><td><strong>V0</strong> <em>bare loop</em></td>
+        <td><code>is_error</code> only, retry N=3</td><td>none</td><td>none</td><td>none</td><td>none</td><td>none</td></tr>
+    <tr><td><strong>V1</strong> <em>+verification</em></td>
+        <td>8-point + AST + DSL</td>
+        <td><code>no-stubs-no-mocks</code>, <code>tdd</code> only</td>
+        <td>none</td><td>none</td><td>none</td><td>none</td></tr>
+    <tr><td><strong>V2</strong> <em>+registry</em></td>
+        <td>V1</td>
+        <td>V1 + <code>adversarial-self-review</code> + <code>checking-review-registry</code></td>
+        <td>yes, with RecurringPattern promotion</td>
+        <td>none</td><td>none</td><td>none</td></tr>
+    <tr><td><strong>V3</strong> <em>full bob3</em></td>
+        <td>V2</td><td>all 9</td><td>yes</td>
+        <td>yes (decay, IRON LAW)</td><td>yes</td><td>yes</td></tr>
+  </tbody>
+</table>
+
+<p>External controls, run separately, not in the main grid:</p>
+<ul>
+  <li><strong>V<sub>aider</sub></strong> - Aider with the identical spec, same sandbox.</li>
+  <li><strong>V<sub>cc</sub></strong> - plain Claude Code CLI with the identical spec, same sandbox.</li>
+</ul>
+
+<p>The inclusion chain V&minus;1 &sub; V0 &sub; V1 &sub; V2 &sub; V3 lets us attribute each delta
+to a specific harness component rather than to a vague "with/without bob3" comparison.</p>
+
+
+<h2 id="h3">3. Workload</h2>
+
+<h3>Seed specs (8 total)</h3>
+<table>
+  <thead><tr><th>Spec</th><th>Source</th><th>Difficulty</th><th>In bob3 today?</th></tr></thead>
+  <tbody>
+    <tr><td>S1</td><td><code>examples/00_bootstrap_spec.yaml</code></td><td>medium</td><td>yes</td></tr>
+    <tr><td>S2</td><td><code>examples/03_calculator_spec.yaml</code></td><td>easy</td><td>yes</td></tr>
+    <tr><td>S3</td><td><code>examples/01_geomech_spec.yaml</code></td><td>medium</td><td>yes</td></tr>
+    <tr><td>S4</td><td><code>examples/02_slope_stability_spec.yaml</code></td><td>medium-hard</td><td>yes</td></tr>
+    <tr><td>S5</td><td><code>examples/04_swedish_circle_spec.yaml</code></td><td>hard</td><td>yes</td></tr>
+    <tr><td><strong>S6</strong></td><td><em>new - placeholder, see flagship-demos note</em></td><td>hard</td><td><strong>no, build</strong></td></tr>
+    <tr><td><strong>S7</strong></td><td><em>new - placeholder</em></td><td>medium</td><td><strong>no, build</strong></td></tr>
+    <tr><td><strong>S8</strong></td><td><em>new - placeholder</em></td><td>medium-hard</td><td><strong>no, build</strong></td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>Note on S6-S8:</strong> the existing bundled examples (especially the PyQt-backed
+  Swedish-circle build) are not impressive enough to anchor a flagship paper. A separate
+  ideation track is open for the three new "showcase" specs - candidates under
+  consideration include a from-scratch transformer matching published loss curves, a
+  WebAssembly interpreter against the official spec suite, and a 2D incompressible
+  Navier-Stokes solver against Ghia et al. 1982. Final choice pending.
+</div>
+
+<h3>Perturbations</h3>
+<p>For each seed spec, generate 3 semantically equivalent variants via a deterministic perturbation script:</p>
+<ul>
+  <li><code>P_rename</code> - rename feature ids and criteria identifiers.</li>
+  <li><code>P_reorder</code> - shuffle criteria order within each feature.</li>
+  <li><code>P_redherring</code> - insert 1-2 acceptance criteria that are trivially true but
+    plausible-sounding (tests whether the harness is sensitive to noise).</li>
+</ul>
+<p>Total: <strong>8 seeds &times; (1 original + 3 perturbations) = 32 spec instances.</strong></p>
+
+
+<h2 id="h4">4. The experiments</h2>
+
+<h3>E1 - Main ablation grid (the headline)</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Tests</strong></td><td>H1, H3, H6</td></tr>
+    <tr><td><strong>Cells</strong></td><td>5 variants &times; 32 spec instances &times; 3 seeds = <strong>480 runs</strong></td></tr>
+    <tr><td><strong>Primary metrics</strong></td><td>completion rate, $/successful-feature, turns/successful-feature</td></tr>
+    <tr><td><strong>Secondary</strong></td><td>refinement attempts, wall-clock, regression flips</td></tr>
+    <tr><td><strong>Analysis</strong></td><td>Bootstrap 95% CIs on per-spec means; paired comparison across the V0&rarr;V1&rarr;V2&rarr;V3 chain;
+      Holm-Bonferroni across 4 primary metrics</td></tr>
+  </tbody>
+</table>
+
+<h3>E2 - Calibration measurement</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Tests</strong></td><td>H2</td></tr>
+    <tr><td><strong>Source</strong></td><td>Reuse all 480 runs from E1 - every variant emits a uniform
+      <code>predicted_confidence &isin; [0, 1]</code> via the same elicitor (see &sect;5, item 2)</td></tr>
+    <tr><td><strong>Outputs</strong></td><td>Reliability diagram (10 bins) per variant; ECE; Brier score; per-<code>task_class</code> breakdown</td></tr>
+  </tbody>
+</table>
+
+<h3>E3 - Reward-hacking incidence</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Tests</strong></td><td>H3 quantitative tail (H3 incidence-vs-completion in E1 only gives binary completion view)</td></tr>
+    <tr><td><strong>Method</strong></td><td>Post-hoc LLM-judge with a 5-attack rubric (Jain-derived) runs on every completed feature's final source diff</td></tr>
+    <tr><td><strong>Validation</strong></td><td>Hand-label 100 features (50 clean + 50 with deliberately injected attacks) to measure
+      detector precision / recall <em>before</em> deployment at scale</td></tr>
+  </tbody>
+</table>
+
+<h3>E4 - Cross-project transfer</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Tests</strong></td><td>H4</td></tr>
+    <tr><td><strong>Design</strong></td><td>Train V3 on {S1, S2, S3, S4} accumulating the registry. Freeze. Then run V3 on S5 <em>with
+      frozen registry</em> and V3 on S5 <em>with empty registry</em>. 5 seeds per cell = 10 runs</td></tr>
+    <tr><td><strong>Metric</strong></td><td>Refinement attempts to completion; reward-hacking incidence</td></tr>
+  </tbody>
+</table>
+
+<h3>E5 - Pattern-promotion ablation</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Tests</strong></td><td>H5</td></tr>
+    <tr><td><strong>Design</strong></td><td>V3 with RecurringPattern promotion disabled (<code>reviews.py</code>'s <code>promote_on_n</code> set to
+      &infin;) vs full V3. Run on S1-S8 &times; 3 seeds = 48 runs</td></tr>
+    <tr><td><strong>Metric</strong></td><td>Hack incidence, refinement attempts</td></tr>
+  </tbody>
+</table>
+
+<h3>E6 - Decision-policy gate ablation</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Tests</strong></td><td>Which gate in <code>docs/failure_handling.md</code> is load-bearing</td></tr>
+    <tr><td><strong>Design</strong></td><td>V3 minus each gate in turn: -RCA, -confidence-decay, -decomposition, -regression-cascade.
+      4 sub-variants &times; 8 seeds &times; 3 seeds = 96 runs</td></tr>
+    <tr><td><strong>Metric</strong></td><td>Same as E1</td></tr>
+  </tbody>
+</table>
+
+<h3>E7 - External baseline comparison</h3>
+<table>
+  <tbody>
+    <tr><td><strong>Tests</strong></td><td>H1 against external systems</td></tr>
+    <tr><td><strong>Design</strong></td><td>V<sub>aider</sub> and V<sub>cc</sub> on all 8 seed specs &times; 3 seeds = 48 runs</td></tr>
+    <tr><td><strong>Caveat</strong></td><td>Aider / Cursor have different cost models - report cost on turns and $ both ways</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Total runs across all experiments: ~700.</strong> At median ~$5/run that is roughly
+<strong>$3.5k</strong>, padded to $5k for retries and dev. <em>Open decision - see &sect;9.</em></p>
+
+
+<h2 id="h5">5. What bob3 needs to <em>do</em> - engineering work, ordered by dependency</h2>
+
+<p>These are the deltas from current <code>main</code>. None require model changes; all are harness-side.</p>
+
+<ol>
+  <li>
+    <strong><code>BOB3_ABLATION_MODE</code> config enum</strong> - env var plus CLI flag that flips the variant.
+    Each variant maps to a frozen config struct describing:
+    which skills install (<code>skills_installer.py</code>);
+    which MCP plugins enable (<code>mcp_config.py</code>);
+    whether <code>superpowers.run_checks()</code> runs;
+    whether <code>reviews.Registry</code> writes;
+    whether <code>_increment_refinement_attempts</code> decays confidence;
+    whether <code>spawn_rca_agent</code> ever fires;
+    whether the regression cascade triggers.
+    <em>Single switch, no scattered <code>if</code>s.</em>
+  </li>
+  <li>
+    <strong>Uniform <code>predicted_confidence</code> elicitor</strong> - a post-spawn lightweight LLM call,
+    separate from the implementation spawn, that, given the spec plus the produced diff,
+    emits <code>{confidence: float, task_class: str}</code>. Runs identically in <em>every</em>
+    variant. This is the only way H2 is a fair comparison. ~200 LOC; new file
+    <code>src/bob3/calibration_probe.py</code>.
+  </li>
+  <li>
+    <strong>Spec perturbation generator</strong> - deterministic, seedable. Reads a YAML spec,
+    applies <code>{rename, reorder, redherring}</code> for a given seed, writes to disk.
+    ~300 LOC; <code>tools/perturb_spec.py</code>. Validated with a round-trip identity
+    test under seed=0.
+  </li>
+  <li>
+    <strong>Reward-hacking detector</strong> - post-hoc LLM-judge with the 5-attack rubric. Runs
+    against the final commit's diff. Returns <code>{attack_type: bool}</code> per attack. ~400 LOC
+    plus a 100-feature hand-labeled validation set in
+    <code>paper-planning/harness-hypothesis/labels/</code>.
+  </li>
+  <li>
+    <strong>Telemetry exporter</strong> - every run emits a single <code>run.jsonl</code> line with a
+    fixed schema:
+    <pre><code>{variant, spec_id, seed, completion_bool, cost_usd, num_turns,
+ refinement_attempts, wall_clock_s, predicted_confidence,
+ task_class, hack_detections, registry_hits, regression_flips, ...}</code></pre>
+    New module <code>src/bob3/telemetry.py</code>; called from <code>OrchestrationLoop</code>'s finally-block.
+  </li>
+  <li>
+    <strong>External baseline runners</strong> - <code>tools/run_aider.py</code> and
+    <code>tools/run_claude_code.py</code>. Same spec format in; same telemetry schema out.
+    Sandbox is identical (same container). ~300 LOC each.
+  </li>
+  <li>
+    <strong>Sweep orchestrator</strong> - <code>tools/sweep.py</code> consumes a YAML run-plan (variant
+    &times; spec &times; seed grid) and dispatches runs in parallel with a cost-budget guard
+    rail (aborts the sweep if total $ exceeds ceiling). Resumable via the existing
+    <code>resource_checkpoints</code> table. ~400 LOC.
+  </li>
+  <li>
+    <strong>Analysis pipeline</strong> - an <code>analysis/</code> directory with notebooks for
+    reliability diagrams, the ablation table, bootstrap CIs, transfer plots, hack-incidence
+    bars. Pure post-hoc on the jsonl artifacts.
+  </li>
+  <li>
+    <strong>Three new spec files</strong> - <code>examples/SXX_*.yaml</code> placeholders. Each authored
+    with a hand-written reference implementation stored under
+    <code>paper-planning/harness-hypothesis/references/</code> so the held-out evaluation has
+    ground truth. <em>Final choice of demos open.</em>
+  </li>
+  <li>
+    <strong>Model and SDK version pin</strong> - hard-pin <code>claude-code-sdk</code> and the model id
+    in the variant config; record both in every telemetry line. Defends against drift
+    mid-experiment.
+  </li>
+</ol>
+
+<p>Items 1-5 are blocking. 6-10 can land in parallel.</p>
+
+
+<h2 id="h6">6. Statistical methodology</h2>
+
+<ul>
+  <li><strong>Binary outcomes</strong> (completion rate, hack incidence): Wilson 95% CI; bootstrap on
+    the per-spec mean for pairwise comparison.</li>
+  <li><strong>Continuous outcomes</strong> ($/feature, turns): paired bootstrap on the per-spec mean,
+    1000 resamples, BCa.</li>
+  <li><strong>Calibration</strong>: ECE with 10 equal-width bins; Brier score as a secondary scalar.</li>
+  <li><strong>Multiple comparisons</strong>: Holm-Bonferroni across the 4 primary metrics in E1,
+    separately within each experiment.</li>
+  <li><strong>Reporting</strong>: every figure must be reproducible from the released jsonl plus the
+    analysis scripts. Negative results published alongside.</li>
+</ul>
+
+
+<h2 id="h7">7. Threats to validity (and mitigations)</h2>
+
+<table>
+  <thead><tr><th>Threat</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Bench leakage</strong> - V3 was trained on these specs</td>
+        <td>Perturbations <code>P_*</code> plus 3 new held-out specs (S6-S8)</td></tr>
+    <tr><td><strong>Hack-detector unreliable</strong> - the measurement instrument is itself an LLM</td>
+        <td>Hand-label 100; require precision &ge; 0.85 and recall &ge; 0.80 before deployment</td></tr>
+    <tr><td><strong>Model drift mid-experiment</strong></td>
+        <td>Pin SDK + model version; complete each experiment within a single 4-week window</td></tr>
+    <tr><td><strong>Calibration elicitor confound</strong> - V0 has no internal confidence</td>
+        <td>Uniform post-spawn elicitor across all variants - this is item 2 above</td></tr>
+    <tr><td><strong>Stochasticity at N=3 seeds</strong></td>
+        <td>Bootstrap CIs reported on every cell; flag any result whose CI crosses the comparison threshold</td></tr>
+    <tr><td><strong>Cost-normalisation noise</strong> (Max Pro vs API)</td>
+        <td>Report turns as primary, $ as secondary; pin to a single API key type for the headline run</td></tr>
+    <tr><td><strong>Sandbox escape or interference between runs</strong></td>
+        <td>Each run in a fresh container, fresh workspace, no shared state outside the explicit
+          registry / checkpoint files</td></tr>
+  </tbody>
+</table>
+
+
+<h2 id="h8">8. Timeline (rough)</h2>
+
+<table>
+  <thead><tr><th>Weeks</th><th>Work</th></tr></thead>
+  <tbody>
+    <tr><td>1-2</td><td>Items 1, 2, 5, 10 - ablation switch, calibration probe, telemetry, version pinning</td></tr>
+    <tr><td>3</td><td>Items 3, 4 - perturbation generator, hack detector, hand-labelling</td></tr>
+    <tr><td>4</td><td>Items 6, 7 - external baselines, sweep orchestrator</td></tr>
+    <tr><td>5</td><td>Item 9 - three new specs with reference implementations</td></tr>
+    <tr><td>6</td><td><strong>Pilot run</strong>: 1 seed &times; all variants &times; 4 specs (~20 runs).
+        Validate telemetry, hack detector, cost model.</td></tr>
+    <tr><td>7-10</td><td><strong>Main run</strong> (E1, E2, E3) - 480 runs over 4 weeks</td></tr>
+    <tr><td>11</td><td>E4 + E5 (transfer + promotion ablation)</td></tr>
+    <tr><td>12</td><td>E6 + E7 (gate ablation + external baselines)</td></tr>
+    <tr><td>13-14</td><td>Item 8 - analysis, plots, paper draft</td></tr>
+  </tbody>
+</table>
+
+<p>~14 weeks total, dominated by the main-run latency.</p>
+
+
+<h2 id="h9">9. Open decisions I need before committing the full plan</h2>
+
+<ol>
+  <li>
+    <strong>Budget ceiling.</strong> Working assumption is ~$5k for compute across all
+    experiments. Raise or lower?
+  </li>
+  <li>
+    <strong>Model pin.</strong> Default: the current pinned Claude model. Or do we want to <em>also</em>
+    run V3 on a smaller model (e.g. Haiku) to show the harness gain scales - at additional
+    cost?
+  </li>
+  <li>
+    <strong>External baselines.</strong> Include Aider plus Claude Code (E7), or cut to save scope?
+  </li>
+  <li>
+    <strong>Held-out specs.</strong> Final choice for S6, S7, S8 - see the flagship-demos
+    ideation thread. The existing PyQt-based Swedish-circle build is not impressive
+    enough to anchor a flagship paper; what replaces it as the visible showcase is open.
+  </li>
+  <li>
+    <strong>Venue target informs the power calculation.</strong> NeurIPS / ICLR (rigorous CIs,
+    possibly N=5 seeds) or workshop first (N=3 fine)?
+  </li>
+</ol>
+
+<hr>
+
+<footer>
+  paper-planning / flagship - first draft. Bob3, branch <code>claude/enhance-bob-ai-joR12</code>.
+</footer>
+
+</main>
+</body>
+</html>
