@@ -1,0 +1,735 @@
+name: swedish-circle
+version: "0.1.0"
+description: |
+  Swedish Circle (Fellenius / Ordinary Method of Slices) — 2D slope
+  stability analysis library with a desktop GUI.
+
+  Two layers:
+
+  1. **Engine** (F001-F012): the limit-equilibrium core. Circular slip
+     surface, vertical slice discretization, Fellenius (non-iterative)
+     and Bishop's Simplified (iterative) methods, critical-circle grid
+     search, and rigorous V&V against published benchmarks (Taylor's
+     stability charts, Abramson textbook example).
+
+  2. **Desktop GUI** (F013-F019): PyQt6-based interactive analysis.
+     2D CAD-style canvas with pan/zoom, draw-the-slope geometry tool,
+     material editor, live FoS computation, critical-circle highlight,
+     and PNG/JSON/CSV export.
+
+  Pure-Python: numpy + scipy + matplotlib + PyQt6. No HPC libraries,
+  no external services. Designed as a mid-sized bob3 target with
+  every feature carrying a hard-numerical or behavior-verifiable
+  acceptance test.
+
+  ## Research available to sub-agents
+
+  This project's V&V features cite specific published values (Taylor
+  1937, Abramson textbook). Sub-agents implementing these features
+  should freely use the Perplexity MCP when in doubt about the
+  reference numbers, derivations, or conventions:
+
+      perplexity_research("Taylor stability number phi=0 vertical cut")
+      perplexity_ask("Bishop simplified factor of safety implicit equation")
+      perplexity_search("Abramson slope stability homogeneous example")
+
+  Cite the source in code comments when the value comes from research.
+
+  ## Headless-test note for GUI features
+
+  GUI tests use pytest-qt with QT_QPA_PLATFORM=offscreen. Set this in
+  pyproject.toml's [tool.pytest.ini_options].env or the test fixtures.
+
+workspace: /tmp/swedish-circle
+
+dependencies:
+  python: ">=3.10"
+  packages:
+    - numpy
+    - scipy
+    - matplotlib
+    - PyQt6
+    - pytest-qt
+
+features:
+
+  F001:
+    title: "Project skeleton and pyproject.toml"
+    description: |
+      Create the swedish_circle Python package:
+        src/swedish_circle/__init__.py
+        pyproject.toml (declares numpy, scipy, matplotlib as runtime deps;
+                        pytest as dev dep)
+        tests/__init__.py
+      pip-installable in editable mode.
+    priority: critical
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/__init__.py"
+      - "File exists: pyproject.toml"
+      - "File exists: tests/__init__.py"
+      - "pytest: tests/test_imports.py::test_package_imports"
+
+  F002:
+    title: "Mohr-Coulomb material model"
+    description: |
+      Implement the Mohr-Coulomb shear-strength criterion as a small
+      dataclass-based module at src/swedish_circle/material.py.
+
+      Strength on a plane:
+        s = c' + (sigma_n - u) * tan(phi')
+      where:
+        c' = effective cohesion (kPa)
+        phi' = effective friction angle (degrees, internally radians)
+        sigma_n = normal stress (kPa)
+        u = pore pressure (kPa)
+
+      Provide a Material class with attributes:
+        cohesion: float        # c' in kPa
+        friction_deg: float    # phi' in degrees
+        unit_weight: float     # gamma in kN/m^3
+        sat_unit_weight: float # gamma_sat in kN/m^3 (defaults to gamma)
+
+      Method: shear_strength(normal_stress, pore_pressure) -> float
+
+      Also expose a small library of preset materials (loose sand, dense
+      sand, soft clay, stiff clay, weathered rock) with realistic values.
+    priority: critical
+    depends_on: ['F001']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/material.py"
+      - "pytest: tests/test_material.py::test_drained_shear_strength_matches_formula"
+      - "pytest: tests/test_material.py::test_phi_zero_undrained_returns_constant_cu"
+      - "pytest: tests/test_material.py::test_pore_pressure_reduces_strength"
+      - "pytest: tests/test_material.py::test_negative_normal_stress_handled"
+      - "pytest: tests/test_material.py::test_preset_materials_have_realistic_values"
+
+  F003:
+    title: "Slope geometry — ground surface and water table"
+    description: |
+      A SlopeProfile class at src/swedish_circle/geometry.py representing
+      the 2D slope cross-section.
+
+      Stores:
+        ground_surface: list[(x, y)]  # piecewise-linear profile, left to right
+        water_table:    list[(x, y)] | None
+        material:       Material      # homogeneous soil for now (multi-layer in F008)
+
+      Methods:
+        ground_y(x: float) -> float        # interpolate ground elevation
+        water_y(x: float) -> float | None  # water table elevation, None if no water
+        is_below_water(x, y) -> bool       # True if (x,y) is below water table
+        bounding_box() -> (xmin, xmax, ymin, ymax)
+
+      Validation: ground surface must be monotone non-decreasing in x
+      (slope geometry, not arbitrary polyline). Raise ValueError if not.
+    priority: critical
+    depends_on: ['F002']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/geometry.py"
+      - "pytest: tests/test_geometry.py::test_ground_y_interpolates_linearly"
+      - "pytest: tests/test_geometry.py::test_ground_y_outside_range_raises"
+      - "pytest: tests/test_geometry.py::test_non_monotone_x_rejected"
+      - "pytest: tests/test_geometry.py::test_water_table_below_ground_returns_correct_pore_pressure"
+      - "pytest: tests/test_geometry.py::test_no_water_table_returns_none"
+
+  F004:
+    title: "Slip surface — circular arc primitives"
+    description: |
+      A CircularSlipSurface class at src/swedish_circle/slip_surface.py
+      representing a candidate failure circle.
+
+      Constructor: CircularSlipSurface(center=(xc, yc), radius=R)
+
+      Methods:
+        intersects_ground(profile: SlopeProfile) -> tuple[float, float] | None
+            # Returns (x_left, x_right) where the circle meets the ground.
+            # None if the circle does not produce a valid two-point intersection
+            # with the ground surface (the failure surface must be a chord).
+
+        y_on_arc(x) -> float
+            # Returns y = yc - sqrt(R^2 - (x - xc)^2) on the LOWER arc
+            # (the slip surface is always the lower half of the circle).
+
+        base_angle(x) -> float
+            # Returns the inclination alpha (radians) of the slip-surface
+            # tangent at x, measured from horizontal. Positive when the
+            # surface dips downward to the right.
+
+        is_kinematically_admissible(profile) -> bool
+            # The lower arc must lie BELOW the ground surface between the
+            # two intersection points. Reject circles that cut UP through
+            # the ground.
+
+      Use scipy.optimize.brentq for the ground intersection (root-finding
+      on circle - ground = 0). No numpy.roots — be deliberate.
+    priority: critical
+    depends_on: ['F003']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/slip_surface.py"
+      - "pytest: tests/test_slip_surface.py::test_circle_below_ground_intersects_at_two_points"
+      - "pytest: tests/test_slip_surface.py::test_circle_above_ground_returns_none"
+      - "pytest: tests/test_slip_surface.py::test_y_on_arc_below_center"
+      - "pytest: tests/test_slip_surface.py::test_base_angle_horizontal_at_circle_bottom"
+      - "pytest: tests/test_slip_surface.py::test_base_angle_signs_match_geometry"
+      - "pytest: tests/test_slip_surface.py::test_kinematic_admissibility_rejects_cutting_up"
+
+  F005:
+    title: "Slice discretization"
+    description: |
+      Function discretize_into_slices(profile, slip_surface, n_slices) at
+      src/swedish_circle/slices.py.
+
+      Given a slope profile and a circular slip surface, produce N
+      vertical slices spanning the failure mass. Each Slice stores:
+
+        x_left, x_right          # slice boundaries
+        x_mid                    # mid-point on the slip surface
+        y_top                    # ground elevation at x_mid
+        y_base                   # slip-surface elevation at x_mid
+        height                   # y_top - y_base
+        width                    # x_right - x_left
+        alpha                    # base inclination (radians) at x_mid
+        weight                   # W = gamma * width * height (kN/m, per metre out-of-plane)
+        pore_pressure            # u at x_mid on the base
+        material                 # ref to the slope material
+
+      Use n_slices = 50 by default. Slice boundaries are equally spaced
+      in x between the two ground-intersection points.
+
+      For slices that span the water table, compute weight using the
+      submerged unit weight ABOVE the water table: gamma * (top - water_y) +
+      gamma_sat * (water_y - base). Test for this.
+
+      Warn (don't fail) if any slice has width / height > 5 (slice is too
+      wide and the constant-base-angle assumption gets bad).
+    priority: critical
+    depends_on: ['F004']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/slices.py"
+      - "pytest: tests/test_slices.py::test_slice_count_matches_request"
+      - "pytest: tests/test_slices.py::test_total_weight_equals_total_mass_times_g"
+      - "pytest: tests/test_slices.py::test_slice_widths_sum_to_chord_length"
+      - "pytest: tests/test_slices.py::test_slice_below_water_uses_saturated_weight"
+      - "pytest: tests/test_slices.py::test_pore_pressure_zero_above_water"
+      - "pytest: tests/test_slices.py::test_warning_when_slices_too_wide"
+
+  F006:
+    title: "Fellenius / Swedish circle method — non-iterative FoS"
+    description: |
+      Implement the Ordinary Method of Slices in
+      src/swedish_circle/fellenius.py.
+
+      The FoS is a direct (non-iterative) formula:
+
+        FoS = sum( c'_i * b_i / cos(alpha_i)
+                 + (W_i * cos(alpha_i) - u_i * b_i / cos(alpha_i)) * tan(phi'_i) )
+              / sum( W_i * sin(alpha_i) )
+
+      where the sum is over slices.
+
+      API:
+        fellenius_fos(profile, slip_surface, n_slices=50) -> float
+
+      Notes:
+      - This is the simplest method — assumptions are crude (interslice
+        forces parallel to slice base, normal stress on base = W*cos(alpha))
+        but it gives a useful conservative FoS.
+      - For dry slopes (no water table) the u_i term is zero.
+      - For phi=0 (purely cohesive), the formula simplifies — verify
+        against the closed-form solution for an undrained slope.
+
+      Edge cases:
+      - If sum(W*sin(alpha)) <= 0 (driving force non-positive), the slope
+        is intrinsically stable. Return float('inf').
+      - If denominator is very small (< 1e-9 of total weight), return inf.
+    priority: critical
+    depends_on: ['F005']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/fellenius.py"
+      - "pytest: tests/test_fellenius.py::test_dry_homogeneous_slope_matches_taylor_chart"
+      - "pytest: tests/test_fellenius.py::test_phi_zero_matches_closed_form"
+      - "pytest: tests/test_fellenius.py::test_pore_pressure_reduces_fos"
+      - "pytest: tests/test_fellenius.py::test_intrinsically_stable_returns_infinity"
+      - "pytest: tests/test_fellenius.py::test_more_slices_converges_to_continuous_limit"
+      - "pytest: tests/test_fellenius.py::test_steeper_slope_lower_fos"
+
+  F007:
+    title: "Bishop's Simplified method (comparison)"
+    description: |
+      Implement Bishop's Simplified method in
+      src/swedish_circle/bishop.py.
+
+      Unlike Fellenius, Bishop is implicit:
+        FoS = (1 / sum(W_i * sin(alpha_i)))
+              * sum( (c'_i * b_i + (W_i - u_i * b_i) * tan(phi'_i)) / m_alpha_i )
+        where m_alpha_i = cos(alpha_i) + sin(alpha_i) * tan(phi'_i) / FoS
+
+      Iterate until convergence (initial guess FoS = 1.0, tolerance 1e-4,
+      max 50 iterations).
+
+      API:
+        bishop_simplified_fos(profile, slip_surface, n_slices=50,
+                              max_iter=50, tol=1e-4) -> tuple[float, int]
+        # Returns (fos, iterations_used)
+
+      Bishop is generally LESS conservative (higher FoS) than Fellenius
+      for the same circle. The test below verifies this property.
+    priority: high
+    depends_on: ['F006']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/bishop.py"
+      - "pytest: tests/test_bishop.py::test_bishop_fos_matches_published_homogeneous_value"
+      - "pytest: tests/test_bishop.py::test_bishop_converges_within_50_iterations"
+      - "pytest: tests/test_bishop.py::test_bishop_fos_greater_than_fellenius_for_same_circle"
+      - "pytest: tests/test_bishop.py::test_bishop_phi_zero_equals_fellenius_phi_zero"
+      - "pytest: tests/test_bishop.py::test_bishop_handles_pore_pressure"
+
+  F008:
+    title: "Critical slip surface search — circular grid"
+    description: |
+      Function search_critical_circle in
+      src/swedish_circle/search.py:
+
+        search_critical_circle(
+            profile, method='fellenius',
+            x_grid=20, y_grid=20, r_grid=15, n_slices=50,
+        ) -> SearchResult
+
+      Algorithm:
+      1. Define a search box for circle centers: above the slope, extending
+         up to 2*slope_height above the crest, laterally beyond crest and toe
+         by 0.5*slope_length.
+      2. For each (xc, yc) in the grid, sweep r between r_min and r_max
+         (where r_min ensures the circle reaches the ground, r_max bounded
+         by twice the slope length).
+      3. Compute FoS for each (xc, yc, r) using the chosen method
+         (Fellenius or Bishop).
+      4. Skip non-kinematically-admissible circles.
+      5. Return the (xc, yc, r, FoS) with minimum FoS, plus a 2D grid of
+         minimum-over-r FoS at each center for plotting.
+
+      SearchResult dataclass:
+        critical_center: tuple[float, float]
+        critical_radius: float
+        critical_fos: float
+        method: str
+        fos_grid: np.ndarray  # shape (y_grid, x_grid), min-over-r FoS
+        grid_extents: tuple[float, float, float, float]  # (xmin, xmax, ymin, ymax) of centers
+        n_circles_evaluated: int
+
+      Use numpy vectorization where reasonable. A grid_search of 20*20*15
+      = 6000 circles should complete in <30s.
+    priority: high
+    depends_on: ['F006']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/search.py"
+      - "pytest: tests/test_search.py::test_finds_critical_circle_in_homogeneous_slope"
+      - "pytest: tests/test_search.py::test_search_terminates_within_30_seconds"
+      - "pytest: tests/test_search.py::test_critical_fos_lower_than_arbitrary_circle"
+      - "pytest: tests/test_search.py::test_search_handles_method_string_correctly"
+      - "pytest: tests/test_search.py::test_fos_grid_shape_matches_request"
+
+  F009:
+    title: "V&V — Taylor's chart benchmark"
+    description: |
+      Add tests/test_vv_taylor.py that validates the Fellenius and Bishop
+      implementations against Taylor's stability chart (Taylor, 1937 —
+      'Stability of earth slopes').
+
+      Taylor's stability number for phi=0 (undrained):
+        N_s = c_u / (gamma * H * F_s)
+
+      For a vertical-cut slope (beta=90°, phi=0): N_s ≈ 0.261
+      For a 1:1 slope (beta=45°, phi=0): N_s ≈ 0.181
+      For a 2:1 slope (beta=26.57°, phi=0): N_s ≈ 0.136
+
+      For each slope angle in [45, 30, 26.57, 20, 15], with phi=0,
+      c_u=20kPa, gamma=18kN/m^3, H=10m:
+        - Set up the SlopeProfile
+        - Run search_critical_circle (Fellenius)
+        - Compute N_s = c_u / (gamma * H * F_critical)
+        - Assert N_s matches Taylor's published value within 5% (relative)
+
+      Acceptance: at LEAST 3 of the 5 angles match within 5%; all 5 within
+      10%. Document any larger discrepancies.
+    priority: critical
+    depends_on: ['F008']
+    acceptance_criteria:
+      - "File exists: tests/test_vv_taylor.py"
+      - "pytest: tests/test_vv_taylor.py::test_vertical_cut_phi_zero"
+      - "pytest: tests/test_vv_taylor.py::test_one_to_one_slope_phi_zero"
+      - "pytest: tests/test_vv_taylor.py::test_two_to_one_slope_phi_zero"
+      - "pytest: tests/test_vv_taylor.py::test_at_least_three_angles_within_five_percent"
+
+  F010:
+    title: "V&V — Abramson textbook example"
+    description: |
+      Add tests/test_vv_abramson.py validating the Bishop implementation
+      against the canonical homogeneous-slope example from Abramson et al.,
+      'Slope Stability and Stabilization Methods' (Wiley, 2nd ed.).
+
+      Setup:
+        slope height H = 10 m
+        slope angle beta = 2H:1V (i.e. 26.57°)
+        Mohr-Coulomb: c' = 20 kPa, phi' = 20°, gamma = 18 kN/m^3
+        no water table
+
+      Published critical Bishop FoS ≈ 1.37.
+
+      Test asserts:
+        - Critical Bishop FoS within 2% of 1.37
+        - Critical Fellenius FoS is LESS than Bishop FoS by 5-15%
+          (well-known property; Fellenius is more conservative)
+        - Critical circle center is above the slope crest
+        - Critical circle passes below the toe (deep-seated failure
+          characteristic of cohesive slopes)
+    priority: high
+    depends_on: ['F009']
+    acceptance_criteria:
+      - "File exists: tests/test_vv_abramson.py"
+      - "pytest: tests/test_vv_abramson.py::test_bishop_fos_matches_published"
+      - "pytest: tests/test_vv_abramson.py::test_fellenius_more_conservative_than_bishop"
+      - "pytest: tests/test_vv_abramson.py::test_critical_circle_geometry_sensible"
+
+  # ================================================================
+  # DESKTOP GUI (F013-F019)
+  #
+  # Testing strategy: every GUI test uses pytest-qt's `qtbot` fixture
+  # which creates a Qt application without needing a display. The
+  # conftest.py for GUI tests sets QT_QPA_PLATFORM=offscreen at module
+  # import time so headless CI works. For rendered-output verification,
+  # use snapshot tests: render canvas to QImage, save to a tmp_path
+  # PNG, compare against a baseline PNG checked into tests/baselines/
+  # using PIL with a per-pixel-RMS tolerance of <2.0.
+  # ================================================================
+
+  F013:
+    title: "Main window scaffold (PyQt6)"
+    description: |
+      Create src/swedish_circle/gui/main_window.py with a QMainWindow
+      subclass MainWindow.
+
+      Structure:
+        Menu bar: File (New, Open, Save, Save As, Export PNG, Export JSON, Exit)
+                  Edit (Undo, Redo, Clear)
+                  View (Zoom In, Zoom Out, Fit to View, Toggle Grid)
+                  Analysis (Run Search, Stop)
+                  Help (About)
+        Toolbar: New, Open, Save, |, Run Search, Stop
+        Central widget: SlopeCanvas (placeholder for F014)
+        Right dock: PropertyPanel (collapsible; placeholder for F016)
+        Status bar: cursor coordinates in slope-space, last analysis time
+
+      Wire up File > Exit and Help > About now; the rest become hooks
+      for later features.
+
+      Add an entry script via pyproject.toml:
+        [project.gui-scripts]
+        swedish-circle-gui = "swedish_circle.gui.main_window:run"
+
+      The `run` function creates QApplication, sets the application
+      style to "Fusion" (cross-platform consistency), shows MainWindow,
+      and calls app.exec().
+
+      Tests use pytest-qt qtbot fixture to instantiate MainWindow and
+      assert menu/toolbar structure.
+    priority: high
+    depends_on: ['F001']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/gui/main_window.py"
+      - "File exists: src/swedish_circle/gui/__init__.py"
+      - "pytest: tests/test_gui_main_window.py::test_main_window_instantiates"
+      - "pytest: tests/test_gui_main_window.py::test_menu_structure_present"
+      - "pytest: tests/test_gui_main_window.py::test_toolbar_actions_present"
+      - "pytest: tests/test_gui_main_window.py::test_help_about_dialog_opens"
+      - "pytest: tests/test_gui_main_window.py::test_file_exit_quits"
+
+  F014:
+    title: "Slope canvas — pan, zoom, grid"
+    description: |
+      Custom QWidget at src/swedish_circle/gui/canvas.py implementing
+      a 2D drawing area with engineering coordinates (meters, y-axis
+      points up).
+
+      Features:
+        - World ↔ screen coordinate transforms (QTransform-based)
+        - Pan: middle-mouse drag or Space+left-drag
+        - Zoom: scroll wheel, anchored on cursor position
+        - Grid: configurable spacing (auto-snaps to 1m, 5m, 10m, 50m
+          depending on zoom level), drawn as light gray lines
+        - Axis labels on bottom and left edges with current units
+        - Crosshair cursor showing world-coordinate position in the
+          status bar
+        - "Fit to view" recenters and scales to show the full slope
+          plus 2m margin
+
+      Rendering uses QPainter with anti-aliasing. Performance: smooth
+      pan/zoom for slope geometries with up to 1000 boundary points.
+
+      For headless tests, the canvas must be paintable into a QImage:
+        canvas.render_to_image(width, height) -> QImage
+      so snapshot tests can compare pixel output without an X server.
+    priority: high
+    depends_on: ['F013']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/gui/canvas.py"
+      - "pytest: tests/test_gui_canvas.py::test_world_to_screen_round_trip"
+      - "pytest: tests/test_gui_canvas.py::test_zoom_centers_on_cursor"
+      - "pytest: tests/test_gui_canvas.py::test_pan_translates_view"
+      - "pytest: tests/test_gui_canvas.py::test_fit_to_view_shows_entire_slope"
+      - "pytest: tests/test_gui_canvas.py::test_grid_spacing_adapts_to_zoom"
+      - "pytest: tests/test_gui_canvas.py::test_render_to_image_produces_nonempty_qimage"
+
+  F015:
+    title: "Interactive slope drawing tool"
+    description: |
+      Add a SlopeDrawingMode to the canvas at
+      src/swedish_circle/gui/draw_slope.py.
+
+      Mode activation: Toolbar "Draw Slope" button toggles the mode.
+
+      Behavior:
+        - Click points to add boundary vertices to the ground surface
+        - Vertices snap to the visible grid (within 5 px tolerance)
+        - Live preview line follows the cursor between the last vertex
+          and the current cursor position
+        - Right-click or double-click to finalize the polyline
+        - Escape cancels the in-progress drawing
+        - Once finalized, the SlopeProfile is constructed and stored
+          on the MainWindow
+        - The status bar shows the current vertex count during drawing
+
+      Validation: the resulting profile must satisfy the
+      SlopeProfile monotone-x constraint. If the user clicks a point
+      that violates this, show a non-modal warning in the status bar
+      and reject the click.
+
+      Tests use qtbot.mouseClick / qtbot.keyClick to drive the
+      drawing flow programmatically and assert the resulting
+      SlopeProfile matches expected vertex coordinates.
+    priority: high
+    depends_on: ['F014', 'F003']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/gui/draw_slope.py"
+      - "pytest: tests/test_gui_draw_slope.py::test_clicking_points_creates_profile"
+      - "pytest: tests/test_gui_draw_slope.py::test_double_click_finalizes_profile"
+      - "pytest: tests/test_gui_draw_slope.py::test_escape_cancels_drawing"
+      - "pytest: tests/test_gui_draw_slope.py::test_non_monotone_click_rejected"
+      - "pytest: tests/test_gui_draw_slope.py::test_grid_snap_within_tolerance"
+
+  F016:
+    title: "Material editor dialog"
+    description: |
+      Modal QDialog at src/swedish_circle/gui/material_dialog.py
+      for editing the slope's Material parameters.
+
+      Layout:
+        - Preset dropdown: "Loose Sand", "Dense Sand", "Soft Clay",
+          "Stiff Clay", "Weathered Rock", "Custom"
+        - Spin boxes for cohesion (kPa, 0-1000), friction angle
+          (degrees, 0-60), unit weight (kN/m^3, 10-25), saturated unit
+          weight (kN/m^3, 10-25)
+        - Selecting a preset fills the spin boxes
+        - "OK" / "Cancel" buttons; OK closes with the new Material
+          and Cancel keeps the existing one
+
+      Wire it to the View > Material menu and to a Materials toolbar
+      button.
+
+      Tests use qtbot to open the dialog, set values via
+      QSpinBox.setValue(), click OK via button.click(), and assert
+      the returned Material has the expected attributes.
+    priority: medium
+    depends_on: ['F013', 'F002']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/gui/material_dialog.py"
+      - "pytest: tests/test_gui_material_dialog.py::test_dialog_opens_with_current_material"
+      - "pytest: tests/test_gui_material_dialog.py::test_ok_returns_modified_material"
+      - "pytest: tests/test_gui_material_dialog.py::test_cancel_preserves_original"
+      - "pytest: tests/test_gui_material_dialog.py::test_preset_selection_fills_fields"
+      - "pytest: tests/test_gui_material_dialog.py::test_invalid_value_clamped_to_range"
+
+  F017:
+    title: "Live FoS computation and critical-circle overlay"
+    description: |
+      Add an Analysis mode at src/swedish_circle/gui/analysis_overlay.py.
+
+      When "Run Search" is triggered (toolbar button or Analysis menu):
+        - Disable input controls; show a non-modal busy indicator in
+          the status bar with "Analyzing slope..."
+        - Run search_critical_circle in a QThread (NEVER on the main
+          thread — that would freeze the GUI)
+        - Render progress: every 100 circles evaluated, post a
+          progress signal back to the GUI showing elapsed time and
+          n_evaluated
+        - When done, render on the canvas:
+          * The FoS contour grid (semi-transparent color overlay,
+            blue=high FoS, red=low FoS, with a colorbar legend in the
+            corner)
+          * The critical circle in solid red
+          * The critical circle's slice boundaries (thin gray lines)
+          * A label near the circle showing "FoS = 1.37" (or computed
+            value)
+        - Re-enable input controls
+        - Status bar shows total analysis time
+
+      The QThread implementation must be cancellable via the Stop
+      action; cancellation should cleanly terminate without leaving
+      partial state on the canvas.
+
+      Tests use a fake search_critical_circle that returns instantly
+      with a deterministic SearchResult; assert canvas paints the
+      circle and label after qtbot.wait(100).
+    priority: high
+    depends_on: ['F015', 'F016', 'F008']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/gui/analysis_overlay.py"
+      - "pytest: tests/test_gui_analysis.py::test_run_search_uses_qthread"
+      - "pytest: tests/test_gui_analysis.py::test_canvas_shows_critical_circle_after_search"
+      - "pytest: tests/test_gui_analysis.py::test_canvas_shows_fos_label"
+      - "pytest: tests/test_gui_analysis.py::test_progress_signal_emits_periodically"
+      - "pytest: tests/test_gui_analysis.py::test_stop_action_cancels_running_search"
+      - "pytest: tests/test_gui_analysis.py::test_input_disabled_during_analysis"
+
+  F018:
+    title: "Snapshot test baseline for canvas rendering"
+    description: |
+      Lock down canvas rendering with a snapshot test at
+      tests/test_gui_canvas_snapshot.py.
+
+      Procedure:
+        - Build a deterministic SlopeProfile (5 vertices, fixed coords)
+        - Build a fixed CircularSlipSurface (center, radius)
+        - Create a SlopeCanvas, set the geometry, render to a 800x600
+          QImage via canvas.render_to_image(800, 600)
+        - Save to tmp_path
+        - Compare against tests/baselines/canvas_homogeneous.png using
+          PIL ImageChops; compute per-pixel RMS difference; assert
+          RMS < 2.0 (i.e., near-identical with anti-aliasing tolerance)
+
+      The first test run creates the baseline if missing (and emits a
+      pytest warning). Subsequent runs compare. To regenerate after
+      intentional rendering changes, delete the baseline.
+
+      Also add a baseline for the "after analysis" state (canvas with
+      critical circle drawn) using a deterministic SearchResult.
+
+      This is THE feature where the GUI agent could fake — it's
+      tempting to just save whatever the canvas produces as the
+      baseline. The acceptance criterion includes a manual sanity
+      check: the PNG must be at least 50KB (real rendered content,
+      not a blank canvas).
+    priority: medium
+    depends_on: ['F017']
+    acceptance_criteria:
+      - "File exists: tests/test_gui_canvas_snapshot.py"
+      - "File exists: tests/baselines/canvas_homogeneous.png"
+      - "File exists: tests/baselines/canvas_with_critical_circle.png"
+      - "pytest: tests/test_gui_canvas_snapshot.py::test_canvas_matches_baseline_homogeneous"
+      - "pytest: tests/test_gui_canvas_snapshot.py::test_canvas_matches_baseline_with_circle"
+      - "pytest: tests/test_gui_canvas_snapshot.py::test_baseline_is_not_blank"
+
+  F019:
+    title: "Project save/load + export"
+    description: |
+      File I/O at src/swedish_circle/gui/io.py.
+
+      Save format: JSON with the schema:
+        {
+          "schema_version": 1,
+          "ground_surface": [[x, y], ...],
+          "water_table": [[x, y], ...] | null,
+          "material": { "cohesion": ..., "friction_deg": ..., ... },
+          "method": "fellenius" | "bishop",
+          "n_slices": 50,
+          "last_result": null | { "critical_center": ..., "critical_radius": ...,
+                                  "critical_fos": ..., "method": ... }
+        }
+
+      Wire to File > Save / Save As / Open menu items.
+
+      Export:
+        - File > Export > PNG: render the current canvas (with any
+          analysis overlay) to a user-chosen PNG file
+        - File > Export > JSON: same data structure as Save, intended
+          for downstream tooling
+        - File > Export > Slice Forces CSV: if a search has been run,
+          write a CSV with one row per slice from the critical circle
+          (columns: x_mid, alpha_deg, weight, base_normal,
+          base_pore_pressure, mobilized_shear_strength)
+
+      Tests load a fixture JSON, assert the resulting MainWindow state
+      matches; round-trip a saved project and assert byte-equality of
+      the JSON content.
+    priority: medium
+    depends_on: ['F017']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/gui/io.py"
+      - "pytest: tests/test_gui_io.py::test_save_then_load_round_trips"
+      - "pytest: tests/test_gui_io.py::test_load_invalid_json_shows_error"
+      - "pytest: tests/test_gui_io.py::test_export_png_writes_file"
+      - "pytest: tests/test_gui_io.py::test_export_slice_forces_csv_has_correct_rows"
+      - "pytest: tests/test_gui_io.py::test_schema_version_mismatch_warned"
+
+  F011:
+    title: "ASCII visualization for FoS contour"
+    description: |
+      Add a matplotlib-free ASCII rendering of the FoS contour at
+      src/swedish_circle/render.py:
+
+        ascii_fos_contour(search_result: SearchResult, width=60, height=20) -> str
+
+      Walks the fos_grid, normalizes to a fixed character set
+      (' ', '.', '-', '+', '#') from highest FoS to lowest, marks the
+      critical circle center with '*', and returns a multi-line string.
+
+      Useful for log-friendly output of `bob3 run` and CI artifacts.
+      Optional matplotlib version may also be added (plot_fos_contour)
+      that writes a PNG, but the ASCII renderer is required.
+    priority: medium
+    depends_on: ['F008']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/render.py"
+      - "pytest: tests/test_render.py::test_ascii_contour_returns_string"
+      - "pytest: tests/test_render.py::test_ascii_contour_marks_critical_center"
+      - "pytest: tests/test_render.py::test_ascii_contour_dimensions_match_request"
+
+  F012:
+    title: "Command-line entry point"
+    description: |
+      Add a CLI entry in src/swedish_circle/cli.py and wire it via
+      pyproject.toml:
+
+        [project.scripts]
+        swedish-circle = "swedish_circle.cli:main"
+
+      Usage:
+        swedish-circle analyze <spec.yaml>
+
+      Where spec.yaml describes:
+        material:
+          cohesion: 20.0
+          friction_deg: 20.0
+          unit_weight: 18.0
+        ground_surface:
+          - [0.0, 0.0]
+          - [10.0, 0.0]
+          - [30.0, 10.0]
+          - [40.0, 10.0]
+        water_table: null
+        method: bishop
+        n_slices: 50
+
+      Output:
+        - Critical FoS, center, radius
+        - ASCII contour
+        - Exit code 0 on success, 2 if critical FoS < 1.0 (slope unstable)
+    priority: medium
+    depends_on: ['F008', 'F011']
+    acceptance_criteria:
+      - "File exists: src/swedish_circle/cli.py"
+      - "pytest: tests/test_cli.py::test_analyze_command_succeeds_on_stable_slope"
+      - "pytest: tests/test_cli.py::test_analyze_exits_2_on_unstable_slope"
+      - "pytest: tests/test_cli.py::test_analyze_prints_critical_fos"
+      - "pytest: tests/test_cli.py::test_analyze_handles_missing_water_table"

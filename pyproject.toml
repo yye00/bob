@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bob3"
+version = "0.2.0"
+description = "Build Orchestration Bot v3 - recursive build orchestration using Claude Code sub-agents"
+requires-python = ">=3.11"
+dependencies = [
+    "claude-code-sdk>=0.0.25",
+    "click>=8.0",
+    "rich>=13.0",
+    "pydantic>=2.0",
+    "PyMuPDF>=1.23.0",
+    "PyYAML>=6.0",
+    "mem0ai>=0.1.0",
+    "mcp>=1.0",
+    "fastembed>=0.7.0",
+    "pip-audit>=2.7",
+    "detect-secrets>=1.5",
+    "bandit>=1.7",
+    "pytest-xdist>=3.5",
+    "icontract>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.21",
+    "pytest-mock>=3.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.5",
+    "ruff>=0.1.0",
+    "psutil>=5.9",  # used by some test_f113 tests
+]
+
+[project.scripts]
+spec_coverage = "tools.spec_coverage:main"
+spec-coverage = "tools.spec_coverage:main"
+mutmut-gate = "bob3.mutmut_gate_cli:main"
+mutation-score = "bob3.mutation_score_cli:main"
+bob3 = "bob3.cli:main"
+bob33 = "bob3.cli:main"
+bob32 = "bob3.cli:main"
+bob31 = "bob3.cli:main"
+bob30 = "bob3.cli:main"
+bob29 = "bob3.cli:main"
+bob28 = "bob3.cli:main"
+bob27 = "bob3.cli:main"
+bob26 = "bob3.cli:main"
+bob25 = "bob3.cli:main"
+bob24 = "bob3.cli:main"
+bob23 = "bob3.cli:main"
+bob22 = "bob3.cli:main"
+bob21 = "bob3.cli:main"
+bob20 = "bob3.cli:main"
+bob19 = "bob3.cli:main"
+bob18 = "bob3.cli:main"
+bob17 = "bob3.cli:main"
+bob16 = "bob3.cli:main"
+bob15 = "bob3.cli:main"
+bob14 = "bob3.cli:main"
+bob13 = "bob3.cli:main"
+bob12 = "bob3.cli:main"
+bob11 = "bob3.cli:main"
+bob10 = "bob3.cli:main"
+bob7 = "bob3.cli:main"
+bob8 = "bob3.cli:main"
+bob9 = "bob3.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"bob3" = ["schema.sql", "skills/**/SKILL.md"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"  # explicit @pytest.mark.asyncio required (current behavior)
+testpaths = ["tests"]
+# Prepend workspace src/ to sys.path so pytest sees the in-tree bob3
+# even when running under a PARENT generation's venv (recursive build
+# convention: bob_N's venv builds bob_(N+1), but bob_(N+1)'s sub-agents
+# write into bob_(N+1)/src/bob3/, which the parent venv's editable
+# install cannot see). Without this, every new module created in this
+# workspace is invisible to pytest's import path.
+pythonpath = ["src", "."]

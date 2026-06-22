@@ -1,0 +1,235 @@
+name: bob4
+version: "0.3.0"
+description: |
+  Bob4 — Round 1 of the recursive bob-on-bob dark factory.
+
+  Bob4 = bob3 (verification-spine, post-Round-0) + the following:
+    Gap #3  CLAUDE.md Unicode sanitization (Pillar "Rules File Backdoor" defense)
+    Gap #5  Compounding-engineering per-skill learning ledger
+    Gap #8  Scaffolding tagging audit (# SCAFFOLDING(...) enforcement)
+    Gap #9  Structured progress events (JSONL) replacing claude-progress.txt
+    Phase-3 infrastructure: tools/capability_matrix.py
+    Phase-4 infrastructure: 6-agent research harness (R1..R6)
+    Phase-5 infrastructure: spec synthesizer
+
+  Out of scope this round:
+    Gap #4 (worktrees + parallelism)        — Round 2
+    Gap #6/#7 (plan review + build-twice)   — Round 3
+    Stack expansions (Node/Java/C++/HIP)    — Round 4+
+
+  Workspace points at bob4 (the next generation). Bob3 (this generation)
+  drives the build by spawning sub-agents that edit bob4/. Bob4 starts as
+  a copy of the bob3 baseline (4bfc86b + Round-0 verification spine).
+
+# bob3 (orchestrator) lives at /home/yelkhamr/dark-factory/bob/
+# bob4 (target) is seeded as a clone before `bob3 run` starts.
+workspace: /home/yelkhamr/dark-factory/bob4
+
+features:
+
+  # --------------------------------------------------------------------
+  # Gap #3 — Pillar "Rules File Backdoor" defense
+  # --------------------------------------------------------------------
+
+  F-R1-001:
+    title: "Unicode sanitizer for auto-generated CLAUDE.md"
+    description: |
+      Add src/bob3/claude_md_sanitizer.py with sanitize_for_claude_md(text: str) -> str.
+      Reject or strip Unicode codepoints in categories Cf (format), Cc (control),
+      Co (private use), Cs (surrogate) — except \n, \t. NFKC-normalize all input.
+      Reference: Pillar Security "Rules File Backdoor" (2025) attack against
+      CLAUDE.md / .cursorrules. See research report
+      docs/recursion/round1/research/gap_03_05_claude_md_and_compounding_learnings.md
+    priority: 1
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/claude_md_sanitizer.py"
+      - "Function defined: bob3.claude_md_sanitizer.sanitize_for_claude_md"
+      - "pytest: tests/test_claude_md_sanitizer.py"
+      - "python: from bob3.claude_md_sanitizer import sanitize_for_claude_md; assert sanitize_for_claude_md('hi\\u202ehidden') == 'hihidden'"
+
+  F-R1-002:
+    title: "Wire sanitizer into every CLAUDE.md write site"
+    description: |
+      grep the bob3 source for every place CLAUDE.md is generated or appended
+      and route the text through sanitize_for_claude_md first. Add a regression
+      test that proves a fixture containing U+202E (RTL override), U+200B
+      (zero-width space), and a private-use codepoint is stripped before write.
+    priority: 1
+    depends_on: ['F-R1-001']
+    acceptance_criteria:
+      - "pytest: tests/test_claude_md_write_sites.py"
+      - "pytest: tests/test_claude_md_sanitizer_wire_sites.py::test_all_write_sites_call_sanitize"
+
+  # --------------------------------------------------------------------
+  # Gap #5 — Compounding-engineering per-skill learning ledger
+  # --------------------------------------------------------------------
+
+  F-R1-003:
+    title: "Per-skill learning ledger schema + append-only writer"
+    description: |
+      Add src/bob3/learnings.py with append_learning(skill: str, lesson: str,
+      evidence: dict, source_feature_id: str | None) and read_learnings(skill: str).
+      Storage: src/bob3/skills/<skill>/LEARNINGS.md (append-only markdown ledger
+      with timestamped entries). Schema must include: timestamp, source feature,
+      lesson body, evidence pointer (file:line or test name).
+      Reference: docs/recursion/round1/research/gap_03_05_claude_md_and_compounding_learnings.md
+    priority: 2
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/learnings.py"
+      - "Function defined: bob3.learnings.append_learning"
+      - "Function defined: bob3.learnings.read_learnings"
+      - "pytest: tests/test_learnings.py"
+
+  F-R1-004:
+    title: "Post-feature learning extraction hook"
+    description: |
+      In run_loop.py, after a feature's evaluator passes (or is rejected),
+      spawn a small extraction sub-agent (haiku, max 2 turns) that reads the
+      feature's diff + evaluator findings and emits 0..3 lessons via
+      append_learning. The extracted lessons should be skill-scoped (which
+      skill would have prevented the issue / which skill confirmed success).
+      No-op if the feature is too small (< 20 lines diff).
+    priority: 2
+    depends_on: ['F-R1-003']
+    acceptance_criteria:
+      - "pytest: tests/test_post_feature_learning_hook.py"
+      - "python: from bob3.orchestrator.run_loop import _extract_lessons_post_feature"
+
+  # --------------------------------------------------------------------
+  # Gap #8 — Scaffolding tagging audit
+  # --------------------------------------------------------------------
+
+  F-R1-005:
+    title: "AST audit for # SCAFFOLDING(...) tags on compensatory code"
+    description: |
+      Add src/bob3/scaffolding_audit.py with audit_diff(diff: str) -> list[ScaffoldingViolation].
+      A "compensatory" pattern is any new try/except that swallows or returns a
+      default, any return inside an except that doesn't re-raise, any
+      `pass` inside an except, any `if not <thing>: return` guard added
+      around a previously unguarded call. Each such pattern in NEW code must
+      have a `# SCAFFOLDING(<reason>)` comment on the same line or the
+      preceding line. Untagged compensations are violations.
+    priority: 3
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/scaffolding_audit.py"
+      - "Function defined: bob3.scaffolding_audit.audit_diff"
+      - "pytest: tests/test_scaffolding_audit.py"
+
+  F-R1-006:
+    title: "Wire scaffolding audit into run_verification_checklist"
+    description: |
+      Add Check #10 (scaffolding) to run_verification_checklist in superpowers.py.
+      Runs post-implementation. Untagged scaffolding is a hard fail (routes to
+      RCA, mirrors the pattern Round 0 established for security check #9).
+      Tagged scaffolding is logged to reviews/findings.yaml with
+      tag="scaffolding-audit" but does not block.
+    priority: 3
+    depends_on: ['F-R1-005']
+    acceptance_criteria:
+      - "pytest: tests/test_scaffolding_check_integration.py"
+
+  # --------------------------------------------------------------------
+  # Gap #9 — Structured progress events
+  # --------------------------------------------------------------------
+
+  F-R1-007:
+    title: "Structured JSONL progress event stream"
+    description: |
+      Add src/bob3/progress_events.py with emit_event(event_type: str, payload: dict)
+      writing one JSON object per line to <workspace>/.bob3/progress.jsonl.
+      Event types: feature_started, feature_completed, verification_started,
+      verification_check_finished, evaluator_verdict, security_finding,
+      cost_checkpoint, error. Each event includes timestamp, project_id,
+      feature_id, attempt_number, and a typed payload.
+    priority: 4
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/progress_events.py"
+      - "Function defined: bob3.progress_events.emit_event"
+      - "pytest: tests/test_progress_events.py"
+
+  F-R1-008:
+    title: "Migrate claude-progress.txt writers to emit structured events"
+    description: |
+      Find every claude-progress.txt writer in the source and have it ALSO
+      emit a structured event via emit_event (do not delete the text writer
+      yet; this round just adds the structured stream alongside). Add a
+      tests/test_progress_text_and_jsonl_parity.py that proves both streams
+      receive the same set of progress events for a representative feature.
+    priority: 4
+    depends_on: ['F-R1-007']
+    acceptance_criteria:
+      - "pytest: tests/test_progress_text_and_jsonl_parity.py"
+      - "File exists: src/bob3/.bob3/progress.jsonl OR test fixture proves the file is created on first event"
+
+  # --------------------------------------------------------------------
+  # Phase-3 infrastructure: capability matrix
+  # --------------------------------------------------------------------
+
+  F-R1-009:
+    title: "tools/capability_matrix.py — probe bob_N capabilities"
+    description: |
+      Add tools/capability_matrix.py (CLI: `python -m tools.capability_matrix`).
+      Probes the current bob_N for: languages it can build/test (python ✓,
+      js, ts, java, c++, hip, ...), test frameworks (pytest, jest, vitest,
+      junit, gtest, ctest), build systems (pip, npm, maven, gradle, cmake,
+      ninja), GPU verification hooks (compute-sanitizer / rocprof), and the
+      list of verification checks registered in superpowers.py. Each cell
+      = {supported: bool, smoke_test_passes: bool, sample_project: str|null}.
+      Output: docs/recursion/round1/capability_matrix.json (and overwrites
+      capability_matrix_history.jsonl with one new line).
+      Reference: docs/recursion/MASTER_PLAN.md "Phase 3" section.
+    priority: 5
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: tools/capability_matrix.py"
+      - "pytest: tests/test_capability_matrix.py::test_capability_matrix_languages_python"
+      - "pytest: tests/test_capability_matrix.py"
+
+  # --------------------------------------------------------------------
+  # Phase-4 infrastructure: 6-agent research harness
+  # --------------------------------------------------------------------
+
+  F-R1-010:
+    title: "Research-and-Expand harness — R1..R6 agent dispatcher"
+    description: |
+      Add src/bob3/research/ package with one module per agent role:
+      r1_coverage.py, r2_stack.py, r3_perf.py, r4_security.py,
+      r5_ecosystem.py, r6_self_critique.py. Each exposes
+      run(round_num: int) -> list[Proposal]. A top-level dispatcher
+      src/bob3/research/harness.py runs all 6 in parallel (asyncio.gather)
+      and writes proposals to docs/recursion/round<N>/research/. Each
+      Proposal must serialize to the YAML schema documented in MASTER_PLAN
+      Phase-4 (id, domain, title, rationale, acceptance_criteria,
+      estimated_effort, estimated_impact, blocked_by, evidence).
+    priority: 6
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/research/harness.py"
+      - "Function defined: bob3.research.harness.run_all_research_agents"
+      - "pytest: tests/test_research_harness.py"
+      - "python: from bob3.research.harness import run_all_research_agents; from bob3.research import r1_coverage,r2_stack,r3_perf,r4_security,r5_ecosystem,r6_self_critique"
+
+  # --------------------------------------------------------------------
+  # Phase-5 infrastructure: spec synthesizer
+  # --------------------------------------------------------------------
+
+  F-R1-011:
+    title: "Spec synthesizer — turn research proposals into next round's spec"
+    description: |
+      Add src/bob3/spec_synthesizer.py with synthesize_spec(round_num: int,
+      proposals: list[Proposal], budget_features: int = 12) -> dict.
+      Reads all R1..R6 proposals for a given round, ranks by impact/effort,
+      respects blocked_by DAG, applies BOB3_FEATURES_PER_ROUND cap (default 12),
+      and emits a YAML dict ready to write to examples/bootstrap_v0.<N+1>.yaml.
+      The synthesizer itself is a haiku-grade agent (low cost) per MASTER_PLAN.
+      Output also includes synthesized_spec_review.md explaining the ranking.
+    priority: 7
+    depends_on: ['F-R1-010']
+    acceptance_criteria:
+      - "File exists: src/bob3/spec_synthesizer.py"
+      - "Function defined: bob3.spec_synthesizer.synthesize_spec"
+      - "pytest: tests/test_spec_synthesizer.py"

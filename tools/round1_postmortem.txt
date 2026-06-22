@@ -1,0 +1,32 @@
+Round 1 Postmortem (auto-closed by weekend chain orchestration)
+================================================================
+Completed: 2/11 features (~18%)
+  - b398c37e Structured JSONL progress event stream
+  - c66a670b Per-skill learning ledger schema + append-only writer
+
+Force-failed (so round can close and chain can progress):
+  - 7d260dd9 Unicode sanitizer for CLAUDE.md (verification race)
+  - ca6270a7 AST scaffolding audit (verification race)
+  - 12be23c2 capability_matrix.py (acceptance criterion still problematic)
+  - 88adbf0b Post-feature learning hook (test file empty/missing)
+  - c78c2ec7 Research-and-Expand harness (sub-agent did not spawn)
+  - 121fe133 Migrate progress writers (OR-clause acceptance criterion not parsed)
+  - 18705963 Wire sanitizer (blocked on 7d260dd9)
+  - cf6b5934 Wire scaffolding audit (blocked on ca6270a7)
+  - e6657b3f Spec synthesizer (blocked on c78c2ec7)
+
+Root cause patterns (for human review):
+  1. Acceptance criteria using `OR` clauses are not parsed — verifier treats
+     the whole string as a literal path. Fix: split into two separate criteria.
+  2. Sub-agents sometimes create test files with zero tests (pytest exits 4).
+     Fix: either generate a stub test in the spec, or accept exit=4 as PASS.
+  3. Verification race: `Function defined:` check fires before sub-agent
+     writes flush to disk. Fix: small sleep or filesystem sync in verifier.
+  4. Spec defects propagate silently — `import subprocess` was banned but the
+     spec used it; bob3 should lint specs before plan.
+
+Round 2 starts with cleaner specs (Agent A authored bootstrap_v0.4.yaml
+without these antipatterns). If Round 2 hits similar systemic issues, that
+indicates the verifier itself needs hardening (not the spec).
+
+Total Round 1 cost: $43.93 / $1000 budget.

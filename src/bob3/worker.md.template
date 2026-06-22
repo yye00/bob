@@ -1,0 +1,15 @@
+# Feature: {name}
+
+{description}
+
+## Acceptance Criteria
+
+{acceptance_criteria}
+
+## Localization Shortlist
+
+{localization_shortlist}
+
+## Workspace
+
+{workspace}

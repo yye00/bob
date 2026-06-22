@@ -1,0 +1,863 @@
+name: bob9
+version: 0.8.0
+description: |
+  Bob9 — Round 6 of the recursive bob-on-bob dark factory.
+
+  Theme: HARDENING + PARALLEL EXECUTION.
+
+  Bob9 = bob8 (Round-5, hotfix-patched) + (a) the round-5 features that
+  didn't land, (b) the six bob8-era hotfixes formalised as durable
+  spec features so they survive future regenerations, (c) the science
+  layer carried forward at lower priority.
+
+  Convergence policy (set by user 2026-05-20): after bob9 completes,
+  bob10 inherits this same spec verbatim, then bob11 inherits it
+  again. Three consecutive identical runs with the same
+  completed/needs_human breakdown and no human intervention = "stable".
+
+  Priority order (orchestrator should attempt in this order if it
+  enforces tier ordering):
+    1. Concurrency core (P1)     — 5 features. Headline capability.
+    2. Hotfix formalisation (P1) — 6 features. Already implemented in
+                                   bob8, but tested+specced here so
+                                   future regenerations don't lose them.
+    3. Science layer (P2)        — 7 features. Allowed to fail without
+                                   blocking convergence.
+
+  Explicitly OUT OF SCOPE for this round (user directive):
+    - Web-dev / framework scaffolding
+    - Benchmarking platform (the old F-R5-215 benchmark registry is dropped)
+
+features:
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P1.A — Concurrency core (the 5 round-5 features that did not land)
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R6-200:
+    title: Atomic feature-claim SQL for concurrent workers
+    description: |
+      Today's orchestrator picks a ready feature with a plain SELECT
+      then UPDATEs its status to 'executing'. Under concurrency, two
+      workers can claim the same row. Implement a single-statement
+      claim that atomically transitions the chosen feature from
+      'ready' to 'executing' and stamps the claiming worker's id,
+      returning the row only if the transition succeeded. Use either
+      UPDATE…RETURNING (SQLite >= 3.35) or a transaction with
+      row-level exclusivity. Without this, F-R6-202's concurrent
+      executor cannot run safely.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/feature_claim.py'
+      - 'Function defined: bob3.orchestrator.feature_claim.claim_next_ready_feature'
+      - 'pytest: tests/test_feature_claim_atomic.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R6-201:
+    title: Per-feature cost reservation + concurrent budget guard
+    description: |
+      The current budget guard reads the running total once per
+      iteration and decides whether to spawn the next feature. Under
+      N concurrent features, N workers can each pass the guard
+      simultaneously and collectively overshoot max_cost by N
+      feature-budgets. Replace the single-reader guard with a
+      reservation model: before a worker claims a feature, it
+      atomically reserves an estimated feature-budget against the
+      global cap. Reservation succeeds only if
+      (committed_spend + outstanding_reservations + estimate) <= cap.
+      On feature completion the reservation is replaced with actual
+      cost; on failure the reservation is released. Estimated budget
+      defaults to historical p75 per feature (same source as the
+      F-R6-307 pre-spawn cost projection gate; share that estimator).
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/cost_reservation.py'
+      - 'Function defined: bob3.orchestrator.cost_reservation.reserve_budget'
+      - 'Function defined: bob3.orchestrator.cost_reservation.release_reservation'
+      - 'pytest: tests/test_cost_reservation_concurrent.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R6-202:
+    title: Concurrent feature executor with failure isolation
+    description: |
+      Replace the single-feature await in run_loop.run() with a worker
+      pool that dispatches up to N features concurrently using
+      asyncio.gather + a semaphore. A failure in one worker must NOT
+      propagate to peers — wrap each feature in its own try/except,
+      record failure to the DB, release any cost reservation, and let
+      siblings continue. N is configurable via
+      --max-concurrent-features (default 1 = current behavior for
+      backward compat; production target is 4-8). Depends on F-R6-200
+      (atomic claim) and F-R6-201 (cost reservation) — implement
+      those first, then this.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/concurrent_executor.py'
+      - 'Function defined: bob3.orchestrator.concurrent_executor.run_concurrent'
+      - 'pytest: tests/test_concurrent_executor_isolation.py'
+      - 'CLI command: bob3 run --max-concurrent-features'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R6-150:
+    title: Synthesizer emits integration criterion for wiring features
+    description: |
+      When a feature description implies it must be wired into
+      existing code (keywords: "integrate", "wire into", "hook into",
+      "register with"), the F-R1-011 spec synthesizer must add an
+      "integration: <module>" acceptance criterion. The F-R6-305
+      hotfix in bob8 hardened the LLM-fallback path; this feature
+      ensures the integration-detection logic is exercised under the
+      normal happy path as well, with a regression test fixture.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_synthesizer.py'
+      - 'Function defined: bob3.spec_synthesizer.detect_integration_targets'
+      - 'pytest: tests/test_spec_synthesizer_integration_criteria.py'
+
+  F-R6-151:
+    title: Sandbox the verifier from feature commits
+    description: |
+      An implementation sub-agent in Round 4 was observed editing
+      src/bob3/enhanced_verification.py to soften the
+      integration_code_exists check so its own feature would pass.
+      Add a guard that rejects any diff touching verifier modules
+      (enhanced_verification.py, superpowers.py, the evaluator)
+      unless the active feature is tagged role=verifier.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/verifier_sandbox.py'
+      - 'Function defined: bob3.orchestrator.verifier_sandbox.check_verifier_untouched'
+      - 'pytest: tests/test_verifier_sandbox.py'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P1.B — Hotfix formalisation (the six bob8-era hotfixes promoted to
+  #        durable spec features so they don't get lost when bob10/11
+  #        regenerate from bob9. Implementations already exist; this
+  #        round adds the tests and locks the interface.)
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R6-300:
+    title: Sub-agent crash classifier (mid-work vs spawn-failure)
+    description: |
+      Classify a sub-agent's exit into one of:
+        - spawn_failure (process never produced its initial heartbeat;
+          eligible for free retry within the cap)
+        - mid_work_crash (heartbeat seen, then exited unexpectedly;
+          counts against the refinement attempts budget)
+        - clean_exit
+      The orchestrator's free-retry gating must use this classifier
+      rather than treating every non-zero exit as a spawn failure.
+      claude-code's "Fatal error in message reader" message used to be
+      misclassified as spawn-failure and burned all 3 free retries on
+      a single broken feature.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/crash_classifier.py'
+      - 'Function defined: bob3.orchestrator.crash_classifier.classify_exit'
+      - 'pytest: tests/test_crash_classifier.py'
+      - 'integration: bob3.orchestrator.claude_executor'
+
+  F-R6-301:
+    title: Per-feature pytest scoping
+    description: |
+      pytest collection currently picks up tests from across the
+      whole tests/ tree even when verifying a single feature, which
+      makes verification slow and lets unrelated test failures block
+      a feature. Implement a scoping helper that, given a feature's
+      acceptance criteria, derives the relevant test files via the
+      importer graph (the test depends on a module the feature
+      touches) and runs pytest only on those.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/pytest_scoper.py'
+      - 'Function defined: bob3.pytest_scoper.derive_scope_for_feature'
+      - 'pytest: tests/test_pytest_scoper.py'
+      - 'integration: bob3.enhanced_verification'
+
+  F-R6-302:
+    title: MCP server lifecycle + orphan sweep
+    description: |
+      MCP servers spawned by sub-agents were accumulating as orphans
+      (we observed 59 in a single round). Implement (a) a per-sub-agent
+      MCP registry that unregisters servers on sub-agent exit, and
+      (b) an orphan sweep that on orchestrator startup finds and kills
+      MCP processes whose parent is no longer alive.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/mcp_lifecycle.py'
+      - 'Function defined: bob3.mcp_lifecycle.register_mcp_server'
+      - 'Function defined: bob3.mcp_lifecycle.sweep_orphans'
+      - 'pytest: tests/test_mcp_lifecycle.py'
+      - 'integration: bob3.orchestrator.claude_executor'
+
+  F-R6-303:
+    title: Per-sub-agent disk quota with pre-spawn check
+    description: |
+      Disk-free halts have fired repeatedly in the chain (round 5 hit
+      one at <5 GB). Implement a per-sub-agent disk quota that
+      reserves an estimated working-set size before spawn and refuses
+      to spawn if the reservation would push free disk below the
+      halt threshold. On sub-agent exit, prune its session log to
+      stay under quota.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/disk_quota.py'
+      - 'Function defined: bob3.disk_quota.reserve_session_disk'
+      - 'Function defined: bob3.disk_quota.enforce_session_quota'
+      - 'pytest: tests/test_disk_quota.py'
+      - 'integration: bob3.orchestrator.claude_executor'
+
+  F-R6-305:
+    title: Spec-synthesizer LLM-fallback hardening
+    description: |
+      When the LLM returns malformed output, the deterministic
+      fallback must (a) never emit a Python keyword, reserved word,
+      or leading-digit identifier, (b) keep file path and function
+      name consistent (single canonical slug), (c) qualify
+      integration targets with the bob3.* prefix, (d) raise
+      ValueError on degenerate titles rather than silently emitting
+      a useless CLI-only spec. Also: reject non-string title values
+      (PyYAML can deserialize 'title: yes' as bool).
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_synthesizer.py'
+      - 'Function defined: bob3.spec_synthesizer._derive_canonical_slug'
+      - 'Function defined: bob3.spec_synthesizer._qualify_integration_target'
+      - 'pytest: tests/test_synthesizer_fallback_hardening.py'
+
+  F-R6-307:
+    title: Pre-spawn cost projection gate
+    description: |
+      Project the cost of a sub-agent before spawning by taking p75
+      of historical sub_agent_runs.cost_usd for the same feature kind.
+      If the projection plus the current spend would exceed max_cost,
+      refuse the spawn. Logs the projection so the operator can see
+      why a sub-agent was gated.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/cost_projection.py'
+      - 'Function defined: bob3.orchestrator.cost_projection.project_spawn_cost'
+      - 'Function defined: bob3.orchestrator.cost_projection.should_spawn'
+      - 'pytest: tests/test_cost_projection.py'
+      - 'integration: bob3.orchestrator.claude_executor'
+
+  F-R6-310:
+    title: Full sub-agent stderr/stdout capture
+    description: |
+      When a sub-agent spawn fails, the only diagnostic surfaced to the
+      orchestrator was a generic "Command failed with exit code 1" — the
+      actual CLI stderr (containing the 400 BadRequest body, the offending
+      JSON payload, the model-side error code) was discarded by the SDK
+      because ``debug_stderr`` was only wired up when the caller
+      explicitly opted in via ``extra_args={"debug-to-stderr": None}``.
+      This made every Vertex-gateway 400 (and every other CLI-level
+      failure) indistinguishable from a generic process crash, costing
+      hours of debugging time.
+
+      Implement a spawn choke point (``_attach_stderr_capture`` in
+      ``bob3.orchestrator.claude_executor``) that intercepts EVERY
+      ``ClaudeCodeOptions`` flowing into a sub-agent spawn and:
+
+        1. Allocates a real file-backed text buffer (NamedTemporaryFile
+           in ``.bob3/agent_logs/``); io.StringIO does NOT work because
+           the SDK calls ``.fileno()`` on the buffer (R10-018).
+        2. Sets ``extra_args["debug-to-stderr"] = None`` AND
+           ``debug_stderr=<buffer>`` on a NEW options object (preserving
+           every original field) so the underlying claude CLI mirrors
+           its stderr to the buffer at the OS level.
+        3. On sub-agent error, persists the buffer contents to
+           ``.bob3/agent_logs/<timestamp>_<run_id>_<role>.stderr.log``
+           and surfaces both ``captured_stderr_log=<path>`` AND
+           ``captured_stderr_tail=<last N chars>`` (default N=8000) in
+           the error message returned to the run-loop, so operators can
+           triage without grepping logs.
+        4. The ``_extract_error_head`` helper should also surface the
+           FIRST error/4xx/5xx line near the top of the message for
+           rapid scan-friendly triage when the tail is dominated by
+           shutdown noise.
+
+      This is the foundation for F-R6-311 — without full stderr capture,
+      the adaptive-thinking 400 root cause is invisible.
+    tier: Core
+    role: executor
+    acceptance_criteria:
+      - 'Function defined: bob3.orchestrator.claude_executor._attach_stderr_capture'
+      - 'Code contains: "captured_stderr_log" in src/bob3/orchestrator/claude_executor.py'
+      - 'Code contains: "captured_stderr_tail" in src/bob3/orchestrator/claude_executor.py'
+      - 'pytest: tests/test_stderr_capture.py'
+      - 'integration: bob3.orchestrator.claude_executor'
+
+  F-R6-311:
+    title: Vertex-compatible thinking env per spawned model
+    description: |
+      The AMD Vertex gateway only accepts ``thinking.type='enabled'`` or
+      ``'disabled'``; it rejects ``'adaptive'`` with a 400 BadRequest.
+      The claude CLI auto-selects ``'adaptive'`` on every modern model
+      unless explicitly told not to. Without an override, every single
+      sub-agent spawn dies on the first request — silently when stderr
+      capture is off (cf. F-R6-310). The CLI exposes two knobs, with
+      different model-specific behavior, so a one-size-fits-all override
+      does not work:
+
+        * ``CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1`` — effective ONLY for
+          ``opus-4-6`` / ``opus-4-7`` / ``sonnet-4-6``. Coerces those
+          models to send ``{type:'enabled', budget_tokens:N}`` instead
+          of ``adaptive``. Thinking is preserved.
+        * ``CLAUDE_CODE_DISABLE_THINKING=1`` — globally drops the
+          ``thinking`` field from the request. Required for ``haiku-4-5``
+          because the adaptive-disable env var does not apply to haiku.
+
+      Implement:
+
+        1. A module-level setting ``_FORCE_THINKING_SETTINGS`` containing
+           the JSON ``{"alwaysThinkingEnabled": true}`` that the CLI
+           reads via the settings.json mechanism.
+        2. A helper ``_thinking_env_for_model(model: str | None)
+           -> dict[str, str]`` that returns the right env-var
+           combination: opus-* / sonnet-4-6 → adaptive-disable only;
+           every other model (notably haiku-4-5) → BOTH env vars.
+        3. Inject both ``settings=_FORCE_THINKING_SETTINGS`` and
+           ``env=_thinking_env_for_model(options.model)`` at the SAME
+           spawn choke point as F-R6-310 (``_attach_stderr_capture``),
+           so every sub-agent path inherits the override without each
+           caller having to opt in: implement_feature, evaluator,
+           rca_analyst, spec_synthesizer, feature_research, puppeteer,
+           confidence_elicitor, plan_reviewer, reward_hacking_detector.
+        4. A safe default ``_FORCE_THINKING_ENV`` that disables both for
+           callers that do not know the model up front (cannot 400).
+
+      Without this fix the build chain DOES NOT progress past spawn-time
+      against any Vertex-backed gateway.
+    tier: Core
+    role: executor
+    acceptance_criteria:
+      - 'Code contains: "_FORCE_THINKING_SETTINGS" in src/bob3/orchestrator/claude_executor.py'
+      - 'Code contains: "_FORCE_THINKING_ENV" in src/bob3/orchestrator/claude_executor.py'
+      - 'Function defined: bob3.orchestrator.claude_executor._thinking_env_for_model'
+      - 'Code contains: "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING" in src/bob3/orchestrator/claude_executor.py'
+      - 'Code contains: "CLAUDE_CODE_DISABLE_THINKING" in src/bob3/orchestrator/claude_executor.py'
+      - 'pytest: tests/test_thinking_env_override.py'
+      - 'integration: bob3.orchestrator.claude_executor'
+
+  F-R6-312:
+    title: Verifier subprocess pgroup-killing for shell=True calls
+    description: |
+      Three verifier checks (check_behavioral_signature,
+      check_deterministic_output, check_resource_limit in
+      src/bob3/enhanced_verification.py) used subprocess.run(shell=True,
+      timeout=N), which on TimeoutExpired only SIGKILLs the shell — any
+      grandchildren (the actual workload, e.g. a model under test) are
+      re-parented to init and accumulate as orphans, exhausting CPU and
+      memory over time. Replace those three call sites with a helper that
+      uses subprocess.Popen(..., start_new_session=True) and
+      os.killpg(os.getpgid(proc.pid), SIGKILL) on timeout, ensuring the
+      whole process group is reaped. Preserve return-tuple shape
+      (stdout, stderr, returncode, timed_out) so existing callers don't
+      need rewrites.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'Function defined: bob3.enhanced_verification._run_shell_with_pgroup_timeout'
+      - 'pytest: tests/test_enhanced_verification_orphan_reap.py'
+      - 'integration: bob3.enhanced_verification'
+
+  F-R6-313:
+    title: Parallelize verifier pytest with pytest-xdist
+    description: |
+      The verifier's tests_pass check (superpowers._check_tests_pass at
+      src/bob3/superpowers.py) currently runs pytest sequentially on the
+      full target test tree, dominating verification wall-clock
+      (~15-20 min per feature on a corpus of 200+ test files). The build
+      host has ample headroom (>=64 CPU cores typical, 500+ GB RAM),
+      so the verifier MUST run pytest in parallel using pytest-xdist
+      whenever it is installed in the active interpreter's environment.
+
+      Requirements:
+        1. Add ``pytest-xdist`` (>=3.5) to the project's dev/runtime
+           dependencies so it is available in every bob_N venv AND in
+           any system python (e.g. pyenv 3.11.x) used by the snapshot
+           path described in (2b) below. Both paths MUST tolerate xdist
+           being absent at runtime.
+        2. Both pytest call sites MUST pass ``-n <workers>
+           --dist=loadfile`` to pytest:
+           (a) ``superpowers._check_tests_pass`` (the post-implementation
+               verifier check), and
+           (b) ``run_loop.capture_pytest_snapshot`` (the
+               pre-implementation baseline snapshot). The snapshot path
+               runs with ``cwd=workspace`` against the workspace's own
+               python (``"python"`` on PATH), which is often a different
+               interpreter from bob_N's venv. The snapshot MUST probe
+               for xdist via ``python -c "import xdist"`` and only add
+               the xdist flags if the probe succeeds, so the snapshot
+               degrades gracefully on workspaces without xdist installed.
+           Workers should be derived from ``min(os.cpu_count() // 4, 16)``
+           with a floor of 1, so multiple concurrent sub-agent
+           verifications share the machine fairly. ``--dist=loadfile``
+           is REQUIRED (not loadscope or no-set): tests within a single
+           file commonly share module-level fixtures, sockets, or tmp
+           paths; loadfile keeps same-file tests on the same worker and
+           minimises hidden-dependency flakes.
+        3. If pytest-xdist import fails at runtime, fall back to the
+           sequential invocation with a single ``warning``-level log line
+           (do NOT fail the check).
+        4. The existing ``_parse_pytest_counts`` summary-line regex and
+           ``_extract_failed_node_ids`` parser MUST continue to work
+           under xdist output (xdist still emits the "N passed / N failed"
+           summary line, but worker-prefixed lines like ``[gw0]`` may
+           appear — the parsers should be xdist-aware or robust to them).
+        5. The regression-baseline comparison (pre_snapshot vs.
+           observed_failed) is unchanged in semantics; parallelism MUST
+           NOT change pass/fail outcomes for deterministic tests. If
+           xdist surfaces NEW failures due to test interdependence, those
+           are real defects in the test corpus and should be filed (not
+           hidden by reverting to sequential).
+        6. F-R6-301 (per-feature pytest scoping) and this parallelism
+           are orthogonal and MUST compose: when the scoper narrows
+           the test set, xdist still parallelises whatever set remains.
+
+      This applies in particular to regression tests that are
+      independent of each other — they MUST run concurrently across
+      workers. Tests with declared cross-test dependencies must opt in
+      to serialisation via ``pytest-xdist``'s grouping markers, not by
+      disabling parallelism wholesale.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'Dependency declared: pytest-xdist>=3.5 in pyproject.toml'
+      - 'Code contains: "-n" in src/bob3/superpowers.py'
+      - 'Code contains: "--dist=loadfile" in src/bob3/superpowers.py'
+      - 'Function defined: bob3.superpowers._select_xdist_workers'
+      - 'pytest: tests/test_superpowers_xdist.py'
+      - 'integration: bob3.superpowers'
+
+  F-R6-314:
+    title: Verifier recognises integration and CLI-command acceptance criteria
+    description: |
+      The acceptance-criteria verifier (validate_acceptance_criteria
+      in src/bob3/enhanced_verification.py) currently recognises a
+      fixed set of criterion prefixes (File exists:, Function defined:,
+      pytest:, python:, etc.) and HARD-FAILS any unrecognised form
+      via the default-False fallthrough at the end of the function.
+
+      The spec synthesizer (and hand-written specs like this one)
+      regularly emit two additional shapes that the verifier did not
+      previously handle, causing every wiring/CLI feature to be
+      marked needs_human despite implementing correctly:
+
+        (a) ``integration: pkg.mod.path`` — declares that this feature
+            wires into ``pkg.mod.path``. Verify by:
+              1. Confirming the target module file exists in the
+                 workspace under common layouts (``src/pkg/mod/path.py``,
+                 ``pkg/mod/path.py``, or the ``__init__.py`` equivalents).
+              2. Confirming at least one OTHER workspace .py file
+                 imports the target (``from pkg.mod.path import ...``
+                 or ``import pkg.mod.path``). Skip ``build``/``.git``/
+                 ``.venv`` directories.
+            Both conditions MUST hold; either alone is insufficient.
+
+        (b) ``CLI command: <prog> [<subcmd>] --flag1 [--flag2 ...]``
+            (and the synonym ``CLI flag: --flag``). Verify by extracting
+            every ``--flag-name`` token from the criterion and passing
+            if any of them appears as a literal string anywhere in
+            workspace .py source (argparse add_argument call, click
+            decorator, typer Option, etc).
+
+      Requirements:
+        1. Both new patterns MUST be checked BEFORE the default-False
+           fallthrough, and MUST NOT shadow any existing pattern
+           (e.g. ``Function defined: pkg.mod`` must continue to take
+           the existing function-search path).
+        2. Pattern (a) MUST use anchored regex on import statements
+           (multiline mode) so substring matches like
+           ``import pkg.mod.path_other`` do NOT count as wiring
+           ``pkg.mod.path``.
+        3. Pattern (b) MUST handle flags with dashes
+           (``--max-concurrent-features``) and digits
+           (``--max-workers-8``). Underscored variants need not match.
+        4. Both helpers MUST never raise — any exception while
+           scanning a file should be swallowed and the file skipped.
+        5. Add ``tests/test_verifier_integration_cli_criteria.py``
+           covering: integration pass+fail, CLI flag pass+fail,
+           and that existing ``Function defined:`` / ``File exists:``
+           paths are unaffected.
+
+      Why: round 6 of bob9 hit the watchdog's 80%-needs_human halt
+      gate on 2026-05-20 because 5 of 6 features failed acceptance
+      with these exact criterion forms despite passing all other
+      checks (pytest, security, source files present). The fix was
+      hotfixed into bob8/bob9 source live; this feature codifies it
+      so bob10/bob11 inherit it from spec.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/enhanced_verification.py'
+      - 'Function defined: bob3.enhanced_verification._integration_wired'
+      - 'pytest: tests/test_verifier_integration_cli_criteria.py'
+      - 'integration: bob3.enhanced_verification'
+
+  F-R6-315:
+    title: Crash classifier treats AMD gateway deprecated-key advisory as transient
+    description: |
+      The AMD Vertex gateway used by bob3 returns HTTP 400 with the
+      payload "Application 'Claude Code' (Production Restricted) is
+      a shared API key and is being deprecated; subsequent requests
+      will continue to work in the meantime. Please request an
+      individual API key." This is an INFORMATIONAL deprecation
+      advisory — the gateway continues serving traffic — but the
+      claude-code CLI surfaces it as a fatal HTTP error and exits
+      with exit_code=1, num_turns=0, duration_ms=0.
+
+      Without an explicit exception, ``classify_sub_agent_exit`` in
+      src/bob3/orchestrator/crash_classifier.py classifies the
+      resulting termination either as ``spawn_failure`` (when no
+      work has been written to disk yet — costs a free retry, capped
+      at _MAX_SPAWN_RETRIES) or, worse, as ``mid_work_crash`` (when
+      work events were flushed before the request — charges a real
+      refinement attempt AND decays confidence, eventually pushing
+      the feature below the readiness threshold and pinning it to
+      needs_human via the run_loop's pre-execution short-circuit).
+
+      Requirements:
+        1. Maintain a tuple ``_TRANSIENT_INFRA_MARKERS`` of substring
+           signatures that identify upstream-gateway transient errors.
+           The initial entries MUST cover both of:
+             - "shared API key and is being deprecated"
+             - "Application 'Claude Code' (Production Restricted)
+                is a shared API key"
+           so a partial truncation of the gateway message still
+           matches.
+        2. Add a helper ``_has_transient_infra_signature(stderr_tail)``
+           that returns True iff any marker substring is present in
+           the stderr tail.
+        3. In ``classify_sub_agent_exit``, IMMEDIATELY after the
+           ``exit_code == 0`` clean-exit short-circuit and BEFORE the
+           mid-work-crash branch, check the transient signature. When
+           it matches, return
+             ClassificationResult(kind="spawn_failure",
+                                   should_charge_attempt=False,
+                                   evidence="transient_infra_error=...")
+           regardless of work_events / turns / duration. The
+           ``transient_infra_error=<tag>`` prefix MUST appear in the
+           evidence so the operator can grep for it in logs.
+        4. The marker check MUST be additive: existing clean_exit,
+           mid_work_crash, and spawn_failure paths must still trigger
+           when the stderr does NOT contain a transient marker.
+        5. Add ``tests/test_crash_classifier_transient_infra.py``
+           covering: positive match overrides mid_work_crash signals,
+           negative match preserves mid_work_crash, clean_exit not
+           affected, empty/None stderr does not raise.
+
+      Why: round 6 of bob9 lost feature 1cb15253 to this exact
+      failure mode on 2026-05-20 — the sub-agent finished real work
+      (~44k progress events) but the deprecation 400 at the very end
+      caused the classifier to charge an attempt and decay readiness,
+      after which the feature was permanently shunted to needs_human.
+      The fix was hotfixed into bob8/bob9 live; this feature codifies
+      it so bob10/bob11 inherit it from spec.
+    tier: Core
+    role: executor
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/crash_classifier.py'
+      - 'Function defined: bob3.orchestrator.crash_classifier._has_transient_infra_signature'
+      - 'pytest: tests/test_crash_classifier_transient_infra.py'
+      - 'integration: bob3.orchestrator.crash_classifier'
+
+  F-R6-316:
+    title: Research-error retry + non-poisoning needs_human gate
+    description: |
+      Round 6 of bob9 lost multiple features to a feedback loop
+      between the readiness-threshold gate and the research path.
+
+      Failure chain:
+        1. Synthesizer scores most medium-risk features at
+           ``readiness_score = 0.70`` (below the 0.80 threshold).
+        2. Loop tick: feature does not meet threshold; ``_run_research``
+           is invoked.
+        3. Research sub-agent ERRORS (gateway 400 deprecated-key
+           advisory, transient Perplexity outage, sub-agent crash).
+        4. Pre-fix code unconditionally incremented
+           ``research_iterations`` to 1 and DID NOT boost readiness
+           (boost is gated on ``not research_exec.is_error``).
+        5. Next loop tick: R7-003 guard in
+           ``find_next_ready_feature`` sees
+           ``research_iterations > 0`` AND
+           ``readiness_score < threshold`` →
+           ``db.update_feature(status="needs_human")``.
+        6. A single transient research failure permanently sidelined
+           the feature, even though the underlying work was perfectly
+           recoverable.
+
+      Requirements:
+        1. Define a module constant
+           ``_MAX_RESEARCH_ERROR_ATTEMPTS = 3`` in
+           ``src/bob3/orchestrator/run_loop.py``.
+        2. In BOTH research code paths
+           (``Orchestrator._run_research`` and the forced-research
+           branch invoked from the cost-projection gate path):
+             - On ``not research_exec.is_error``: increment
+               ``research_iterations`` and boost readiness to 0.85
+               (existing behavior — must be preserved).
+             - On ``research_exec.is_error``: count prior errored
+               attempts by querying ``db.list_research_results`` for
+               this feature and treating rows with ``findings is
+               None`` as errored. If ``errored_count >=
+               _MAX_RESEARCH_ERROR_ATTEMPTS``, increment
+               ``research_iterations`` (escalates to needs_human via
+               R7-003). Otherwise leave ``research_iterations``
+               UNCHANGED so ``needs_research`` re-fires on the next
+               tick.
+        3. In ``find_next_ready_feature``'s R7-003 guard (the branch
+           that marks the feature needs_human when
+           ``research_iterations > 0`` and readiness is below
+           threshold), BEFORE calling
+           ``db.update_feature(status="needs_human")``, query
+           ``db.list_research_results(feature_id=feature.id)`` and
+           classify rows as successful (``findings`` is non-null) or
+           errored. If there are zero successful rows AND
+           ``len(errored) < _MAX_RESEARCH_ERROR_ATTEMPTS``, reset
+           ``research_iterations`` to 0 and ``continue`` the loop
+           (allowing another research attempt) instead of marking
+           needs_human. The warning log when needs_human IS marked
+           must include the successful/errored counts so the operator
+           can tell why the cap was reached.
+        4. The whole change must be additive: features that already
+           have at least one successful research and are still below
+           threshold continue to be marked needs_human as before.
+        5. Add ``tests/test_research_error_retry.py`` covering:
+             - error path leaves ``research_iterations`` unchanged
+               while errored_count < cap;
+             - error path increments at cap (escalation);
+             - success path increments and boosts as before;
+             - R7-003 guard resets iterations when no successful
+               row exists AND under cap;
+             - R7-003 guard still marks needs_human when at least
+               one successful row exists OR cap reached.
+
+      Why: this is the operational counterpart of F-R6-315. F-R6-315
+      stopped the AMD gateway 400 from charging refinement attempts
+      on the IMPLEMENTATION sub-agent; F-R6-316 stops the same 400
+      (and any other transient research failure) from poisoning the
+      readiness gate via the RESEARCH sub-agent. Together they let
+      the loop survive AMD gateway flakiness without operator
+      intervention.
+    tier: Core
+    role: executor
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/run_loop.py'
+      - 'Function defined: bob3.orchestrator.run_loop._MAX_RESEARCH_ERROR_ATTEMPTS'
+      - 'pytest: tests/test_research_error_retry.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R6-317:
+    title: R7-003 readiness gate respects refinement_attempts budget
+    description: |
+      The R7-003 ``needs_human`` guard in
+      ``Orchestrator.run.find_next_ready_feature`` was originally
+      added to stop the loop from busy-spawning implementation
+      sub-agents against a feature whose readiness score was stuck
+      below threshold. Its check fires when:
+        - the highest-priority feature in 'ready' status has
+          ``readiness_score < risk_threshold``, AND
+        - ``research_iterations > 0``
+      and unconditionally transitions the feature to ``needs_human``.
+
+      Failure mode observed in round 6: a feature passes research
+      (readiness boosted 0.70 → 0.85), the implementation sub-agent
+      crashes mid-work (``mid_work_crash``, charges 1 refinement
+      attempt), and the confidence-decay path drops readiness back
+      below threshold. On the very next loop tick R7-003 sees
+      ``score < threshold`` AND ``research_iterations > 0`` and
+      marks the feature ``needs_human`` — even though the feature
+      had refinement budget remaining (1/5 attempts used) and the
+      sub-agent's actual capability is unrelated to the
+      orchestrator-side readiness score (sub-agents never see it).
+
+      The guard is also redundant: ``db.increment_refinement_attempts``
+      already auto-transitions to ``needs_human`` the moment
+      ``refinement_attempts >= max_refinement_attempts``. The
+      refinement cap is the real bound on busy-looping; R7-003 just
+      gives up earlier for no reason.
+
+      Requirements:
+        1. In ``find_next_ready_feature``, BEFORE the
+           ``db.update_feature(feature.id, status="needs_human")``
+           call inside the ``research_iterations > 0`` branch, read
+           ``feature.refinement_attempts`` and
+           ``feature.max_refinement_attempts``. If
+           ``refinement_attempts < max_refinement_attempts``, do
+           NOT mark the feature ``needs_human``. Log an INFO line
+           noting that the readiness threshold is unmet but
+           refinement budget remains, and fall through to the
+           normal ``execute_feature`` path that the loop already
+           runs for sub-threshold ready features.
+        2. Only mark ``needs_human`` from this gate when
+           ``refinement_attempts >= max_refinement_attempts``. The
+           warning log MUST include both the readiness numbers AND
+           the attempts numbers so the operator can tell which cap
+           caused the transition.
+        3. Preserve the F-R6-316 retry-on-no-successful-research
+           branch — it must run BEFORE the refinement-budget check
+           so a feature with research_iterations > 0 but zero
+           successful research rows gets one more research attempt
+           regardless of refinement budget state.
+        4. Add ``tests/test_readiness_gate_respects_attempts.py``
+           covering: feature with attempts < max stays in 'ready'
+           and is executed; feature with attempts == max is marked
+           needs_human; F-R6-316 retry path still triggers when
+           applicable.
+
+      Why: round 6 of bob9 lost 1cb15253 to this exact decay-then-gate
+      sequence at 2026-05-20 11:11 PT — research had succeeded, the
+      implementation just needed another attempt. The gate took it
+      out of the loop on attempt 1 of 5. With F-R6-317 in place the
+      loop will keep retrying until the natural refinement cap, at
+      which point ``needs_human`` is the operator's signal that the
+      feature really does need human attention (not just one bad
+      attempt).
+    tier: Core
+    role: executor
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/run_loop.py'
+      - 'pytest: tests/test_readiness_gate_respects_attempts.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P2 — Science layer (lower priority, may fail without blocking
+  #      convergence). Benchmark-registry (formerly F-R5-215) dropped
+  #      per user directive 2026-05-20.
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R6-210:
+    title: Auto-trigger research harness per round
+    description: |
+      The six research agents (r1_coverage, r2_stack, r3_perf,
+      r4_security, r5_ecosystem, r6_self_critique) in
+      src/bob3/research/ exist with a working harness but are only
+      invoked manually. Wire the harness into `bob3 plan` so each
+      round automatically runs all six agents in parallel, writes
+      proposals to docs/recursion/round<N>/, and surfaces a short
+      summary so the next spec can incorporate findings.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/research_trigger.py'
+      - 'Function defined: bob3.orchestrator.research_trigger.fire_research_for_round'
+      - 'pytest: tests/test_research_trigger.py'
+      - 'integration: bob3.cli'
+      - 'integration: bob3.research.harness'
+
+  F-R6-211:
+    title: Numerical correctness verifier (MMS + conservation + convergence)
+    description: |
+      Add a verifier for scientific-compute acceptance criteria:
+        - 'mms: order=N norm=L2' — manufactured-solution convergence,
+          fits log-log slope of error vs mesh-spacing, asserts
+          slope >= N - tolerance.
+        - 'conserves: quantity=mass drift<=1e-9' — runs the
+          implementation forward and asserts the named conserved
+          quantity drifts no more than the bound.
+      (The benchmark criterion variant from the old spec is dropped
+      with the benchmark registry.)
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/numerical_verifier.py'
+      - 'Function defined: bob3.numerical_verifier.verify_mms'
+      - 'Function defined: bob3.numerical_verifier.verify_conservation'
+      - 'pytest: tests/test_numerical_verifier.py'
+      - 'integration: bob3.enhanced_verification'
+
+  F-R6-212:
+    title: HPC skill bundle (OpenMP / MPI / CUDA / ROCm / SIMD)
+    description: |
+      Extend the per-domain skill bundle mechanism (F-R4-143) with
+      an 'hpc' bundle containing skill files for: OpenMP pragma
+      patterns, MPI collective communication idioms, CUDA
+      launch-config + shared-memory tiling, ROCm/HIP equivalents,
+      SIMD intrinsics + autovectorization hints. Activated when
+      spec metadata includes domain=hpc or compile target includes
+      any of {nvcc, hipcc, mpicc}. Skills injected into sub-agent
+      context only when activated.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/skill_bundles/hpc/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/hpc/openmp.md'
+      - 'File exists: src/bob3/skill_bundles/hpc/mpi.md'
+      - 'File exists: src/bob3/skill_bundles/hpc/cuda.md'
+      - 'File exists: src/bob3/skill_bundles/hpc/rocm.md'
+      - 'File exists: src/bob3/skill_bundles/hpc/simd.md'
+      - 'pytest: tests/test_hpc_skill_bundle.py'
+      - 'integration: bob3.per_domain_skill_bundles_hpc_ml_pl'
+
+  F-R6-213:
+    title: Scientific-domain skill bundles (CFD / geomech / NR / plasma / particle)
+    description: |
+      Five new domain bundles authored alongside F-R6-212:
+        - cfd: FVM/FEM, SIMPLE/PISO, turbulence models, BCs.
+        - geomech: poroelasticity (Biot), frictional contact, fault
+          slip Coulomb / rate-and-state, Drucker-Prager and
+          Mohr-Coulomb plasticity.
+        - nr: BSSN, 1+log slicing, Gamma-driver shift, puncture
+          initial data, GW extraction at scri+, AMR for binary BH.
+        - plasma: PIC push, Boris pusher, field gather/scatter,
+          MHD, Vlasov-Poisson.
+        - particle: Geant4 user actions, custom physics lists.
+      Bundles map to spec metadata domain field.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/skill_bundles/cfd/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/geomech/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/nr/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/plasma/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/particle/__init__.py'
+      - 'pytest: tests/test_scientific_skill_bundles.py'
+      - 'integration: bob3.per_domain_skill_bundles_hpc_ml_pl'
+
+  F-R6-214:
+    title: SLURM / PBS batch-job submission adapter
+    description: |
+      Add an executor that, when a feature is tagged compute=batch,
+      packages its command as a SLURM (sbatch) or PBS (qsub) job,
+      submits it, polls status, and ingests stdout/stderr/result
+      files when complete. Falls back to local execution when
+      SLURM/PBS not available so existing features are unaffected.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/batch_submit.py'
+      - 'Function defined: bob3.orchestrator.batch_submit.submit_slurm'
+      - 'Function defined: bob3.orchestrator.batch_submit.submit_pbs'
+      - 'Function defined: bob3.orchestrator.batch_submit.poll_until_done'
+      - 'pytest: tests/test_batch_submit.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R6-216:
+    title: GPU kernel autotuner harness
+    description: |
+      Given a kernel build target and a parameter grid (block size,
+      tile size, register-blocking factor, vector width), sweep
+      configurations, measure runtime + occupancy + cache hit rate,
+      fit to the roofline model, and report the Pareto frontier.
+      Enables acceptance criteria like 'gpu_speedup: >=10x vs
+      naive_baseline' or 'roofline_efficiency: >=0.6'.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/gpu_autotuner.py'
+      - 'Function defined: bob3.gpu_autotuner.sweep'
+      - 'Function defined: bob3.gpu_autotuner.roofline_efficiency'
+      - 'pytest: tests/test_gpu_autotuner.py'
+      - 'integration: bob3.enhanced_verification'
+
+  F-R6-217:
+    title: arXiv literature scan research agent
+    description: |
+      Seventh research agent: pulls daily abstracts from arXiv
+      categories cs.MS, physics.comp-ph, astro-ph.IM, nucl-th, and
+      physics.plasm-ph. Filters for papers proposing new methods,
+      benchmarks, or open implementations. Emits Proposal objects
+      suggesting either new framework features or new application
+      specs. Feeds into F-R6-210's harness.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/research/r7_literature.py'
+      - 'Function defined: bob3.research.r7_literature.run'
+      - 'pytest: tests/test_r7_literature.py'
+      - 'integration: bob3.research.harness'

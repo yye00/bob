@@ -1,0 +1,2929 @@
+name: Bob3
+version: "0.2.0"
+description: |
+  Bob3 - Build Orchestration Bot v3
+  
+  A recursive build orchestration system that uses Claude Code sub-agents
+  to research, plan, and execute software projects.
+  
+  Bob3 extends Bob2 with:
+  - MCP Plugin Integration (Perplexity, Puppeteer, Superpowers)
+  - Automatic feature generation from natural language + PDFs
+  - Sub-agent orientation protocol for context recovery
+  - Research-enabled sub-agents for when implementation is stuck
+
+# NOTE: the bootstrap spec does not assume a particular checkout location.
+# Override this to your local clone path before running ``bob3 plan``.
+workspace: /tmp/bob3-self-build
+
+# ============================================================
+# ⚠️  CRITICAL: CLAUDE CODE SDK ONLY - NO CLI ⚠️
+# ============================================================
+#
+# Bob3 MUST use the `claude-code-sdk` Python package for ALL Claude
+# interactions. DO NOT use the Claude CLI (`claude` command).
+#
+# ✅ CORRECT - Use the SDK:
+#   from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
+#   client = ClaudeSDKClient(options=options)
+#   async with client:
+#       await client.query(prompt)
+#       async for msg in client.receive_response():
+#           ...
+#
+# ❌ WRONG - DO NOT USE CLI:
+#   subprocess.run(['claude', '-p', prompt])     # ABSOLUTELY NOT!
+#   subprocess.run(['claude', 'code', ...])      # ABSOLUTELY NOT!
+#   os.system('claude ...')                      # ABSOLUTELY NOT!
+#   os.popen('claude ...')                       # ABSOLUTELY NOT!
+#   Popen(['claude', ...])                       # ABSOLUTELY NOT!
+#
+# ❌ WRONG - DO NOT USE OTHER SDKS:
+#   from anthropic import Anthropic              # Wrong SDK!
+#
+# WHY: The claude-code-sdk provides proper async streaming, message handling,
+# and integrates with MCP servers. The CLI is for humans, not programs.
+#
+# Authentication: Handled automatically by Claude Code Max Pro subscription.
+# ============================================================
+
+# ============================================================
+# Claude Code SDK vs MCP - Understanding the Difference
+# ============================================================
+#
+# Bob3 uses TWO different systems that work together:
+#
+# 1. CLAUDE CODE SDK (claude-code-sdk package)
+#    - Used to SPAWN Claude sub-agents that do the actual work
+#    - Sub-agents run in their own context window
+#    - Each sub-agent can use MCP tools if configured
+#    - This is HOW we create workers
+#
+# 2. MCP (Model Context Protocol) SERVERS
+#    - Provide TOOLS that Claude sub-agents can call
+#    - TITANS Memory MCP provides memory tools (titans_add, titans_search, etc.)
+#    - Perplexity MCP provides research tools
+#    - Puppeteer MCP provides browser automation tools
+#    - This is WHAT tools the workers can use
+# ============================================================
+
+# ============================================================
+# ENVIRONMENT VARIABLES (CONSOLIDATED)
+# ============================================================
+#
+# Bob3 requires the following environment variables. Set them in your shell
+# profile (~/.bashrc, ~/.zshrc, or equivalent). Bob3 validates these at startup.
+#
+# REQUIRED:
+#   OPENAI_API_KEY     - For TITANS Memory MCP (embeddings via mem0ai)
+#
+# OPTIONAL (enable additional features):
+#   PERPLEXITY_API_KEY - For Perplexity MCP (web research)
+#
+# NOT REQUIRED (Claude Code Max Pro subscription):
+#   CLAUDE_API_KEY     - Handled by claude-code-sdk automatically
+#
+# Bob3 validates required environment variables at startup and exits with
+# a clear error message if any are missing.
+# ============================================================
+
+# ============================================================
+# MCP PLUGIN CONFIGURATION  
+# ============================================================
+#
+# Bob3 integrates MCP plugins for enhanced capabilities.
+# Configuration is defined in src/bob3/orchestrator/mcp_config.py (F104).
+#
+# 1. TITANS-MEMORY - Persistent Memory with Surprise-Based Learning (REQUIRED)
+#    LOCATION: /home/captain/clawd/work/titans-memory
+#    START COMMAND: uv --directory /home/captain/clawd/work/titans-memory run titans-memory
+#    Tools: titans_add, titans_search, titans_get, titans_update, titans_delete,
+#           titans_record_feedback, titans_get_candidates, titans_demote,
+#           titans_archive, titans_get_stats, titans_route, titans_search_pool
+#    WHEN TO USE:
+#    - Store learned facts, lessons, and project context
+#    - Search for relevant past knowledge before implementing
+#    - Record feedback (success/failure) after applying knowledge
+#    - Archive outdated information
+#    MEMORY POOLS:
+#    - facts: Factual knowledge (API behaviors, library usage)
+#    - preferences: User/project preferences
+#    - lessons: Learned patterns from debugging, failures
+#    - context: Session context and project state
+#    IMPORTANT: Use titans_add for ALL persistent knowledge. Use titans_search
+#    BEFORE implementing to check for existing knowledge.
+#    LIFECYCLE: Bob3 starts/stops this MCP server (see F017)
+#
+# 2. PERPLEXITY - Web Research (OPTIONAL)
+#    ALREADY INSTALLED IN CLAUDE CODE - do NOT start separately
+#    Available automatically to Claude Code sub-agents
+#    Tools: perplexity_search, perplexity_ask, perplexity_research, perplexity_reason
+#    WHEN TO USE:
+#    - Feature has research_required=True
+#    - Implementation fails due to missing information
+#    - Need to look up API docs, library usage, algorithms
+#    - Debugging requires understanding external systems
+#
+# 3. PUPPETEER - Browser Automation (OPTIONAL)
+#    ALREADY INSTALLED IN CLAUDE CODE - do NOT start separately
+#    Available automatically to Claude Code sub-agents
+#    Tools: puppeteer_navigate, puppeteer_screenshot, puppeteer_click, 
+#           puppeteer_fill, puppeteer_select, puppeteer_hover, puppeteer_evaluate
+#    WHEN TO USE:
+#    - Testing web UI features
+#    - Verifying visual requirements
+#    - End-to-end browser tests
+#    - Taking screenshots for evidence artifacts
+#
+# 4. SUPERPOWERS - Advanced Development Skills (BUILT-IN)
+#    Skills: systematic-debugging, subagent-driven-development, 
+#            test-driven-development, verification-before-completion
+#    WHEN TO USE:
+#    - systematic-debugging: ANY bug, test failure, or unexpected behavior
+#      MUST complete root cause investigation before proposing fixes
+#    - subagent-driven-development: Complex features needing parallel work
+#    - test-driven-development: Writing tests before implementation
+#    - verification-before-completion: Final checks before marking complete
+#
+# NOTE: MCP server configuration details are in mcp_config.py (F104).
+# This section describes WHAT the plugins do, F104 defines HOW to configure them.
+# ============================================================
+
+# ============================================================
+# TESTING GUIDELINES - MANDATORY
+# ============================================================
+#
+# All tests MUST use isolated test databases, never the production database.
+#
+# CRITICAL RULES:
+#   1. CLI command tests MUST mock _db.init_database() to return a temp path
+#   2. Never rely on existing bob3.db data in tests
+#   3. Use tempfile.TemporaryDirectory() for database isolation
+#   4. Mock long-running operations (orchestration loops, sub-agent spawning)
+#
+# EXAMPLE - Testing CLI commands with database:
+#   with tempfile.TemporaryDirectory() as tmpdir:
+#       with patch("bob3.cli._db.init_database") as mock_db:
+#           mock_db.return_value = pathlib.Path(tmpdir) / "test.db"
+#           result = runner.invoke(main, ["run"])
+#
+# WHY: Tests that use the real bob3.db can:
+#   - Trigger real orchestration loops (hours of CPU time)
+#   - Spawn real Claude sub-agents (expensive API calls)
+#   - Hang indefinitely waiting for external processes
+#
+# ============================================================
+
+# ============================================================
+# SUB-AGENT ORIENTATION PROTOCOL
+# ============================================================
+#
+# Every sub-agent MUST start with an orientation sequence before working.
+# This ensures context recovery in fresh context windows.
+#
+# MANDATORY ORIENTATION STEPS:
+#   1. pwd && ls -la                    # Understand working directory
+#   2. cat app_spec.txt | head -100     # Read project specification
+#   3. Query feature status from DB     # Understand current state
+#   4. cat claude-progress.txt          # Read previous session notes
+#   5. git log --oneline -10            # See recent changes
+#   6. titans_search for relevant context:
+#      - titans_search("lessons {feature_name}")  # Past lessons
+#      - titans_search("facts {technology}")      # Known facts
+#      - titans_search("context {project}")       # Project context
+#
+# MANDATORY MEMORY OPERATIONS:
+#   - BEFORE implementing: titans_search for existing knowledge
+#   - AFTER learning something: titans_add to facts/lessons pool
+#   - AFTER fixing a bug: titans_add lesson with trigger/solution
+#   - AFTER success/failure: titans_record_feedback on used memories
+#
+# WHEN TO APPLY:
+# - Every new sub-agent session
+# - On retry after failure (especially important for debugging)
+# - When resuming from checkpoint
+# ============================================================
+
+dependencies:
+  python:
+    - claude-code-sdk>=0.0.25  # REQUIRED - Claude Code SDK (NOT anthropic SDK)
+    - click>=8.0               # CLI framework
+    - rich>=13.0               # Terminal UI
+    - pydantic>=2.0            # Data validation
+    - PyMuPDF>=1.23.0          # PDF extraction (MUST BE USED - see F102)
+
+structure:
+  description: |
+    src/bob3/
+    ├── __init__.py
+    ├── cli.py                    # Click CLI entry point
+    ├── db.py                     # SQLite database layer
+    ├── schema.sql                # Database schema
+    ├── models.py                 # Pydantic data models
+    ├── pdf_utils.py              # PDF text extraction (NEW in Bob3)
+    ├── orientation.py            # Sub-agent orientation protocol (NEW in Bob3)
+    └── orchestrator/
+        ├── __init__.py
+        ├── claude_executor.py    # Claude Code SDK wrapper
+        └── mcp_config.py         # MCP plugin configuration (NEW in Bob3)
+
+features:
+
+  F001:
+    title: "Create basic project structure with src/bob3/ directory and __init__.p"
+    description: |
+      Create basic project structure with src/bob3/ directory and __init__.py files
+    priority: critical
+    depends_on: []
+    steps:
+      - "Step 1: Create src/bob3/ directory structure"
+      - "Step 2: Create __init__.py in src/bob3/"
+      - "Step 3: Create orchestrator/ subdirectory with __init__.py"
+      - "Step 4: Verify directory structure matches spec"
+
+  F002:
+    title: "Create pyproject.toml with all required dependencies including claude-"
+    description: |
+      Create pyproject.toml with all required dependencies including claude-code-sdk>=0.0.25
+    priority: critical
+    depends_on: ['F001']
+    steps:
+      - "Step 1: Create pyproject.toml in project root"
+      - "Step 2: Add project metadata (name: bob3, version: 0.1.0)"
+      - "Step 3: Add all dependencies: claude-code-sdk>=0.0.25, click>=8.0, rich>=13.0, pydantic>=2.0, PyMuPDF>=1.23.0"
+      - "Step 4: Add build system configuration"
+      - "Step 5: Verify pyproject.toml is valid and contains claude-code-sdk"
+
+  F003:
+    title: "Create database schema file (schema.sql) with complete Bob3 v2.1 schema"
+    description: |
+      Create database schema file (schema.sql) with complete Bob3 v2.1 schema.
+      MUST include both core Bob2 tables AND Bob3-specific additions.
+    priority: critical
+    depends_on: ['F001']
+    steps:
+      - "Step 1: Create src/bob3/schema.sql file"
+      - "Step 2: Add all CORE table definitions (projects, features, tasks, feature_dependencies, task_dependencies, evidence_artifacts, review_history, feature_review_issues, bug_ledger, calibration_data, calibration_alerts, regression_events, rollback_events, resource_checkpoints, flaky_test_runs, sub_agent_runs, confidence_history, readiness_history, scope_changes, forgetting_events, execution_logs)"
+      - "Step 3: Add BOB3-SPECIFIC tables: research_results, reference_documents, feature_references"
+      - "Step 4: Add all indexes as specified"
+      - "Step 5: Add all views as specified (features_ready, features_needing_refinement, features_pending_decomposition, features_blocked, features_needs_human, unresolved_issues, reviews_pending, review_timeouts, stale_evidence, calibration_drift_summary, active_regressions, flaky_tests_pending, scope_creep_alerts, potential_gaming, test_integrity_violations, resource_usage, active_bugs, orphaned_features, oversized_features)"
+      - "Step 6: NOTE: project_memory and lessons_learned handled by TITANS Memory MCP, not local DB"
+      - "Step 7: Verify schema is valid SQL and all tables/views are included"
+
+  F004:
+    title: "Create db.py with SQLite database connection and initialization"
+    description: |
+      Create db.py with SQLite database connection and initialization.
+      
+      DATABASE LOCATION:
+      - Default path: {workspace}/bob3.db (e.g., /home/captain/clawd/work/bob3/bob3.db)
+      - Configurable via BOB3_DATABASE_PATH environment variable
+      - Schema file: src/bob3/schema.sql
+    priority: critical
+    depends_on: ['F003']
+    steps:
+      - "Step 1: Create src/bob3/db.py file"
+      - "Step 2: Implement get_database_path() that returns workspace/bob3.db or BOB3_DATABASE_PATH"
+      - "Step 3: Implement database connection function using sqlite3"
+      - "Step 4: Implement schema initialization from schema.sql"
+      - "Step 5: Add connection context manager"
+      - "Step 6: Test database creation and schema loading"
+      - "Step 7: Verify all tables and views are created"
+
+  F005:
+    title: "Create models.py with Pydantic data models for all entities"
+    description: |
+      Create models.py with Pydantic data models for all entities
+    priority: critical
+    depends_on: ['F001']
+    steps:
+      - "Step 1: Create src/bob3/models.py file"
+      - "Step 2: Define Project model with all fields from schema"
+      - "Step 3: Define Feature model with all fields from schema"
+      - "Step 4: Define Task model with all fields from schema"
+      - "Step 5: Define additional models (EvidenceArtifact, ReviewHistory, etc.)"
+      - "Step 6: Add validation and type hints"
+      - "Step 7: Verify all models match database schema"
+
+  F006:
+    title: "Create claude_executor.py using claude-code-sdk (NO CLI, NO subprocess)"
+    description: |
+      Create claude_executor.py using the claude-code-sdk Python package.
+      
+      ⚠️  CRITICAL REQUIREMENT ⚠️
+      - MUST use claude-code-sdk package (pip install claude-code-sdk)
+      - MUST NOT use subprocess to call 'claude' CLI
+      - MUST NOT use os.system, os.popen, Popen, or any shell invocation
+      - MUST NOT use the anthropic SDK (different thing)
+      
+      The executor wraps ClaudeSDKClient for spawning sub-agents programmatically.
+    priority: critical
+    depends_on: ['F001']
+    steps:
+      - "Step 1: Create src/bob3/orchestrator/claude_executor.py"
+      - "Step 2: Import ClaudeSDKClient and ClaudeCodeOptions from claude_code_sdk"
+      - "Step 3: Implement async executor using client.query() and client.receive_response()"
+      - "Step 4: Add message handling for AssistantMessage, ResultMessage, etc."
+      - "Step 5: MANDATORY VERIFICATION: grep -rn 'subprocess\\|os.system\\|os.popen\\|Popen' must return NOTHING"
+      - "Step 6: MANDATORY VERIFICATION: Code imports ONLY from claude_code_sdk, NOT anthropic"
+      - "Step 7: Test executor with simple prompt using SDK"
+
+  F007:
+    title: "Create cli.py with Click framework and basic command structure"
+    description: |
+      Create cli.py with Click framework and basic command structure
+    priority: critical
+    depends_on: ['F001', 'F002']
+    steps:
+      - "Step 1: Create src/bob3/cli.py file"
+      - "Step 2: Import Click and setup main CLI group"
+      - "Step 3: Add command stubs: init, plan, run, status"
+      - "Step 4: Add --help documentation"
+      - "Step 5: Test that 'bob3 --help' works"
+      - "Step 6: Verify all four commands are listed"
+
+  F008:
+    title: "Implement 'bob3 init <project>' command to create new project"
+    description: |
+      Implement 'bob3 init <project>' command to create new project
+    priority: high
+    depends_on: ['F007', 'F004']
+    steps:
+      - "Step 1: Implement init command in cli.py"
+      - "Step 2: Create project workspace directory"
+      - "Step 3: Initialize SQLite database with schema"
+      - "Step 4: Insert project record into database"
+      - "Step 5: Display success message with project path"
+      - "Step 6: Test: Run 'bob3 init test-project' and verify database created"
+      - "Step 7: Verify project record exists in database"
+
+  F009:
+    title: "Implement 'bob3 status' command to show project status"
+    description: |
+      Implement 'bob3 status' command to show project status
+    priority: high
+    depends_on: ['F007', 'F004']
+    steps:
+      - "Step 1: Implement status command in cli.py"
+      - "Step 2: Query database for project info"
+      - "Step 3: Show feature counts by status"
+      - "Step 4: Show resource usage (cost)"
+      - "Step 5: Use Rich library for formatted output"
+      - "Step 6: Test: Run 'bob3 status' and verify output format"
+
+  F010:
+    title: "Implement 'bob3 plan <spec.yaml>' command stub"
+    description: |
+      Implement 'bob3 plan <spec.yaml>' command stub
+    priority: high
+    depends_on: ['F007']
+    steps:
+      - "Step 1: Implement plan command in cli.py"
+      - "Step 2: Add spec file path parameter"
+      - "Step 3: Parse spec file (basic YAML parsing)"
+      - "Step 4: Display spec summary"
+      - "Step 5: Test: Run 'bob3 plan dummy.yaml' and verify it reads file"
+
+  F011:
+    title: "Implement database CRUD operations for projects table"
+    description: |
+      Implement database CRUD operations for projects table
+    priority: high
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add create_project() function to db.py"
+      - "Step 2: Add get_project() function to db.py"
+      - "Step 3: Add update_project() function to db.py"
+      - "Step 4: Add list_projects() function to db.py"
+      - "Step 5: Test all CRUD operations"
+      - "Step 6: Verify transactions and error handling"
+
+  F012:
+    title: "Implement database CRUD operations for features table"
+    description: |
+      Implement database CRUD operations for features table
+    priority: high
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add create_feature() function to db.py"
+      - "Step 2: Add get_feature() function to db.py"
+      - "Step 3: Add update_feature() function to db.py"
+      - "Step 4: Add list_features() function with filtering"
+      - "Step 5: Implement feature dependency tracking"
+      - "Step 6: Test CRUD operations and dependency queries"
+      - "Step 7: Verify foreign key constraints work"
+
+  F013:
+    title: "Implement database CRUD operations for tasks table"
+    description: |
+      Implement database CRUD operations for tasks table
+    priority: high
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add create_task() function to db.py"
+      - "Step 2: Add get_task() function to db.py"
+      - "Step 3: Add update_task() function to db.py"
+      - "Step 4: Add list_tasks() function with filtering by feature/status"
+      - "Step 5: Test CRUD operations"
+      - "Step 6: Verify task-feature relationships"
+
+  F014:
+    title: "Implement database operations for evidence_artifacts table"
+    description: |
+      Implement database operations for evidence_artifacts table
+    priority: medium
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add create_evidence() function to db.py"
+      - "Step 2: Add get_evidence() function to db.py"
+      - "Step 3: Add update_evidence() function to db.py"
+      - "Step 4: Add query_evidence() with filtering by feature/task/current"
+      - "Step 5: Test evidence creation and retrieval"
+      - "Step 6: Verify is_current flag handling"
+
+  F015:
+    title: "Implement database operations for review_history table"
+    description: |
+      Implement database operations for review_history table
+    priority: medium
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add create_review() function to db.py"
+      - "Step 2: Add get_review() function to db.py"
+      - "Step 3: Add update_review_verdict() function to db.py"
+      - "Step 4: Add get_pending_reviews() function"
+      - "Step 5: Test review lifecycle (create, update verdict)"
+      - "Step 6: Verify timeout tracking works"
+
+  F016:
+    title: "Implement TITANS Memory MCP integration"
+    description: |
+      Integrate with TITANS Memory MCP server for persistent memory.
+      Bob3 uses titans-memory MCP instead of local project_memory table.
+    priority: medium
+    depends_on: ['F004', 'F005', 'F017']
+    steps:
+      - "Step 1: Add titans_memory_client.py wrapper for MCP tools"
+      - "Step 2: Implement add_memory(content, pool) using titans_add"
+      - "Step 3: Implement search_memory(query, pool) using titans_search"
+      - "Step 4: Implement record_feedback(memory_id, success) using titans_record_feedback"
+      - "Step 5: Test memory add/search/feedback cycle"
+      - "Step 6: Verify memories persist across sessions"
+
+  F017:
+    title: "MCP Server Lifecycle Management"
+    description: |
+      Bob3 manages the TITANS Memory MCP server lifecycle.
+      
+      NOTE: ONLY TITANS Memory needs to be started by Bob3.
+      Perplexity and Puppeteer are already installed in Claude Code and
+      available automatically to sub-agents - do NOT start them.
+      
+      CRITICAL STARTUP REQUIREMENT:
+      - Bob3 MUST start the TITANS Memory MCP server on initialization
+      - If the MCP server fails to start, Bob3 MUST stop immediately with clear error
+      - No fallback mode - TITANS Memory is required for operation
+      
+      TITANS MEMORY MCP SERVER:
+      - Location: /home/captain/clawd/work/titans-memory
+      - Command: ["uv", "--directory", "/home/captain/clawd/work/titans-memory", "run", "titans-memory"]
+      - Requires: OPENAI_API_KEY environment variable
+      
+      The MCP server runs as a subprocess managed by Bob3.
+    priority: critical
+    depends_on: ['F001', 'F104']
+    steps:
+      - "Step 1: Create src/bob3/mcp_lifecycle.py module"
+      - "Step 2: Implement start_mcp_server() using command: uv --directory /home/captain/clawd/work/titans-memory run titans-memory"
+      - "Step 3: Implement health_check() to verify MCP server is responding"
+      - "Step 4: Implement stop_mcp_server() for graceful shutdown"
+      - "Step 5: Add startup validation - if start fails, raise fatal error and exit"
+      - "Step 6: Integrate into CLI init/run commands - start MCP before any operations"
+      - "Step 7: Add atexit handler to stop MCP server on Bob3 exit"
+      - "Step 8: Test: Start Bob3, verify MCP server running, stop Bob3, verify MCP stopped"
+      - "Step 9: Test: Simulate MCP startup failure, verify Bob3 exits with clear error message"
+
+  F018:
+    title: "Implement database operations for bug_ledger table"
+    description: |
+      Implement database operations for bug_ledger table
+    priority: medium
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add create_bug() function to db.py"
+      - "Step 2: Add get_bug() function to db.py"
+      - "Step 3: Add update_bug() function to db.py"
+      - "Step 4: Add resolve_bug() function"
+      - "Step 5: Test bug tracking lifecycle"
+      - "Step 6: Verify RCA fields are stored correctly"
+
+  F019:
+    title: "Implement database operations for calibration_data table"
+    description: |
+      Implement database operations for calibration_data table
+    priority: medium
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add create_or_update_calibration() function to db.py"
+      - "Step 2: Add get_calibration() function to db.py"
+      - "Step 3: Add calculate_drift() function"
+      - "Step 4: Test calibration tracking"
+      - "Step 5: Verify drift calculations are correct"
+
+  F020:
+    title: "Implement database operations for sub_agent_runs table"
+    description: |
+      Implement database operations for sub_agent_runs table
+    priority: medium
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add create_agent_run() function to db.py"
+      - "Step 2: Add update_agent_run() function to db.py"
+      - "Step 3: Add get_agent_run() function to db.py"
+      - "Step 4: Add query_agent_runs() with filtering"
+      - "Step 5: Test agent run tracking"
+      - "Step 6: Verify cost and token tracking works"
+
+  F021:
+    title: "Implement feature dependency DAG validation (no cycles)"
+    description: |
+      Implement feature dependency DAG validation (no cycles)
+    priority: high
+    depends_on: ['F012']
+    steps:
+      - "Step 1: Create validate_dependencies() function in db.py"
+      - "Step 2: Implement cycle detection using DFS"
+      - "Step 3: Test: Create valid dependency chain and verify it passes"
+      - "Step 4: Test: Create circular dependency and verify it's rejected"
+      - "Step 5: Add helper to get all dependency predecessors"
+
+  F022:
+    title: "Implement feature readiness calculation based on risk category thresho"
+    description: |
+      Implement feature readiness calculation based on risk category thresholds
+    priority: high
+    depends_on: ['F012']
+    steps:
+      - "Step 1: Create calculate_readiness() function"
+      - "Step 2: Implement threshold lookup by risk category"
+      - "Step 3: Check all components (spec understanding, impl correctness, test adequacy)"
+      - "Step 4: Test: Feature with low risk and 0.75 readiness should be ready"
+      - "Step 5: Test: Feature with critical risk and 0.90 readiness should NOT be ready"
+      - "Step 6: Verify readiness_score is stored in database"
+
+  F023:
+    title: "Implement query for features_ready view (respects dependencies and rea"
+    description: |
+      Implement query for features_ready view (respects dependencies and readiness)
+    priority: high
+    depends_on: ['F012', 'F021']
+    steps:
+      - "Step 1: Add get_ready_features() function using features_ready view"
+      - "Step 2: Test: Create feature chain A->B->C where only A is ready"
+      - "Step 3: Verify only A is returned"
+      - "Step 4: Mark A complete, verify B becomes ready"
+      - "Step 5: Verify ordering by priority works"
+
+  F024:
+    title: "Implement feature refinement tracking and max attempts enforcement"
+    description: |
+      Implement feature refinement tracking and max attempts enforcement
+    priority: medium
+    depends_on: ['F012']
+    steps:
+      - "Step 1: Add increment_refinement_attempts() function"
+      - "Step 2: Add check_refinement_limit() function"
+      - "Step 3: Test: Refine feature 5 times, verify 6th attempt triggers needs_human"
+      - "Step 4: Verify refinement_attempts counter updates correctly"
+
+  F025:
+    title: "Implement feature decomposition tracking (parent/child relationships)"
+    description: |
+      Implement feature decomposition tracking (parent/child relationships)
+    priority: medium
+    depends_on: ['F012']
+    steps:
+      - "Step 1: Add create_child_feature() function that sets parent_feature_id"
+      - "Step 2: Add get_child_features() function"
+      - "Step 3: Implement decomposition_depth tracking"
+      - "Step 4: Test: Create parent feature and 3 child features"
+      - "Step 5: Verify child features have correct parent_feature_id and depth"
+      - "Step 6: Test max depth limit (3 levels)"
+
+  F026:
+    title: "Implement feature size limit checking (LOC, files, complexity)"
+    description: |
+      Implement feature size limit checking (LOC, files, complexity)
+    priority: medium
+    depends_on: ['F012']
+    steps:
+      - "Step 1: Add check_feature_size() function"
+      - "Step 2: Check estimated_lines_of_code > 500"
+      - "Step 3: Check estimated_files_touched > 5"
+      - "Step 4: Check estimated_complexity > 8"
+      - "Step 5: Set exceeds_size_limits flag appropriately"
+      - "Step 6: Test: Create oversized feature and verify flag is set"
+
+  F027:
+    title: "Implement task execution attempt tracking and max attempts enforcement"
+    description: |
+      Implement task execution attempt tracking and max attempts enforcement
+    priority: high
+    depends_on: ['F013']
+    steps:
+      - "Step 1: Add increment_task_attempts() function"
+      - "Step 2: Add check_task_attempt_limit() function"
+      - "Step 3: Test: Execute task 5 times, verify 6th attempt triggers failure"
+      - "Step 4: Verify attempts counter updates correctly"
+
+  F028:
+    title: "Implement flaky test detection and tracking"
+    description: |
+      Implement flaky test detection and tracking
+    priority: medium
+    depends_on: ['F013']
+    steps:
+      - "Step 1: Add record_test_run() function to flaky_test_runs table"
+      - "Step 2: Add detect_flaky_test() function that analyzes run history"
+      - "Step 3: Calculate pass rate from last N runs"
+      - "Step 4: Set is_flaky flag if pass rate is between 0.2 and 0.8"
+      - "Step 5: Test: Create test with alternating pass/fail results"
+      - "Step 6: Verify flaky flag is set and pass rate calculated"
+
+  F029:
+    title: "Implement validation integrity tracking (assertion count, coverage)"
+    description: |
+      Implement validation integrity tracking (assertion count, coverage)
+    priority: medium
+    depends_on: ['F013']
+    steps:
+      - "Step 1: Add track_validation_integrity() function"
+      - "Step 2: Store original_assertion_count when test is created"
+      - "Step 3: Update current_assertion_count on each modification"
+      - "Step 4: Detect violations (current < original)"
+      - "Step 5: Test: Create test with 10 assertions, reduce to 5, verify violation detected"
+
+  F030:
+    title: "Implement evidence artifact verification (hash checking, reproducibili"
+    description: |
+      Implement evidence artifact verification (hash checking, reproducibility)
+    priority: medium
+    depends_on: ['F014']
+    steps:
+      - "Step 1: Add create_evidence_with_hash() function that computes SHA256"
+      - "Step 2: Add verify_evidence() function that recomputes hash"
+      - "Step 3: Add reproducibility checking"
+      - "Step 4: Test: Create evidence, verify it, modify it, verify detection of change"
+      - "Step 5: Verify output_hash is stored correctly"
+
+  F031:
+    title: "Implement evidence staleness detection (iteration tracking)"
+    description: |
+      Implement evidence staleness detection (iteration tracking)
+    priority: medium
+    depends_on: ['F014']
+    steps:
+      - "Step 1: Add mark_evidence_stale() function"
+      - "Step 2: Track iteration_created for each evidence"
+      - "Step 3: Compare current iteration vs evidence iteration"
+      - "Step 4: Set is_current=FALSE for old evidence"
+      - "Step 5: Test: Create evidence at iteration 1, advance to iteration 3, verify marked stale"
+
+  F032:
+    title: "Implement environment fingerprinting for evidence artifacts"
+    description: |
+      Implement environment fingerprinting for evidence artifacts
+    priority: medium
+    depends_on: ['F014']
+    steps:
+      - "Step 1: Add compute_environment_fingerprint() function"
+      - "Step 2: Capture Python version, OS info, dependency hashes"
+      - "Step 3: Store fingerprint as JSON in evidence record"
+      - "Step 4: Add compare_environments() function"
+      - "Step 5: Test: Create evidence, change environment, verify mismatch detected"
+
+  F033:
+    title: "Implement review creation and assignment workflow"
+    description: |
+      Implement review creation and assignment workflow
+    priority: high
+    depends_on: ['F015']
+    steps:
+      - "Step 1: Add request_review() function"
+      - "Step 2: Create review_history record with verdict=NULL"
+      - "Step 3: Set review_requested_at timestamp"
+      - "Step 4: Assign reviewer_id and reviewer_type"
+      - "Step 5: Test: Request review for feature, verify record created"
+      - "Step 6: Verify timeout tracking starts"
+
+  F034:
+    title: "Implement review verdict recording (approve/request_changes/block)"
+    description: |
+      Implement review verdict recording (approve/request_changes/block)
+    priority: high
+    depends_on: ['F015']
+    steps:
+      - "Step 1: Add record_verdict() function"
+      - "Step 2: Update verdict field (approve|request_changes|block)"
+      - "Step 3: Handle veto_active flag for blocks"
+      - "Step 4: Update feature status based on verdict"
+      - "Step 5: Test: Approve review, verify feature moves to ready"
+      - "Step 6: Test: Block review, verify veto_active=TRUE"
+
+  F035:
+    title: "Implement review issue tracking (feature_review_issues table)"
+    description: |
+      Implement review issue tracking (feature_review_issues table)
+    priority: medium
+    depends_on: ['F015']
+    steps:
+      - "Step 1: Add create_review_issue() function"
+      - "Step 2: Add resolve_review_issue() function"
+      - "Step 3: Link issues to review_id"
+      - "Step 4: Track severity levels"
+      - "Step 5: Test: Create review with 3 issues, resolve 2, verify counts"
+      - "Step 6: Verify resolved_at timestamp is set"
+
+  F036:
+    title: "Implement review timeout detection and handling"
+    description: |
+      Implement review timeout detection and handling.
+      
+      DEFAULT TIMEOUT ACTIONS (based on risk_category):
+      - low/medium risk: Auto-approve after timeout
+      - high/critical risk: Escalate to human (set status to needs_human)
+      
+      Timeout is stored in review_timeout_hours (default 48 hours).
+    priority: medium
+    depends_on: ['F015']
+    steps:
+      - "Step 1: Add check_review_timeouts() function"
+      - "Step 2: Query reviews_pending view"
+      - "Step 3: Calculate hours_waiting from review_requested_at"
+      - "Step 4: Compare against review_timeout_hours"
+      - "Step 5: For low/medium risk: auto-approve and set timeout_action_taken='auto_approved'"
+      - "Step 6: For high/critical risk: escalate to human and set timeout_action_taken='escalated'"
+      - "Step 7: Test: Create low-risk review, simulate 48+ hour wait, verify auto-approved"
+      - "Step 8: Test: Create critical-risk review, simulate 48+ hour wait, verify escalated"
+
+  F037:
+    title: "Implement reviewer seniority and senior_wins policy"
+    description: |
+      Implement reviewer seniority and senior_wins policy
+    priority: medium
+    depends_on: ['F015']
+    steps:
+      - "Step 1: Add reviewer_seniority field to review records"
+      - "Step 2: Implement senior_wins conflict resolution"
+      - "Step 3: When multiple reviews exist, highest seniority wins"
+      - "Step 4: Test: Create two reviews (seniority 1 and 5) with different verdicts"
+      - "Step 5: Verify seniority 5 verdict is applied"
+
+  F038:
+    title: "Implement TITANS memory search before implementation"
+    description: |
+      Search TITANS memory for relevant knowledge before implementing features.
+      Uses surprise-based retrieval to find most relevant memories.
+    priority: medium
+    depends_on: ['F016']
+    steps:
+      - "Step 1: Add search_relevant_knowledge() function"
+      - "Step 2: Call titans_search with feature context"
+      - "Step 3: Search multiple pools: facts, lessons, context"
+      - "Step 4: Return ranked results by retrieval_weight"
+      - "Step 5: Test: Add knowledge, search for it, verify found"
+
+  F039:
+    title: "Implement TITANS memory pool routing"
+    description: |
+      Route memories to appropriate TITANS pools based on content type.
+    priority: medium
+    depends_on: ['F016']
+    steps:
+      - "Step 1: Add route_to_pool() function"
+      - "Step 2: facts: API behaviors, library usage, external knowledge"
+      - "Step 3: lessons: Bug fixes, debugging patterns, solutions"
+      - "Step 4: preferences: User preferences, project conventions"
+      - "Step 5: context: Session state, feature progress"
+      - "Step 6: Test: Add different content types, verify correct pool"
+
+  F040:
+    title: "Implement TITANS memory feedback loop"
+    description: |
+      Record feedback on memory usage to improve retrieval.
+      TITANS uses feedback to calculate usefulness scores.
+    priority: medium
+    depends_on: ['F016']
+    steps:
+      - "Step 1: Add record_memory_feedback() function"
+      - "Step 2: Call titans_record_feedback(memory_id, success=True/False)"
+      - "Step 3: Track when memory helped vs when it was wrong"
+      - "Step 4: Use titans_get_candidates to find low-value memories"
+      - "Step 5: Test: Use memory, record success, verify usefulness increases"
+
+  F041:
+    title: "Implement lesson storage in TITANS memory"
+    description: |
+      Store lessons learned in TITANS memory lessons pool.
+    priority: high
+    depends_on: ['F016']
+    steps:
+      - "Step 1: Add store_lesson() function using titans_add"
+      - "Step 2: Format: trigger_context + lesson + solution"
+      - "Step 3: Route to 'lessons' pool explicitly"
+      - "Step 4: Include metadata: feature_id, error_type, fix_action"
+      - "Step 5: Test: Create lesson, search for it, verify in lessons pool"
+
+  F048:
+    title: "Implement calibration data recording after task execution"
+    description: |
+      Implement calibration data recording after task execution
+    priority: high
+    depends_on: ['F019']
+    steps:
+      - "Step 1: Add record_calibration_result() function"
+      - "Step 2: Identify task_class and confidence_bucket"
+      - "Step 3: Update total_attempts, total_passes, total_failures"
+      - "Step 4: Calculate empirical_pass_rate"
+      - "Step 5: Test: Record 10 greenfield_impl tasks with 0.8-0.9 confidence, 7 pass, 3 fail"
+      - "Step 6: Verify empirical_pass_rate = 0.7"
+
+  F049:
+    title: "Implement calibration drift detection"
+    description: |
+      Implement calibration drift detection
+    priority: high
+    depends_on: ['F019']
+    steps:
+      - "Step 1: Add calculate_calibration_drift() function"
+      - "Step 2: drift = empirical_pass_rate - expected_pass_rate"
+      - "Step 3: expected_pass_rate based on confidence bucket midpoint"
+      - "Step 4: Test: Confidence 0.8-0.9 (expected 0.85), empirical 0.6, drift = -0.25"
+      - "Step 5: Verify drift is stored in calibration_data table"
+
+  F050:
+    title: "Implement calibration alert creation for large drift"
+    description: |
+      Implement calibration alert creation for large drift
+    priority: medium
+    depends_on: ['F019']
+    steps:
+      - "Step 1: Add create_calibration_alert() function"
+      - "Step 2: Trigger when |drift| > 0.15"
+      - "Step 3: Set direction (overconfident or underconfident)"
+      - "Step 4: Store in calibration_alerts table"
+      - "Step 5: Test: Create drift of -0.25, verify alert created with direction='overconfident'"
+
+  F051:
+    title: "Implement regression detection when tests start failing"
+    description: |
+      Implement regression detection when tests start failing
+    priority: medium
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add detect_regression() function"
+      - "Step 2: Compare test results before/after feature implementation"
+      - "Step 3: Identify affected tests and causing feature"
+      - "Step 4: Create regression_events record"
+      - "Step 5: Test: Implement feature B that breaks feature A's tests"
+      - "Step 6: Verify regression event is created linking B as cause and A as affected"
+
+  F052:
+    title: "Implement rollback operation for failed features"
+    description: |
+      Implement rollback operation for failed features
+    priority: medium
+    depends_on: ['F051']
+    steps:
+      - "Step 1: Add rollback_feature() function"
+      - "Step 2: Record commit_before and commit_after"
+      - "Step 3: Execute git revert or git reset"
+      - "Step 4: Create rollback_events record"
+      - "Step 5: Preserve artifacts before rollback"
+      - "Step 6: Test: Rollback feature, verify commit is reverted and record created"
+
+  F053:
+    title: "Link rollback events to regression events"
+    description: |
+      Link rollback events to regression events
+    priority: medium
+    depends_on: ['F051', 'F052']
+    steps:
+      - "Step 1: When creating rollback, store regression_event_id if triggered by regression"
+      - "Step 2: Update regression_events.status to 'rolled_back'"
+      - "Step 3: Test: Detect regression, trigger rollback, verify link is created"
+
+  F054:
+    title: "Implement resource cost tracking and limit enforcement"
+    description: |
+      Implement resource cost tracking and limit enforcement
+    priority: medium
+    depends_on: ['F011']
+    steps:
+      - "Step 1: Add update_project_cost() function"
+      - "Step 2: Increment total_cost_usd on each agent run"
+      - "Step 3: Check against max_cost_usd"
+      - "Step 4: Set project status to 'resource_limited' if exceeded"
+      - "Step 5: Test: Set max_cost=100, add costs to 110, verify limit triggered"
+
+  F055:
+    title: "Implement checkpoint creation for feature/task state"
+    description: |
+      Implement checkpoint creation for feature/task state
+    priority: medium
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add create_checkpoint() function"
+      - "Step 2: Capture state_snapshot (JSON of current feature/task state)"
+      - "Step 3: Capture files_snapshot (list of files and hashes)"
+      - "Step 4: Store cost and duration at checkpoint"
+      - "Step 5: Test: Create checkpoint during feature execution, verify snapshot stored"
+
+  F056:
+    title: "Implement checkpoint resume functionality"
+    description: |
+      Implement checkpoint resume functionality
+    priority: medium
+    depends_on: ['F055']
+    steps:
+      - "Step 1: Add resume_from_checkpoint() function"
+      - "Step 2: Load state_snapshot and restore feature/task state"
+      - "Step 3: Set resumed_at timestamp"
+      - "Step 4: Test: Create checkpoint, simulate interruption, resume, verify state restored"
+
+  F057:
+    title: "Implement sub-agent spawning via Claude SDK"
+    description: |
+      Implement sub-agent spawning via Claude SDK
+    priority: high
+    depends_on: ['F006', 'F020']
+    steps:
+      - "Step 1: Add spawn_sub_agent() function in claude_executor.py"
+      - "Step 2: Create sub_agent_runs record with purpose and target"
+      - "Step 3: Use ClaudeSDKClient to execute agent"
+      - "Step 4: Track tokens_in, tokens_out, cost_usd"
+      - "Step 5: Update completed_at when done"
+      - "Step 6: VERIFY: No subprocess calls, only claude_code_sdk"
+      - "Step 7: Test: Spawn agent, verify record created and completed"
+
+  F058:
+    title: "Implement RCA (Root Cause Analysis) sub-agent invocation"
+    description: |
+      Implement RCA (Root Cause Analysis) sub-agent invocation
+    priority: high
+    depends_on: ['F057']
+    steps:
+      - "Step 1: Add spawn_rca_agent() function"
+      - "Step 2: Pass failure evidence to agent"
+      - "Step 3: Parse RCA results (blame_target, recommended_action)"
+      - "Step 4: Store in sub_agent_runs.rca_blame_target and rca_recommended_action"
+      - "Step 5: Test: Trigger RCA for test failure, verify blame and action captured"
+
+  F059:
+    title: "Track sub-agent hierarchy (parent_run_id)"
+    description: |
+      Track sub-agent hierarchy (parent_run_id)
+    priority: medium
+    depends_on: ['F057']
+    steps:
+      - "Step 1: When spawning sub-agent from another agent, set parent_run_id"
+      - "Step 2: Add get_agent_hierarchy() function to query tree"
+      - "Step 3: Test: Spawn agent A, then B from A, then C from B"
+      - "Step 4: Verify parent_run_id links form correct tree"
+
+  F060:
+    title: "Implement bug creation from RCA results"
+    description: |
+      Implement bug creation from RCA results
+    priority: medium
+    depends_on: ['F018']
+    steps:
+      - "Step 1: Add create_bug_from_rca() function"
+      - "Step 2: Extract error_type, error_message from failure"
+      - "Step 3: Store RCA blame_target and fix_action"
+      - "Step 4: Link to titans_memory_id if lesson created in TITANS Memory"
+      - "Step 5: Test: RCA identifies implementation bug, create bug record, verify fields"
+
+  F061:
+    title: "Create lesson from bug resolution (TITANS Memory)"
+    description: |
+      Create lesson in TITANS Memory when bug is resolved.
+      Store in 'lessons' pool with trigger context and solution.
+    priority: medium
+    depends_on: ['F018', 'F016']
+    steps:
+      - "Step 1: Add create_lesson_from_bug() function"
+      - "Step 2: Extract trigger_context from bug"
+      - "Step 3: Format lesson: trigger + error + solution"
+      - "Step 4: Call titans_add with pool='lessons' and metadata (bug_id, feature_id)"
+      - "Step 5: Store returned memory_id in bug_ledger.titans_memory_id"
+      - "Step 6: Test: Resolve bug, create lesson in TITANS, verify searchable"
+
+  F062:
+    title: "Implement scope change tracking (acceptance criteria, tasks)"
+    description: |
+      Implement scope change tracking (acceptance criteria, tasks)
+    priority: medium
+    depends_on: ['F004', 'F005']
+    steps:
+      - "Step 1: Add record_scope_change() function"
+      - "Step 2: Detect when acceptance_criteria or tasks are added to feature"
+      - "Step 3: Calculate growth_percent"
+      - "Step 4: Flag requires_approval if growth > 50%"
+      - "Step 5: Test: Add 5 criteria to feature with 3 original, verify 67% growth flagged"
+
+  F063:
+    title: "Implement forgetting event auditing"
+    description: |
+      Implement forgetting event auditing
+    priority: low
+    depends_on: ['F004']
+    steps:
+      - "Step 1: Add record_forgetting_event() function"
+      - "Step 2: Store action (demote/archive/purge/restore)"
+      - "Step 3: Backup content for purge operations"
+      - "Step 4: Track triggered_by and approved_by"
+      - "Step 5: Test: Purge lesson, verify forgetting_event created with backup"
+
+  F064:
+    title: "Implement restore from forgetting event"
+    description: |
+      Implement restore from forgetting event
+    priority: low
+    depends_on: ['F063']
+    steps:
+      - "Step 1: Add restore_from_forgetting() function"
+      - "Step 2: Retrieve backup_content from forgetting_events"
+      - "Step 3: Recreate lesson/memory with original content"
+      - "Step 4: Set restored_at timestamp"
+      - "Step 5: Test: Purge lesson, restore it, verify content matches original"
+
+  F065:
+    title: "Implement execution logging to execution_logs table"
+    description: |
+      Implement execution logging to execution_logs table
+    priority: medium
+    depends_on: ['F004']
+    steps:
+      - "Step 1: Add log_event() function"
+      - "Step 2: Support levels: debug, info, warning, error"
+      - "Step 3: Link to sub_agent_run_id if applicable"
+      - "Step 4: Test: Log events at different levels, verify storage"
+
+  F066:
+    title: "Implement confidence history tracking"
+    description: |
+      Implement confidence history tracking
+    priority: medium
+    depends_on: ['F012', 'F013']
+    steps:
+      - "Step 1: Add record_confidence() function"
+      - "Step 2: Store conf_spec_understanding, conf_impl_correctness, conf_test_adequacy"
+      - "Step 3: Track rated_by (agent ID or 'human')"
+      - "Step 4: Store rationale"
+      - "Step 5: Test: Record confidence updates over time, verify history"
+
+  F067:
+    title: "Implement readiness history tracking"
+    description: |
+      Implement readiness history tracking
+    priority: medium
+    depends_on: ['F012']
+    steps:
+      - "Step 1: Add record_readiness() function"
+      - "Step 2: Store readiness_score and component scores"
+      - "Step 3: Track change_reason and rules_applied"
+      - "Step 4: Test: Update readiness multiple times, verify history captured"
+
+  F068:
+    title: "Query and use all database views for status reporting"
+    description: |
+      Query and use all database views for status reporting
+    priority: low
+    depends_on: ['F004']
+    steps:
+      - "Step 1: Test features_ready view returns correct features"
+      - "Step 2: Test features_needing_refinement view"
+      - "Step 3: Test features_blocked view"
+      - "Step 4: Test unresolved_issues view"
+      - "Step 5: Test calibration_drift_summary view"
+      - "Step 6: Test active_regressions view"
+      - "Step 7: Verify all 20+ views work correctly"
+
+  F069:
+    title: "Implement 'bob3 run' with Continuous Orchestration Loop"
+    description: |
+      Implement 'bob3 run' command with a CONTINUOUS while True loop.
+      
+      The loop MUST run continuously until termination conditions:
+      ```python
+      while True:
+          # Check budget/limits
+          if budget_exceeded(): break
+          
+          # Find next feature
+          feature = find_next_ready_feature()
+          if feature is None:
+              if all_features_completed(): break
+              if all_remaining_blocked(): break
+              continue  # or handle refinement
+          
+          # Execute feature
+          result = spawn_sub_agent(feature)
+          update_feature_status(feature, result)
+          
+          # Cascade update dependents (F123)
+          cascade_update_dependents(feature.id)
+      ```
+      
+      CRITICAL: The loop continues until ALL features are done or blocked.
+      Do NOT stop after just one feature.
+    priority: high
+    depends_on: ['F007', 'F008', 'F057']
+    steps:
+      - "Step 1: Implement run command with while True loop"
+      - "Step 2: Check budget before each iteration"
+      - "Step 3: Query features_ready view for next feature"
+      - "Step 4: Spawn sub-agent to implement feature"
+      - "Step 5: Update status and call cascade_update_dependents"
+      - "Step 6: Handle graceful shutdown signals"
+      - "Step 7: Test: Multiple features complete in sequence without manual restart"
+
+  F070:
+    title: "Handle feature execution results in orchestration loop"
+    description: |
+      Handle feature execution results in orchestration loop
+    priority: medium
+    depends_on: ['F069']
+    steps:
+      - "Step 1: Parse sub-agent results (success/failure)"
+      - "Step 2: Update feature status (completed/failed)"
+      - "Step 3: Create evidence artifacts from results"
+      - "Step 4: Update cost tracking"
+      - "Step 5: Test: Run feature to completion, verify status and evidence updated"
+
+  F071:
+    title: "Implement orchestration loop retry logic for failed features"
+    description: |
+      Implement orchestration loop retry logic for failed features
+    priority: medium
+    depends_on: ['F069']
+    steps:
+      - "Step 1: Check refinement_attempts on failure"
+      - "Step 2: If under limit, spawn refiner sub-agent"
+      - "Step 3: Update refinement_attempts counter"
+      - "Step 4: If over limit, set status to needs_human"
+      - "Step 5: Test: Fail feature 5 times, verify 6th triggers needs_human"
+
+  F072:
+    title: "Implement orchestration loop feature decomposition handling"
+    description: |
+      Implement orchestration loop feature decomposition handling
+    priority: medium
+    depends_on: ['F069']
+    steps:
+      - "Step 1: Check if feature exceeds_size_limits"
+      - "Step 2: Spawn decomposer sub-agent"
+      - "Step 3: Create child features from decomposition"
+      - "Step 4: Link dependencies between children"
+      - "Step 5: Test: Oversized feature gets decomposed into 3 children with dependencies"
+
+  F073:
+    title: "Rich terminal UI output for status command"
+    description: |
+      Rich terminal UI output for status command
+    priority: high
+    depends_on: ['F009']
+    steps:
+      - "Step 1: Use Rich library for formatted tables"
+      - "Step 2: Display feature counts by status with colors"
+      - "Step 3: Show progress bars for completion percentage"
+      - "Step 4: Display resource usage (cost) with warnings if near limit"
+      - "Step 5: Test: Run status command, verify Rich formatting"
+
+  F074:
+    title: "Parse YAML spec file in plan command"
+    description: |
+      Parse YAML spec file in plan command
+    priority: medium
+    depends_on: ['F010']
+    steps:
+      - "Step 1: Add PyYAML dependency"
+      - "Step 2: Parse spec file structure"
+      - "Step 3: Extract features from spec"
+      - "Step 4: Validate spec format"
+      - "Step 5: Test: Parse valid spec, verify features extracted"
+
+  F075:
+    title: "Create features in database from parsed spec"
+    description: |
+      Create features in database from parsed spec
+    priority: medium
+    depends_on: ['F074', 'F012']
+    steps:
+      - "Step 1: For each feature in spec, create feature record"
+      - "Step 2: Set priority from spec"
+      - "Step 3: Extract acceptance criteria"
+      - "Step 4: Create feature dependencies from spec"
+      - "Step 5: Test: Plan from spec with 5 features, verify all created in DB"
+
+  F076:
+    title: "Add additional CLI commands: list-features, show-feature"
+    description: |
+      Add additional CLI commands: list-features, show-feature
+    priority: low
+    depends_on: ['F007']
+    steps:
+      - "Step 1: Add list-features command to show all features"
+      - "Step 2: Add show-feature command to show feature details"
+      - "Step 3: Use Rich for formatting"
+      - "Step 4: Test: List features, show specific feature"
+
+  F077:
+    title: "Add CLI command: show-evidence <feature_id>"
+    description: |
+      Add CLI command: show-evidence <feature_id>
+    priority: low
+    depends_on: ['F007']
+    steps:
+      - "Step 1: Add show-evidence command"
+      - "Step 2: Query evidence_artifacts for feature"
+      - "Step 3: Display evidence type, content summary, verification status"
+      - "Step 4: Test: Show evidence for feature with multiple artifacts"
+
+  F078:
+    title: "Add CLI command: show-lessons [--scope global|project]"
+    description: |
+      Add CLI command: show-lessons [--scope global|project]
+    priority: low
+    depends_on: ['F007']
+    steps:
+      - "Step 1: Add show-lessons command"
+      - "Step 2: Filter by scope if provided"
+      - "Step 3: Display lesson, usefulness score, times applied"
+      - "Step 4: Test: Show global lessons, verify filtering works"
+
+  F079:
+    title: "Add CLI command: show-calibration"
+    description: |
+      Add CLI command: show-calibration
+    priority: low
+    depends_on: ['F007']
+    steps:
+      - "Step 1: Add show-calibration command"
+      - "Step 2: Query calibration_drift_summary view"
+      - "Step 3: Display task class, confidence bucket, drift, status"
+      - "Step 4: Highlight overconfident/underconfident buckets"
+      - "Step 5: Test: Show calibration with drift data"
+
+  F080:
+    title: "Add CLI command: show-regressions"
+    description: |
+      Add CLI command: show-regressions
+    priority: low
+    depends_on: ['F007']
+    steps:
+      - "Step 1: Add show-regressions command"
+      - "Step 2: Query active_regressions view"
+      - "Step 3: Display affected feature, causing feature, status"
+      - "Step 4: Test: Show regressions, verify active ones listed"
+
+  F081:
+    title: "Verify Claude SDK client authentication via CLAUDE_API_KEY"
+    description: |
+      Verify Claude SDK client authentication via CLAUDE_API_KEY
+    priority: medium
+    depends_on: ['F006']
+    steps:
+      - "Step 1: Check CLAUDE_API_KEY environment variable"
+      - "Step 2: Pass to ClaudeSDKClient options"
+      - "Step 3: Handle missing key gracefully with error message"
+      - "Step 4: Test: Run without key, verify error message"
+      - "Step 5: Test: Run with key, verify authentication works"
+
+  F082:
+    title: "Implement async message streaming from Claude SDK client"
+    description: |
+      Implement async message streaming from Claude SDK client
+    priority: medium
+    depends_on: ['F006']
+    steps:
+      - "Step 1: Use async for loop over client.receive_response()"
+      - "Step 2: Handle AssistantMessage types"
+      - "Step 3: Handle ResultMessage types"
+      - "Step 4: Handle ErrorMessage types"
+      - "Step 5: Test: Stream messages from agent, verify all types handled"
+
+  F083:
+    title: "Configure ClaudeCodeOptions for sub-agents (model, cwd, etc.)"
+    description: |
+      Configure ClaudeCodeOptions for sub-agents (model, cwd, etc.)
+    priority: medium
+    depends_on: ['F006']
+    steps:
+      - "Step 1: Create ClaudeCodeOptions object"
+      - "Step 2: Set model (sonnet, opus, haiku)"
+      - "Step 3: Set cwd to project workspace"
+      - "Step 4: Set other options as needed"
+      - "Step 5: Test: Spawn agent with specific options, verify they're applied"
+
+  F084:
+    title: "Create setup.py or ensure pyproject.toml supports installation"
+    description: |
+      Create setup.py or ensure pyproject.toml supports installation
+    priority: high
+    depends_on: ['F002']
+    steps:
+      - "Step 1: Verify pyproject.toml has [build-system] section"
+      - "Step 2: Add [project.scripts] for bob3 CLI entry point"
+      - "Step 3: Test: pip install -e ., verify bob3 command is available"
+      - "Step 4: Test: bob3 --version works"
+
+  F085:
+    title: "Create README.md with installation and usage instructions"
+    description: |
+      Create README.md with installation and usage instructions
+    priority: medium
+    depends_on: ['F084']
+    steps:
+      - "Step 1: Create README.md in project root"
+      - "Step 2: Add project description"
+      - "Step 3: Add installation instructions (pip install)"
+      - "Step 4: Add usage examples for all CLI commands"
+      - "Step 5: Add architecture overview"
+      - "Step 6: Verify README is clear and complete"
+
+  F086:
+    title: "End-to-end test: Create project, add feature, run orchestration"
+    description: |
+      End-to-end test: Create project, add feature, run orchestration
+    priority: medium
+    depends_on: ['F008', 'F012', 'F057']
+    steps:
+      - "Step 1: Run bob3 init test-project"
+      - "Step 2: Manually add a simple feature to database"
+      - "Step 3: Set feature readiness_score high enough to be ready"
+      - "Step 4: Run bob3 run"
+      - "Step 5: Verify sub-agent is spawned"
+      - "Step 6: Verify feature status updates to completed"
+      - "Step 7: Verify evidence is created"
+
+  F087:
+    title: "End-to-end test: Plan from spec file, run to completion"
+    description: |
+      End-to-end test: Plan from spec file, run to completion
+    priority: medium
+    depends_on: ['F074', 'F075', 'F069']
+    steps:
+      - "Step 1: Create test spec YAML with 3 features (A->B->C dependency chain)"
+      - "Step 2: Run bob3 plan test-spec.yaml"
+      - "Step 3: Verify 3 features created in database"
+      - "Step 4: Run bob3 run in loop until all features complete"
+      - "Step 5: Verify all features reach status=completed"
+      - "Step 6: Verify dependencies were respected (A before B before C)"
+
+  F088:
+    title: "End-to-end test: Detect regression and trigger rollback"
+    description: |
+      End-to-end test: Detect regression and trigger rollback
+    priority: medium
+    depends_on: ['F051', 'F052', 'F069']
+    steps:
+      - "Step 1: Complete feature A with passing tests"
+      - "Step 2: Implement feature B that breaks A's tests"
+      - "Step 3: Verify regression detected (regression_events record created)"
+      - "Step 4: Trigger rollback of feature B"
+      - "Step 5: Verify feature A's tests pass again"
+      - "Step 6: Verify rollback_events record created"
+
+  F089:
+    title: "End-to-end test: Calibration drift detection"
+    description: |
+      End-to-end test: Calibration drift detection
+    priority: medium
+    depends_on: ['F048', 'F049', 'F050', 'F069']
+    steps:
+      - "Step 1: Execute 20 tasks with confidence 0.8-0.9"
+      - "Step 2: Simulate only 10 passing (50% pass rate, expected 85%)"
+      - "Step 3: Verify calibration drift calculated as -0.35"
+      - "Step 4: Verify calibration alert created with direction=overconfident"
+      - "Step 5: Verify alert is visible in status command"
+
+  F090:
+    title: "End-to-end test: Flaky test detection and handling"
+    description: |
+      End-to-end test: Flaky test detection and handling
+    priority: medium
+    depends_on: ['F028', 'F069']
+    steps:
+      - "Step 1: Create test that passes/fails alternately"
+      - "Step 2: Run test 10 times"
+      - "Step 3: Verify is_flaky flag is set"
+      - "Step 4: Verify flaky_pass_rate calculated (~0.5)"
+      - "Step 5: Verify flaky test appears in flaky_tests_pending view"
+
+  F091:
+    title: "End-to-end test: TITANS Memory lesson lifecycle"
+    description: |
+      End-to-end test: Lesson lifecycle using TITANS Memory MCP
+    priority: low
+    depends_on: ['F041', 'F016']
+    steps:
+      - "Step 1: Create lesson via titans_add (pool='lessons')"
+      - "Step 2: Record feedback via titans_record_feedback (mix success/fail)"
+      - "Step 3: Verify usefulness_score via titans_get_stats"
+      - "Step 4: Get candidates via titans_get_candidates"
+      - "Step 5: Demote lesson via titans_demote, verify status"
+      - "Step 6: Archive lesson via titans_archive, verify not in search results"
+
+  F092:
+    title: "End-to-end test: Resource limit enforcement"
+    description: |
+      End-to-end test: Resource limit enforcement
+    priority: medium
+    depends_on: ['F054', 'F069']
+    steps:
+      - "Step 1: Create project with max_cost_usd=50"
+      - "Step 2: Run features that accumulate cost to 55"
+      - "Step 3: Verify project status becomes resource_limited"
+      - "Step 4: Verify orchestration loop stops"
+      - "Step 5: Verify status command shows warning"
+
+  F093:
+    title: "End-to-end test: Checkpoint and resume"
+    description: |
+      End-to-end test: Checkpoint and resume
+    priority: medium
+    depends_on: ['F055', 'F056', 'F069']
+    steps:
+      - "Step 1: Start feature execution"
+      - "Step 2: Create checkpoint mid-execution"
+      - "Step 3: Simulate crash/interruption"
+      - "Step 4: Resume from checkpoint"
+      - "Step 5: Verify feature completes from checkpoint state"
+
+  F094:
+    title: "End-to-end test: TITANS memory lifecycle"
+    description: |
+      End-to-end test: TITANS memory add, search, feedback, archive
+    priority: low
+    depends_on: ['F038', 'F039', 'F040']
+    steps:
+      - "Step 1: Add facts to TITANS memory (titans_add to facts pool)"
+      - "Step 2: Add lessons to TITANS memory (titans_add to lessons pool)"
+      - "Step 3: Search for relevant memories (titans_search)"
+      - "Step 4: Verify retrieval ranking by surprise score"
+      - "Step 5: Record feedback (titans_record_feedback success=True)"
+      - "Step 6: Verify usefulness score increases"
+      - "Step 7: Get forgetting candidates (titans_get_candidates)"
+      - "Step 8: Archive old memory (titans_archive)"
+
+  F095:
+    title: "End-to-end test: Review workflow (request, issue, resolve, approve)"
+    description: |
+      End-to-end test: Review workflow (request, issue, resolve, approve)
+    priority: medium
+    depends_on: ['F033', 'F034', 'F035', 'F036']
+    steps:
+      - "Step 1: Complete feature and request review"
+      - "Step 2: Create 2 review issues"
+      - "Step 3: Verify feature status is blocked_by_reviewer"
+      - "Step 4: Resolve 1 issue"
+      - "Step 5: Resolve 2nd issue"
+      - "Step 6: Record approve verdict"
+      - "Step 7: Verify feature status becomes ready"
+
+  F096:
+    title: "End-to-end test: Feature decomposition (parent->children)"
+    description: |
+      End-to-end test: Feature decomposition (parent->children)
+    priority: medium
+    depends_on: ['F025', 'F072']
+    steps:
+      - "Step 1: Create oversized feature (exceeds_size_limits=TRUE)"
+      - "Step 2: Trigger decomposition"
+      - "Step 3: Verify 3 child features created with parent_feature_id set"
+      - "Step 4: Verify decomposition_depth incremented"
+      - "Step 5: Verify child dependencies form DAG"
+      - "Step 6: Complete children in order"
+      - "Step 7: Verify parent marked complete when all children done"
+
+  F097:
+    title: "End-to-end test: Scope creep detection"
+    description: |
+      End-to-end test: Scope creep detection
+    priority: low
+    depends_on: ['F062']
+    steps:
+      - "Step 1: Create feature with 4 acceptance criteria and 5 tasks"
+      - "Step 2: Store original counts"
+      - "Step 3: Add 6 more criteria (total 10, growth 150%)"
+      - "Step 4: Verify scope_changes record created with growth_percent=150"
+      - "Step 5: Verify requires_approval=TRUE"
+
+  F098:
+    title: "End-to-end test: RCA workflow (failure -> RCA -> bug -> lesson)"
+    description: |
+      End-to-end test: RCA workflow (failure -> RCA -> bug -> lesson)
+    priority: medium
+    depends_on: ['F058', 'F060', 'F061']
+    steps:
+      - "Step 1: Execute task that fails"
+      - "Step 2: Spawn RCA sub-agent"
+      - "Step 3: Verify RCA identifies blame_target=implementation"
+      - "Step 4: Create bug_ledger entry from RCA"
+      - "Step 5: Resolve bug with fix"
+      - "Step 6: Create lesson in TITANS Memory from bug resolution"
+      - "Step 7: Verify titans_memory_id stored in bug_ledger"
+
+  F099:
+    title: "Test validation integrity violation detection"
+    description: |
+      Test validation integrity violation detection
+    priority: low
+    depends_on: ['F029']
+    steps:
+      - "Step 1: Create validation task with 15 assertions"
+      - "Step 2: Record original_assertion_count=15"
+      - "Step 3: Modify test to have only 8 assertions"
+      - "Step 4: Update current_assertion_count=8"
+      - "Step 5: Verify test_integrity_violations view shows this test"
+      - "Step 6: Verify alert or warning is generated"
+
+  F100:
+    title: "Test evidence artifact comprehensive tracking"
+    description: |
+      Test evidence artifact comprehensive tracking
+    priority: low
+    depends_on: ['F030', 'F031', 'F032']
+    steps:
+      - "Step 1: Create evidence with hash"
+      - "Step 2: Store environment fingerprint"
+      - "Step 3: Verify evidence is current (is_current=TRUE)"
+      - "Step 4: Advance iteration"
+      - "Step 5: Verify old evidence marked stale (is_current=FALSE)"
+      - "Step 6: Change environment"
+      - "Step 7: Verify environment_matches_current=FALSE"
+
+  # ============================================
+  # BOB3 NEW FEATURES (F101-F110)
+  # ============================================
+
+  F101:
+    title: "spawn_research_agent() function with Perplexity MCP"
+    description: |
+      Create research-enabled sub-agent spawning function in claude_executor.py.
+      Uses Perplexity MCP for web research when features need investigation.
+      
+      WHEN TO USE:
+      - Feature has research_required=True
+      - RCA classifies failure as MISSING_INFO
+      - generate-features command analyzing PDFs
+    priority: critical
+    depends_on: [F057]
+    steps:
+      - "Step 1: Add MCP configuration for Perplexity"
+      - "Step 2: Implement spawn_research_agent() with Perplexity tools enabled"
+      - "Step 3: Track MCP usage in sub_agent_runs table"
+      - "Step 4: Test research agent with simple query"
+
+  F102:
+    title: "PDF text extraction utility using PyMuPDF"
+    description: |
+      Create src/bob3/pdf_utils.py with PDF extraction functions.
+      
+      IMPORTANT: PyMuPDF is installed as 'PyMuPDF' (pip install PyMuPDF)
+      but is imported as 'fitz' (import fitz). This is the library's design.
+      
+      Functions:
+      - extract_pdf_text(path) -> PDFContent
+      - chunk_pdf_for_context(content, chunk_size) -> list[str]
+      - validate_pdf(path) -> bool (checks if PDF is valid and readable)
+    priority: critical
+    depends_on: [F001]
+    steps:
+      - "Step 1: Create pdf_utils.py with 'import fitz' (this imports PyMuPDF)"
+      - "Step 2: Implement PDFContent dataclass with fields: text, pages, metadata"
+      - "Step 3: Implement validate_pdf() to check for corrupted/password-protected PDFs"
+      - "Step 4: Implement extract_pdf_text() with error handling for invalid PDFs"
+      - "Step 5: Implement chunk_pdf_for_context() for token limits"
+      - "Step 6: Test with valid PDF, corrupted PDF, and password-protected PDF"
+      - "Step 7: Verify clear error messages for invalid PDF inputs"
+
+  F103:
+    title: "bob3 generate-features CLI command"
+    description: |
+      Add generate-features command to cli.py.
+      
+      Usage: bob3 generate-features spec.yaml --refs paper.pdf --output features.yaml [--auto-continue]
+      
+      The --auto-continue flag skips human review and proceeds to plan automatically.
+    priority: critical
+    depends_on: [F101, F102, F007]
+    steps:
+      - "Step 1: Add generate-features command to cli.py"
+      - "Step 2: Parse project spec and extract PDF content"
+      - "Step 3: Spawn research sub-agent with feature generation prompt"
+      - "Step 4: Parse agent output to YAML features"
+      - "Step 5: Write output file"
+      - "Step 6: Implement --auto-continue flag"
+      - "Step 7: Test with sample spec and PDF"
+
+  F104:
+    title: "MCP configuration module"
+    description: |
+      Create src/bob3/orchestrator/mcp_config.py for MCP plugin management.
+      
+      IMPORTANT: Only TITANS-MEMORY needs to be started by Bob3.
+      Perplexity and Puppeteer are ALREADY INSTALLED in Claude Code and
+      available automatically to sub-agents.
+      
+      MCP SERVERS:
+      - TITANS-MEMORY (Bob3 must start):
+        Command: ["uv", "--directory", "/home/captain/clawd/work/titans-memory", "run", "titans-memory"]
+        Requires: OPENAI_API_KEY
+      - PERPLEXITY: Already in Claude Code (do not start)
+      - PUPPETEER: Already in Claude Code (do not start)
+      
+      Provides:
+      - MCPServerConfig dataclass with name, command, env_vars, required, managed_by_bob3 fields
+      - TITANS_MEMORY_MCP config (managed_by_bob3=True)
+      - PERPLEXITY_MCP, PUPPETEER_MCP configs (managed_by_bob3=False, available via Claude Code)
+      - get_mcp_config() and get_allowed_tools() helpers
+    priority: high
+    depends_on: ['F001']
+    steps:
+      - "Step 1: Create mcp_config.py"
+      - "Step 2: Define MCPServerConfig dataclass with command field and managed_by_bob3 boolean"
+      - "Step 3: Define TITANS_MEMORY_MCP config with command=['uv', '--directory', '/home/captain/clawd/work/titans-memory', 'run', 'titans-memory'], managed_by_bob3=True"
+      - "Step 4: Define PERPLEXITY_MCP config with managed_by_bob3=False (available in Claude Code)"
+      - "Step 5: Define PUPPETEER_MCP config with managed_by_bob3=False (available in Claude Code)"
+      - "Step 6: Implement get_mcp_config() helper"
+      - "Step 7: Implement get_bob3_managed_servers() to return only servers Bob3 needs to start"
+
+  F105:
+    title: "Puppeteer MCP integration for browser testing"
+    description: |
+      Extend spawn_sub_agent to optionally enable Puppeteer MCP.
+      
+      WHEN TO USE:
+      - Feature involves web UI
+      - Need screenshots for evidence artifacts
+      - End-to-end browser testing
+    priority: medium
+    depends_on: [F104, F057]
+    steps:
+      - "Step 1: Add enable_puppeteer parameter to spawn_sub_agent"
+      - "Step 2: Configure Puppeteer MCP when enabled"
+      - "Step 3: Add Puppeteer tools to allowed_tools list"
+      - "Step 4: Test browser automation with simple page"
+
+  F106:
+    title: "Superpowers systematic-debugging integration"
+    description: |
+      Integrate systematic-debugging protocol into RCA workflow.
+      
+      IRON LAW: NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST
+      
+      Four phases (must complete each):
+      1. Root Cause Investigation
+      2. Hypothesis Formation  
+      3. Fix Implementation
+      4. Verification
+    priority: high
+    depends_on: [F058]
+    steps:
+      - "Step 1: Update RCA prompt with debugging protocol"
+      - "Step 2: Add Phase 1 checklist to RCA output"
+      - "Step 3: Require root cause before fix proposals"
+      - "Step 4: Test with sample failure"
+
+  F107:
+    title: "Sub-agent orientation protocol with TITANS memory"
+    description: |
+      Create src/bob3/orientation.py with mandatory orientation for all sub-agents.
+      
+      Every sub-agent starts with:
+      1. pwd && ls -la
+      2. cat app_spec.txt | head -100
+      3. Query feature status
+      4. cat claude-progress.txt
+      5. git log --oneline -10
+      6. titans_search for relevant knowledge (if TITANS available):
+         - Search lessons pool for similar features
+         - Search facts pool for technologies involved
+         - Search context pool for project state
+      
+      BOOTSTRAP CASE: When implementing F016/F017 (TITANS integration itself),
+      skip TITANS search steps since TITANS doesn't exist yet. The orientation
+      function must detect this and gracefully skip memory operations.
+      
+      On retry: also apply systematic debugging protocol + search for past fixes.
+      
+      After completion:
+      - titans_add any new facts learned
+      - titans_add lessons from failures/debugging
+      - titans_record_feedback on memories that helped
+    priority: high
+    depends_on: ['F001', 'F004', 'F005', 'F016', 'F017']
+    steps:
+      - "Step 1: Create orientation.py"
+      - "Step 2: Implement get_orientation_prompt() with TITANS search"
+      - "Step 3: Implement wrap_prompt_with_orientation()"
+      - "Step 4: Add memory search for feature context"
+      - "Step 5: Add post-completion memory storage"
+      - "Step 6: Add is_retry flag for debugging additions"
+      - "Step 7: Add bootstrap detection - skip TITANS ops for F016/F017 features"
+      - "Step 8: Integrate into all spawn_*_agent functions"
+      - "Step 9: Test bootstrap case - verify F016/F017 can be implemented without TITANS"
+
+  F108:
+    title: "Progress notes between sessions (claude-progress.txt)"
+    description: |
+      Implement session continuity via claude-progress.txt.
+      
+      After every sub-agent session, update with:
+      - Features completed
+      - Features attempted
+      - Blockers encountered
+      - Session notes
+    priority: medium
+    depends_on: [F001]
+    steps:
+      - "Step 1: Implement update_progress_notes() function"
+      - "Step 2: Call after each sub-agent session"
+      - "Step 3: Keep last 10 entries"
+      - "Step 4: Include in orientation prompt"
+
+  F109:
+    title: "Research mode in orchestration loop"
+    description: |
+      Integrate research sub-agent into main run loop.
+      
+      TRIGGERS:
+      1. Feature has research_required=True and research_complete=False
+      2. RCA classifies as MISSING_INFO or NEEDS_RESEARCH
+      3. Feature fails 3+ times
+    priority: high
+    depends_on: [F101, F069]
+    steps:
+      - "Step 1: Check research_required before execution"
+      - "Step 2: Spawn research agent when needed"
+      - "Step 3: Store results in project memory"
+      - "Step 4: Mark research_complete=True"
+      - "Step 5: Continue to implementation"
+
+  F110:
+    title: "End-to-end test: Feature generation workflow"
+    description: |
+      E2E test for complete generate-features workflow.
+      
+      1. Create spec with natural language description
+      2. Create mock PDF
+      3. Run generate-features
+      4. Verify features.yaml created
+      5. Run plan and verify DB
+    priority: medium
+    depends_on: [F103]
+    steps:
+      - "Step 1: Create test fixtures (spec, mock PDF)"
+      - "Step 2: Run generate-features command"
+      - "Step 3: Verify output YAML structure"
+      - "Step 4: Run plan command"
+      - "Step 5: Verify features in database"
+
+  # ============================================
+  # BOB3 ADDITIONAL FEATURES (F111-F114)
+  # ============================================
+
+  F111:
+    title: "Python Logging Integration"
+    description: |
+      Implement structured Python logging for all Bob3 operations.
+      All logs go to stdout for visibility.
+      
+      Log levels:
+      - DEBUG: Detailed execution info (sub-agent prompts, MCP calls)
+      - INFO: Major events (feature start/complete, sub-agent spawn)
+      - WARNING: Recoverable issues (retry attempts, validation failures)
+      - ERROR: Failures (feature failed, MCP error)
+      
+      Format: [TIMESTAMP] [LEVEL] [COMPONENT] message
+      Example: [2026-02-12 17:00:00] [INFO] [orchestrator] Starting feature F001
+    priority: high
+    depends_on: ['F001']
+    steps:
+      - "Step 1: Create src/bob3/logging_config.py"
+      - "Step 2: Configure Python logging with structured formatter"
+      - "Step 3: Set default level to INFO, allow override via --verbose flag"
+      - "Step 4: Add logging to CLI commands (init, plan, run, status)"
+      - "Step 5: Add logging to orchestrator (feature start/complete/fail)"
+      - "Step 6: Add logging to sub-agent spawning"
+      - "Step 7: Add logging to MCP operations"
+      - "Step 8: Test: Run bob3, verify logs appear on stdout"
+
+  F112:
+    title: "Screenshot Evidence Artifacts with Puppeteer"
+    description: |
+      Extend Puppeteer MCP integration to capture screenshots as evidence artifacts.
+      Screenshots are stored with evidence_artifacts records for visual verification.
+    priority: medium
+    depends_on: ['F105', 'F014']
+    steps:
+      - "Step 1: Add capture_screenshot_evidence() function"
+      - "Step 2: Call puppeteer_screenshot and store result"
+      - "Step 3: Create evidence_artifact record with type='screenshot'"
+      - "Step 4: Store screenshot path in content field"
+      - "Step 5: Compute hash for verification"
+      - "Step 6: Test: Capture screenshot, verify evidence artifact created"
+
+  F113:
+    title: "Superpowers Full Integration"
+    description: |
+      Integrate all four Superpowers skills into Bob3 workflow.
+      
+      Skills to integrate:
+      1. systematic-debugging - Already in F106 (RCA)
+      2. subagent-driven-development - For parallel feature work
+      3. test-driven-development - Write tests before implementation
+      4. verification-before-completion - Final checks before marking complete
+    priority: medium
+    depends_on: ['F106', 'F057']
+    steps:
+      - "Step 1: Add TDD mode to feature execution - write tests first"
+      - "Step 2: Add verification-before-completion checklist to feature completion"
+      - "Step 3: Add subagent-driven-development option for complex features"
+      - "Step 4: Document when each skill should be used in orientation prompt"
+      - "Step 5: Test: Execute feature with TDD mode, verify tests written first"
+      - "Step 6: Test: Complete feature, verify verification checklist runs"
+
+  F114:
+    title: "Git Integration for Version Control"
+    description: |
+      Integrate git operations for proper version control during Bob3 execution.
+      
+      Operations:
+      - git commit after successful feature completion
+      - git revert for rollback operations
+      - git log for orientation context
+      - git status for state verification
+    priority: high
+    depends_on: ['F001', 'F052']
+    steps:
+      - "Step 1: Create src/bob3/git_ops.py module"
+      - "Step 2: Implement commit_feature(feature_id, message) using gitpython or subprocess"
+      - "Step 3: Implement revert_feature(feature_id) for rollbacks"
+      - "Step 4: Implement get_recent_commits(n) for orientation"
+      - "Step 5: Implement get_status() for pre-execution checks"
+      - "Step 6: Integrate into orchestration loop - commit on feature complete"
+      - "Step 7: Integrate into rollback workflow - git revert on rollback"
+      - "Step 8: Test: Complete feature, verify git commit created"
+      - "Step 9: Test: Rollback feature, verify git revert executed"
+
+  # ============================================
+  # PROJECT RESUME & SPEC CHANGE FEATURES (F115-F118)
+  # ============================================
+
+  F115:
+    title: "Spec Change Detection"
+    description: |
+      Detect when the app_spec.yaml has changed since last run.
+      
+      On project initialization (bob3 plan), compute and store SHA256 hash of spec file.
+      On every bob3 run, compare current spec hash with stored hash.
+      
+      If spec changed:
+      1. Log the change detection
+      2. Re-parse the spec file
+      3. Identify new/modified/removed features
+      4. Update feature database accordingly
+      5. Reset affected features to pending status
+    priority: high
+    depends_on: ['F004', 'F074']
+    steps:
+      - "Step 1: Add spec_hash column to projects table"
+      - "Step 2: Implement compute_spec_hash(spec_path) -> SHA256"
+      - "Step 3: Store spec_hash on bob3 plan"
+      - "Step 4: On bob3 run, compare current hash with stored hash"
+      - "Step 5: If changed, call detect_spec_changes(old_hash, new_hash)"
+      - "Step 6: Implement diff_features() to identify added/modified/removed features"
+      - "Step 7: Update database: add new features, mark modified features for re-execution"
+      - "Step 8: Log all spec changes for audit trail"
+      - "Step 9: Test: Run bob3, modify spec, run again, verify changes detected"
+
+  F116:
+    title: "Automatic Resume on Startup"
+    description: |
+      When bob3 run is invoked, automatically detect and resume interrupted work.
+      
+      On startup:
+      1. Check for features with status='executing' (interrupted mid-execution)
+      2. Check for resumable checkpoints (can_resume=TRUE)
+      3. If found, offer to resume or start fresh
+      4. Resume from last checkpoint if available
+      
+      This handles: network failures, Claude unavailability, system crashes, manual stops.
+    priority: high
+    depends_on: ['F055', 'F056', 'F069']
+    steps:
+      - "Step 1: On bob3 run, query for features with status='executing'"
+      - "Step 2: Query resource_checkpoints for can_resume=TRUE"
+      - "Step 3: If interrupted work found, log and auto-resume (no prompt needed)"
+      - "Step 4: Load checkpoint state and continue from last known good state"
+      - "Step 5: If no checkpoint, reset feature to 'pending' and retry from start"
+      - "Step 6: Add --fresh flag to force restart without resume"
+      - "Step 7: Test: Start feature, kill process, restart, verify resume"
+      - "Step 8: Test: Start feature, kill process mid-task, restart, verify checkpoint resume"
+
+  F117:
+    title: "Graceful Interruption Handling"
+    description: |
+      Handle SIGINT/SIGTERM gracefully to create checkpoint before exit.
+      
+      When Bob3 receives interrupt signal:
+      1. Catch the signal
+      2. Create checkpoint of current state
+      3. Mark current feature as 'interrupted' (not 'failed')
+      4. Stop MCP server cleanly
+      5. Exit with clear message about resume capability
+    priority: high
+    depends_on: ['F055', 'F017', 'F111']
+    steps:
+      - "Step 1: Register signal handlers for SIGINT, SIGTERM"
+      - "Step 2: On signal, set graceful_shutdown flag"
+      - "Step 3: Wait for current sub-agent to reach safe point (or timeout 30s)"
+      - "Step 4: Create checkpoint with current state"
+      - "Step 5: Update feature status to 'interrupted'"
+      - "Step 6: Stop MCP server gracefully"
+      - "Step 7: Log: 'Interrupted. Run bob3 run to resume.'"
+      - "Step 8: Test: Start bob3, send SIGINT, verify checkpoint created"
+      - "Step 9: Test: Resume after SIGINT, verify continues from checkpoint"
+
+  F118:
+    title: "End-to-end test: Full resume workflow"
+    description: |
+      E2E test for complete interrupt/resume/spec-change workflow.
+    priority: medium
+    depends_on: ['F115', 'F116', 'F117']
+    steps:
+      - "Step 1: Start bob3 with 5-feature spec"
+      - "Step 2: Complete 2 features, interrupt mid-3rd"
+      - "Step 3: Verify checkpoint created, status='interrupted'"
+      - "Step 4: Resume bob3, verify continues from feature 3"
+      - "Step 5: Complete feature 3, interrupt again"
+      - "Step 6: Modify spec to add feature 6 and change feature 5"
+      - "Step 7: Resume bob3, verify spec change detected"
+      - "Step 8: Verify feature 5 reset, feature 6 added"
+      - "Step 9: Complete all features, verify full success"
+
+  F122:
+    title: "AST-Based Stub and Mock Detection"
+    description: |
+      Implement AST-based detection of stub/mock code in source files.
+      
+      Use ast.parse() to detect stub functions in src/:
+      - Functions with only 'pass' as body (after docstring)
+      - Functions with only '...' (Ellipsis) as body
+      - Functions that only 'raise NotImplementedError'
+      
+      CRITICAL: Avoid false positives!
+      - 'except Exception: pass' is VALID (not a stub)
+      - Only flag functions where the ENTIRE body is a stub pattern
+      
+      Also detect mock usage in src/ (mocks only allowed in tests/):
+      - from unittest.mock import ...
+      - MagicMock usage
+      - from mock import ...
+    priority: high
+    depends_on: ['F106']
+    steps:
+      - "Step 1: Create _detect_stub_functions(source, filepath) using ast.walk()"
+      - "Step 2: Check FunctionDef/AsyncFunctionDef nodes for stub bodies"
+      - "Step 3: Skip docstrings when checking function body"
+      - "Step 4: Integrate into verification checklist"
+      - "Step 5: Test: 'def foo(): pass' should be flagged as stub"
+      - "Step 6: Test: 'except Error: pass' should NOT be flagged (valid code)"
+      - "Step 7: Test: Mock imports in src/ should be flagged"
+      - "Step 8: Test: Mock imports in tests/ should be allowed"
+
+  F123:
+    title: "Cascade Update Dependent Features"
+    description: |
+      Auto-transition pending features to ready when their dependencies complete.
+      
+      After ANY feature status changes to 'completed':
+      1. Find all features that depend on the completed feature
+      2. For each: check if ALL dependencies are now 'completed'
+      3. If yes AND readiness_score >= threshold for risk category:
+         Set status = 'ready'
+      
+      This ensures the orchestration loop continues without manual intervention.
+      Without this, features stay 'pending' forever even when unblocked.
+    priority: high
+    depends_on: ['F022', 'F070']
+    steps:
+      - "Step 1: Create cascade_update_dependents(conn, feature_id) in db.py"
+      - "Step 2: Query feature_dependencies to find dependents"
+      - "Step 3: Check if all deps completed for each dependent"
+      - "Step 4: Check readiness threshold based on risk category"
+      - "Step 5: Update status to 'ready' if conditions met"
+      - "Step 6: Call from run_loop after feature completes"
+      - "Step 7: Return list of features that were transitioned"
+      - "Step 8: Test: Feature A depends on B, B completes → A becomes ready"
+      - "Step 9: Test: Feature A depends on B and C, B completes → A stays pending"
+      - "Step 10: Test: Feature A depends on B and C, both complete → A becomes ready"
+
+
+schema: |
+  # ============================================
+  # DATABASE SCHEMA
+  # ============================================
+  
+  -- ============================================
+  -- BOB2 DATABASE SCHEMA v2.1
+  -- Complete schema with all corner case handling
+  -- ============================================
+  
+  -- ============================================
+  -- CORE ENTITIES
+  -- ============================================
+  
+  CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      spec_path TEXT,
+      workspace_path TEXT NOT NULL,
+      status TEXT DEFAULT 'planning',
+      
+      -- Resource tracking
+      total_cost_usd REAL DEFAULT 0.0,
+      max_cost_usd REAL DEFAULT 500.0,
+      
+      -- Spec change detection (F115)
+      spec_hash TEXT,                    -- SHA256 of spec file for change detection
+      spec_last_modified TIMESTAMP,      -- Last modification time of spec file
+      
+      -- Environment fingerprint
+      environment_fingerprint TEXT,      -- JSON: {python_version, deps_hash, os_info}
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE TABLE features (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      parent_feature_id TEXT REFERENCES features(id),  -- For decomposed features
+      decomposition_depth INTEGER DEFAULT 0,           -- CORNER CASE #17
+      
+      name TEXT NOT NULL,
+      description TEXT,
+      acceptance_criteria TEXT,          -- JSON array of feature-level criteria
+      status TEXT DEFAULT 'pending',
+      -- Status values: pending|pending_decomposition|refining|ready|executing|completed|failed|
+      --                blocked_by_reviewer|blocked_by_dependency|needs_human|
+      --                resource_limited|rolled_back|regression|partially_completed|interrupted
+      -- NOTE: 'interrupted' status (F117) means graceful shutdown occurred mid-execution
+      
+      -- Feature priority (lower = higher priority)
+      priority INTEGER DEFAULT 100,
+      
+      risk_category TEXT DEFAULT 'medium',
+      
+      -- Split confidence dimensions
+      conf_spec_understanding REAL DEFAULT 0.0,
+      conf_impl_correctness REAL DEFAULT 0.0,
+      conf_test_adequacy REAL DEFAULT 0.0,
+      
+      -- Composite readiness
+      readiness_score REAL DEFAULT 0.0,
+      readiness_components TEXT,         -- JSON
+      
+      -- Refinement tracking
+      refinement_attempts INTEGER DEFAULT 0,
+      max_refinement_attempts INTEGER DEFAULT 5,
+      last_improvement_type TEXT,
+      research_iterations INTEGER DEFAULT 0,           -- CORNER CASE #18
+      
+      -- Scope tracking (CORNER CASE #19)
+      original_acceptance_criteria_count INTEGER,
+      original_task_count INTEGER,
+      
+      -- Feature size limits
+      estimated_lines_of_code INTEGER,
+      estimated_files_touched INTEGER,
+      estimated_complexity INTEGER,      -- 1-10 scale
+      exceeds_size_limits BOOLEAN DEFAULT FALSE,
+      size_limit_justification TEXT,     -- If soft limit exceeded with justification
+      
+      -- Reviewer state
+      reviewer_confidence_cap REAL,
+      
+      -- Completion tracking (CORNER CASE #14)
+      completion_mode TEXT DEFAULT 'all_or_nothing',
+      tasks_completed INTEGER DEFAULT 0,
+      tasks_total INTEGER DEFAULT 0,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE TABLE tasks (
+      id TEXT PRIMARY KEY,
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      type TEXT NOT NULL,                -- implementation|validation
+      subtype TEXT,                      -- numerical|algorithmic|convergence|structural
+      task_class TEXT,                   -- greenfield_impl|refactor|bug_fix|test_writing|infrastructure
+      
+      title TEXT NOT NULL,
+      description TEXT,
+      acceptance_criteria TEXT,          -- JSON array
+      expected_outputs TEXT,             -- JSON array
+      verify_script TEXT,
+      
+      status TEXT DEFAULT 'pending',
+      
+      -- Split confidence
+      conf_spec_understanding REAL DEFAULT 0.0,
+      conf_impl_correctness REAL DEFAULT 0.0,
+      conf_test_adequacy REAL DEFAULT 0.0,
+      
+      readiness_score REAL DEFAULT 0.0,
+      
+      attempts INTEGER DEFAULT 0,
+      max_attempts INTEGER DEFAULT 5,
+      
+      -- Validation integrity tracking (CORNER CASE #27)
+      is_human_authored BOOLEAN DEFAULT FALSE,
+      original_assertion_count INTEGER,
+      current_assertion_count INTEGER,
+      original_coverage_percent REAL,
+      current_coverage_percent REAL,
+      
+      -- Flaky test tracking (CORNER CASE #30)
+      is_flaky BOOLEAN DEFAULT FALSE,
+      flaky_pass_rate REAL,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  -- ============================================
+  -- DEPENDENCY GRAPHS
+  -- ============================================
+  
+  CREATE TABLE feature_dependencies (
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      depends_on_feature_id TEXT NOT NULL REFERENCES features(id),
+      
+      -- CORNER CASE #11: Cascade tracking
+      invalidated_at TIMESTAMP,
+      invalidation_reason TEXT,
+      
+      PRIMARY KEY (feature_id, depends_on_feature_id)
+  );
+  
+  CREATE TABLE task_dependencies (
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      depends_on_task_id TEXT NOT NULL REFERENCES tasks(id),
+      PRIMARY KEY (task_id, depends_on_task_id)
+  );
+  
+  -- ============================================
+  -- EVIDENCE ARTIFACTS
+  -- ============================================
+  
+  CREATE TABLE evidence_artifacts (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      feature_id TEXT REFERENCES features(id),
+      task_id TEXT REFERENCES tasks(id),
+      attempt_number INTEGER,
+      
+      type TEXT NOT NULL,
+      content TEXT NOT NULL,             -- JSON
+      
+      -- CORNER CASE #26: Verification
+      output_hash TEXT,                  -- SHA256 of actual output
+      reproducible BOOLEAN,
+      verification_run_at TIMESTAMP,
+      verification_passed BOOLEAN,
+      
+      -- CORNER CASE #20: Staleness
+      is_current BOOLEAN DEFAULT TRUE,
+      iteration_created INTEGER,
+      
+      -- CORNER CASE #22: Environment
+      environment_fingerprint TEXT,      -- JSON
+      environment_matches_current BOOLEAN DEFAULT TRUE,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  -- ============================================
+  -- REVIEW SYSTEM
+  -- ============================================
+  
+  CREATE TABLE review_history (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      
+      reviewer_id TEXT NOT NULL,
+      reviewer_type TEXT DEFAULT 'human',
+      reviewer_seniority INTEGER DEFAULT 0,  -- CORNER CASE #16: For senior_wins policy
+      
+      verdict TEXT,                      -- NULL=pending, approve|request_changes|block
+      
+      confidence_cap REAL,
+      veto_active BOOLEAN DEFAULT FALSE,
+      
+      issues_flagged TEXT,               -- JSON array
+      required_validations TEXT,         -- JSON array
+      notes TEXT,
+      
+      issues_resolved TEXT,
+      resolved_at TIMESTAMP,
+      
+      -- CORNER CASE #21: Timeout tracking
+      review_requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      review_timeout_hours INTEGER DEFAULT 48,
+      timeout_action_taken TEXT,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE TABLE feature_review_issues (
+      id TEXT PRIMARY KEY,
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      review_id TEXT NOT NULL REFERENCES review_history(id),
+      
+      issue_description TEXT NOT NULL,
+      severity TEXT DEFAULT 'medium',
+      
+      resolved BOOLEAN DEFAULT FALSE,
+      resolved_by_attempt INTEGER,
+      resolution_evidence TEXT,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      resolved_at TIMESTAMP
+  );
+  
+  -- ============================================
+  -- ============================================
+  -- NOTE: Project memory is handled by TITANS Memory MCP server.
+  -- No local project_memory table needed - use titans_add, titans_search, etc.
+  -- ============================================
+  
+  -- ============================================
+  -- NOTE: Lessons are stored in TITANS Memory MCP (lessons pool)
+  -- No local lessons_learned table - use titans_add, titans_search, etc.
+  -- ============================================
+  
+  CREATE TABLE bug_ledger (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      feature_id TEXT REFERENCES features(id),
+      task_id TEXT REFERENCES tasks(id),
+      
+      error_type TEXT NOT NULL,
+      error_message TEXT NOT NULL,
+      error_context TEXT,
+      
+      evidence_artifacts TEXT NOT NULL,  -- JSON array
+      
+      -- RCA results
+      blame_target TEXT,                 -- implementation|validation|feature_spec|infrastructure|external|test_flaky
+      root_cause TEXT,
+      fix_action TEXT NOT NULL,
+      fix_details TEXT,
+      fix_evidence TEXT,
+      
+      resolved BOOLEAN DEFAULT FALSE,
+      resolution_attempts INTEGER DEFAULT 1,
+      
+      -- Link to TITANS Memory lesson (if created)
+      titans_memory_id TEXT,  -- ID from titans_add response
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      resolved_at TIMESTAMP
+  );
+  
+  -- ============================================
+  -- CALIBRATION SYSTEM
+  -- ============================================
+  
+  CREATE TABLE calibration_data (
+      id TEXT PRIMARY KEY,
+      project_id TEXT REFERENCES projects(id),
+      
+      task_class TEXT NOT NULL,
+      confidence_bucket TEXT NOT NULL,
+      
+      total_attempts INTEGER DEFAULT 0,
+      total_passes INTEGER DEFAULT 0,
+      total_failures INTEGER DEFAULT 0,
+      
+      empirical_pass_rate REAL,
+      expected_pass_rate REAL,
+      drift REAL,
+      
+      adjusted_threshold REAL,
+      
+      last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      
+      UNIQUE(project_id, task_class, confidence_bucket)
+  );
+  
+  CREATE TABLE calibration_alerts (
+      id TEXT PRIMARY KEY,
+      project_id TEXT REFERENCES projects(id),
+      task_class TEXT NOT NULL,
+      confidence_bucket TEXT NOT NULL,
+      
+      drift_amount REAL NOT NULL,
+      direction TEXT NOT NULL,           -- overconfident|underconfident
+      sample_size INTEGER NOT NULL,
+      
+      acknowledged BOOLEAN DEFAULT FALSE,
+      action_taken TEXT,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  -- ============================================
+  -- REGRESSION & ROLLBACK
+  -- ============================================
+  
+  -- CORNER CASE #13: Regression tracking
+  CREATE TABLE regression_events (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      
+      affected_feature_id TEXT NOT NULL REFERENCES features(id),
+      causing_feature_id TEXT NOT NULL REFERENCES features(id),
+      
+      detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      
+      affected_tests TEXT,               -- JSON array of test IDs that started failing
+      evidence_artifacts TEXT,           -- JSON array
+      
+      status TEXT DEFAULT 'detected',    -- detected|investigating|fixing|resolved|rolled_back
+      resolution TEXT,
+      
+      resolved_at TIMESTAMP
+  );
+  
+  -- CORNER CASE #28: Rollback tracking
+  CREATE TABLE rollback_events (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      
+      trigger TEXT NOT NULL,             -- regression|human_request|critical_bug
+      regression_event_id TEXT REFERENCES regression_events(id),
+      
+      commit_before TEXT NOT NULL,       -- Commit SHA before feature
+      commit_after TEXT NOT NULL,        -- Commit SHA after feature (being rolled back)
+      
+      rollback_commit TEXT,              -- Commit SHA of rollback
+      
+      artifacts_preserved TEXT,          -- JSON array of preserved artifact IDs
+      titans_memory_id TEXT,             -- Lesson ID from TITANS Memory MCP
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  -- ============================================
+  -- RESOURCE MANAGEMENT
+  -- ============================================
+  
+  -- CORNER CASE #29: Checkpointing
+  CREATE TABLE resource_checkpoints (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      task_id TEXT REFERENCES tasks(id),
+      
+      checkpoint_type TEXT NOT NULL,     -- task_completion|resource_limit|manual
+      
+      state_snapshot TEXT NOT NULL,      -- JSON: current state of feature/task
+      files_snapshot TEXT,               -- JSON: list of files and their hashes
+      
+      cost_at_checkpoint REAL,
+      duration_at_checkpoint_ms INTEGER,
+      
+      can_resume BOOLEAN DEFAULT TRUE,
+      resumed_at TIMESTAMP,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  -- ============================================
+  -- FLAKY TEST TRACKING
+  -- ============================================
+  
+  -- CORNER CASE #30
+  CREATE TABLE flaky_test_runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      
+      run_number INTEGER NOT NULL,
+      passed BOOLEAN NOT NULL,
+      output TEXT,
+      duration_ms INTEGER,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  -- ============================================
+  -- SUB-AGENT TRACKING
+  -- ============================================
+  
+  CREATE TABLE sub_agent_runs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      parent_run_id TEXT REFERENCES sub_agent_runs(id),
+      
+      purpose TEXT NOT NULL,
+      target_type TEXT,
+      target_id TEXT,
+      
+      status TEXT DEFAULT 'running',
+      
+      prompt_summary TEXT,
+      result_summary TEXT,
+      
+      -- RCA results (for rca_analyst agents)
+      rca_blame_target TEXT,
+      rca_recommended_action TEXT,
+      
+      evidence_artifacts_produced TEXT,
+      
+      improvement_type TEXT,
+      improvement_evidence TEXT,
+      
+      tokens_in INTEGER,
+      tokens_out INTEGER,
+      cost_usd REAL,
+      duration_ms INTEGER,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      completed_at TIMESTAMP
+  );
+  
+  -- ============================================
+  -- CONFIDENCE & READINESS HISTORY
+  -- ============================================
+  
+  CREATE TABLE confidence_history (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      feature_id TEXT REFERENCES features(id),
+      task_id TEXT REFERENCES tasks(id),
+      
+      conf_spec_understanding REAL,
+      conf_impl_correctness REAL,
+      conf_test_adequacy REAL,
+      
+      rated_by TEXT NOT NULL,
+      rationale TEXT,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE TABLE readiness_history (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      
+      readiness_score REAL NOT NULL,
+      opus_confidence_component REAL,
+      test_pass_rate_component REAL,
+      evidence_score_component REAL,
+      diff_quality_component REAL,
+      reviewer_adjustment_component REAL,
+      
+      change_reason TEXT,
+      rules_applied TEXT,                -- JSON array
+      
+      computed_by TEXT NOT NULL,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  -- ============================================
+  -- SCOPE CHANGE TRACKING (CORNER CASE #19)
+  -- ============================================
+  
+  CREATE TABLE scope_changes (
+      id TEXT PRIMARY KEY,
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      
+      change_type TEXT NOT NULL,         -- acceptance_criteria_added|task_added|description_changed
+      
+      before_value TEXT,
+      after_value TEXT,
+      
+      growth_percent REAL,               -- How much did scope grow?
+      
+      requires_approval BOOLEAN DEFAULT FALSE,
+      approved_by TEXT,
+      approved_at TIMESTAMP,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  -- ============================================
+  -- TITANS FORGETTING AUDIT
+  -- ============================================
+  
+  CREATE TABLE forgetting_events (
+      id TEXT PRIMARY KEY,
+      project_id TEXT REFERENCES projects(id),
+      
+      target_type TEXT NOT NULL,         -- lesson|memory
+      target_id TEXT NOT NULL,
+      
+      action TEXT NOT NULL,              -- demote|archive|purge|restore
+      reason TEXT NOT NULL,
+      
+      -- State before action
+      previous_status TEXT,
+      previous_usefulness_score REAL,
+      previous_retrieval_weight REAL,
+      
+      -- Backup info (for purge)
+      backup_path TEXT,
+      backup_content TEXT,               -- JSON snapshot of deleted item
+      
+      -- Audit
+      triggered_by TEXT,                 -- schedule|manual|system
+      approved_by TEXT,                  -- Human who approved (for purge)
+      
+      can_restore BOOLEAN DEFAULT TRUE,
+      restored_at TIMESTAMP,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE INDEX idx_forgetting_project ON forgetting_events(project_id);
+  CREATE INDEX idx_forgetting_target ON forgetting_events(target_type, target_id);
+  CREATE INDEX idx_forgetting_action ON forgetting_events(action);
+  
+  -- ============================================
+  -- EXECUTION LOGS
+  -- ============================================
+  
+  CREATE TABLE execution_logs (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      sub_agent_run_id TEXT REFERENCES sub_agent_runs(id),
+      
+      level TEXT DEFAULT 'info',
+      event TEXT NOT NULL,
+      details TEXT,
+      
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  -- ============================================
+  -- INDEXES
+  -- ============================================
+  
+  CREATE INDEX idx_features_project ON features(project_id);
+  CREATE INDEX idx_features_status ON features(status);
+  CREATE INDEX idx_features_risk ON features(risk_category);
+  CREATE INDEX idx_features_readiness ON features(readiness_score);
+  CREATE INDEX idx_features_parent ON features(parent_feature_id);
+  CREATE INDEX idx_features_priority ON features(priority);
+  
+  CREATE INDEX idx_tasks_feature ON tasks(feature_id);
+  CREATE INDEX idx_tasks_project ON tasks(project_id);
+  CREATE INDEX idx_tasks_status ON tasks(status);
+  CREATE INDEX idx_tasks_class ON tasks(task_class);
+  CREATE INDEX idx_tasks_flaky ON tasks(is_flaky);
+  
+  CREATE INDEX idx_evidence_feature ON evidence_artifacts(feature_id);
+  CREATE INDEX idx_evidence_task ON evidence_artifacts(task_id);
+  CREATE INDEX idx_evidence_current ON evidence_artifacts(is_current);
+  CREATE INDEX idx_evidence_env_match ON evidence_artifacts(environment_matches_current);
+  
+  CREATE INDEX idx_review_history_feature ON review_history(feature_id);
+  CREATE INDEX idx_review_history_verdict ON review_history(verdict);
+  CREATE INDEX idx_review_history_timeout ON review_history(review_requested_at);
+  
+  CREATE INDEX idx_review_issues_feature ON feature_review_issues(feature_id);
+  CREATE INDEX idx_review_issues_resolved ON feature_review_issues(resolved);
+  
+  -- NOTE: Lessons indexes removed - lessons stored in TITANS Memory MCP
+  
+  CREATE INDEX idx_calibration_class ON calibration_data(task_class);
+  
+  CREATE INDEX idx_bug_ledger_project ON bug_ledger(project_id);
+  CREATE INDEX idx_bug_ledger_blame ON bug_ledger(blame_target);
+  
+  CREATE INDEX idx_regression_affected ON regression_events(affected_feature_id);
+  CREATE INDEX idx_regression_causing ON regression_events(causing_feature_id);
+  
+  CREATE INDEX idx_rollback_feature ON rollback_events(feature_id);
+  
+  CREATE INDEX idx_checkpoints_feature ON resource_checkpoints(feature_id);
+  CREATE INDEX idx_checkpoints_resumable ON resource_checkpoints(can_resume);
+  
+  CREATE INDEX idx_flaky_runs_task ON flaky_test_runs(task_id);
+  
+  CREATE INDEX idx_sub_agent_runs_project ON sub_agent_runs(project_id);
+  CREATE INDEX idx_sub_agent_runs_purpose ON sub_agent_runs(purpose);
+  
+  CREATE INDEX idx_readiness_history_feature ON readiness_history(feature_id);
+  
+  CREATE INDEX idx_scope_changes_feature ON scope_changes(feature_id);
+  CREATE INDEX idx_scope_changes_approval ON scope_changes(requires_approval);
+  
+  CREATE INDEX idx_execution_logs_project ON execution_logs(project_id);
+  
+  -- ============================================
+  -- VIEWS
+  -- ============================================
+  
+  -- Features ready for implementation (ordered by priority)
+  CREATE VIEW features_ready AS
+  SELECT f.*, 
+         CASE f.risk_category
+             WHEN 'low' THEN 0.70
+             WHEN 'medium' THEN 0.80
+             WHEN 'high' THEN 0.90
+             WHEN 'critical' THEN 0.95
+         END as required_threshold
+  FROM features f
+  WHERE f.readiness_score >= (
+      CASE f.risk_category
+          WHEN 'low' THEN 0.70
+          WHEN 'medium' THEN 0.80
+          WHEN 'high' THEN 0.90
+          WHEN 'critical' THEN 0.95
+      END
+  )
+  AND f.status = 'ready'
+  AND NOT EXISTS (
+      SELECT 1 FROM review_history r 
+      WHERE r.feature_id = f.id 
+      AND r.veto_active = TRUE
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM feature_dependencies fd
+      JOIN features dep ON dep.id = fd.depends_on_feature_id
+      WHERE fd.feature_id = f.id
+      AND dep.status != 'completed'
+  )
+  ORDER BY f.priority ASC, f.created_at ASC;
+  
+  -- Features needing refinement
+  CREATE VIEW features_needing_refinement AS
+  SELECT f.* FROM features f
+  WHERE f.readiness_score < (
+      CASE f.risk_category
+          WHEN 'low' THEN 0.70
+          WHEN 'medium' THEN 0.80
+          WHEN 'high' THEN 0.90
+          WHEN 'critical' THEN 0.95
+      END
+  )
+  AND f.refinement_attempts < f.max_refinement_attempts
+  AND f.status NOT IN ('needs_human', 'blocked_by_reviewer', 'blocked_by_dependency', 'resource_limited', 'pending_decomposition')
+  ORDER BY f.priority ASC;
+  
+  -- Features pending decomposition (too large)
+  CREATE VIEW features_pending_decomposition AS
+  SELECT f.* FROM features f
+  WHERE f.status = 'pending_decomposition'
+     OR f.exceeds_size_limits = TRUE
+  ORDER BY f.priority ASC;
+  
+  -- Features blocked by various reasons
+  CREATE VIEW features_blocked AS
+  SELECT f.id, f.name, f.status,
+         CASE 
+             WHEN f.status = 'blocked_by_reviewer' THEN 'Reviewer veto active'
+             WHEN f.status = 'blocked_by_dependency' THEN 'Dependency not completed'
+             WHEN f.status = 'needs_human' THEN 'Requires human intervention'
+             WHEN f.status = 'resource_limited' THEN 'Resource limit reached'
+         END as block_reason
+  FROM features f
+  WHERE f.status IN ('blocked_by_reviewer', 'blocked_by_dependency', 'needs_human', 'resource_limited');
+  
+  -- Features needing human intervention
+  CREATE VIEW features_needs_human AS
+  SELECT f.* FROM features f
+  WHERE f.status = 'needs_human'
+     OR f.refinement_attempts >= f.max_refinement_attempts
+     OR f.research_iterations >= 3
+     OR f.decomposition_depth >= 3
+     OR (f.risk_category = 'critical' AND NOT EXISTS (
+         SELECT 1 FROM review_history r 
+         WHERE r.feature_id = f.id 
+         AND r.verdict = 'approve'
+         AND r.reviewer_type = 'human'
+     ));
+  
+  -- Unresolved review issues
+  CREATE VIEW unresolved_issues AS
+  SELECT f.id as feature_id, f.name as feature_name,
+         COUNT(fri.id) as issue_count,
+         GROUP_CONCAT(fri.issue_description, '; ') as issues
+  FROM features f
+  JOIN feature_review_issues fri ON fri.feature_id = f.id
+  WHERE fri.resolved = FALSE
+  GROUP BY f.id;
+  
+  -- Pending reviews (awaiting verdict)
+  CREATE VIEW reviews_pending AS
+  SELECT r.*, f.name as feature_name, f.risk_category, f.priority,
+         (julianday('now') - julianday(r.review_requested_at)) * 24 as hours_waiting
+  FROM review_history r
+  JOIN features f ON f.id = r.feature_id
+  WHERE r.verdict IS NULL
+  ORDER BY f.priority ASC, r.review_requested_at ASC;
+  
+  -- Review timeouts
+  CREATE VIEW review_timeouts AS
+  SELECT r.*, f.name as feature_name, f.risk_category,
+         (julianday('now') - julianday(r.review_requested_at)) * 24 as hours_waiting
+  FROM review_history r
+  JOIN features f ON f.id = r.feature_id
+  WHERE r.verdict IS NULL
+  AND (julianday('now') - julianday(r.review_requested_at)) * 24 > r.review_timeout_hours;
+  
+  -- Stale evidence
+  CREATE VIEW stale_evidence AS
+  SELECT ea.*, f.name as feature_name
+  FROM evidence_artifacts ea
+  JOIN features f ON f.id = ea.feature_id
+  WHERE ea.is_current = TRUE
+  AND (
+      ea.iteration_created < (SELECT MAX(iteration_created) FROM evidence_artifacts WHERE feature_id = ea.feature_id) - 2
+      OR ea.environment_matches_current = FALSE
+  );
+  
+  -- Calibration drift summary
+  CREATE VIEW calibration_drift_summary AS
+  SELECT task_class, confidence_bucket,
+         empirical_pass_rate, expected_pass_rate, drift,
+         total_attempts,
+         CASE 
+             WHEN drift > 0.15 THEN 'underconfident'
+             WHEN drift < -0.15 THEN 'overconfident'
+             ELSE 'calibrated'
+         END as status
+  FROM calibration_data
+  WHERE total_attempts >= 10
+  ORDER BY ABS(drift) DESC;
+  
+  -- Active regressions
+  CREATE VIEW active_regressions AS
+  SELECT re.*, 
+         af.name as affected_feature_name,
+         cf.name as causing_feature_name
+  FROM regression_events re
+  JOIN features af ON af.id = re.affected_feature_id
+  JOIN features cf ON cf.id = re.causing_feature_id
+  WHERE re.status NOT IN ('resolved', 'rolled_back');
+  
+  -- Flaky tests needing attention
+  CREATE VIEW flaky_tests_pending AS
+  SELECT t.*, f.name as feature_name,
+         (SELECT COUNT(*) FROM flaky_test_runs WHERE task_id = t.id AND passed = TRUE) as pass_count,
+         (SELECT COUNT(*) FROM flaky_test_runs WHERE task_id = t.id) as total_runs
+  FROM tasks t
+  JOIN features f ON f.id = t.feature_id
+  WHERE t.is_flaky = TRUE
+  AND t.status != 'completed';
+  
+  -- Scope creep alerts
+  CREATE VIEW scope_creep_alerts AS
+  SELECT f.id, f.name,
+         f.original_acceptance_criteria_count,
+         (SELECT COUNT(*) FROM json_each(f.description)) as current_criteria_count,
+         f.original_task_count,
+         (SELECT COUNT(*) FROM tasks WHERE feature_id = f.id) as current_task_count
+  FROM features f
+  WHERE f.original_task_count > 0
+  AND (SELECT COUNT(*) FROM tasks WHERE feature_id = f.id) > f.original_task_count * 2;
+  
+  -- NOTE: Memory/lesson conflicts handled by TITANS Memory MCP
+  -- Use titans_search for retrieval, titans_get_candidates for maintenance
+  
+  -- Gaming detection
+  CREATE VIEW potential_gaming AS
+  SELECT ch.feature_id, ch.task_id,
+         ch.conf_impl_correctness,
+         COUNT(*) as times_reported
+  FROM confidence_history ch
+  GROUP BY ch.feature_id, ch.task_id, ch.conf_impl_correctness
+  HAVING COUNT(*) >= 3;
+  
+  -- Test integrity violations
+  CREATE VIEW test_integrity_violations AS
+  SELECT t.id, t.title, f.name as feature_name,
+         t.original_assertion_count, t.current_assertion_count,
+         t.original_coverage_percent, t.current_coverage_percent
+  FROM tasks t
+  JOIN features f ON f.id = t.feature_id
+  WHERE t.type = 'validation'
+  AND (
+      t.current_assertion_count < t.original_assertion_count
+      OR t.current_coverage_percent < t.original_coverage_percent - 5
+  );
+  
+  -- Resource usage summary
+  CREATE VIEW resource_usage AS
+  SELECT p.id, p.name,
+         p.total_cost_usd, p.max_cost_usd,
+         (p.total_cost_usd / p.max_cost_usd) * 100 as cost_percent_used,
+         (SELECT COUNT(*) FROM features WHERE project_id = p.id AND status = 'completed') as features_completed,
+         (SELECT COUNT(*) FROM features WHERE project_id = p.id) as features_total
+  FROM projects p;
+  
+  -- NOTE: All lesson views removed - lessons stored in TITANS Memory MCP
+  -- Use titans_search for lesson retrieval
+  -- Use titans_get_candidates for demotion/archival candidates
+  
+  -- Active bugs
+  CREATE VIEW active_bugs AS
+  SELECT bl.*, f.name as feature_name
+  FROM bug_ledger bl
+  LEFT JOIN features f ON f.id = bl.feature_id
+  WHERE bl.resolved = FALSE
+  ORDER BY bl.created_at DESC;
+  
+  -- Orphaned features (parent abandoned)
+  CREATE VIEW orphaned_features AS
+  SELECT f.* 
+  FROM features f
+  JOIN features parent ON parent.id = f.parent_feature_id
+  WHERE parent.status IN ('failed', 'needs_human', 'rolled_back')
+  AND f.status NOT IN ('completed', 'failed', 'rolled_back');
+  
+  -- Oversized features needing decomposition
+  CREATE VIEW oversized_features AS
+  SELECT f.id, f.name, f.status,
+         (SELECT COUNT(*) FROM tasks WHERE feature_id = f.id AND type = 'implementation') as impl_tasks,
+         (SELECT COUNT(*) FROM tasks WHERE feature_id = f.id AND type = 'validation') as validation_tasks,
+         (SELECT COUNT(*) FROM tasks WHERE feature_id = f.id) as total_tasks,
+         f.estimated_lines_of_code,
+         f.estimated_files_touched,
+         f.estimated_complexity,
+         CASE
+             WHEN (SELECT COUNT(*) FROM tasks WHERE feature_id = f.id) > 10 THEN 'too_many_tasks'
+             WHEN f.estimated_lines_of_code > 500 THEN 'too_many_lines'
+             WHEN f.estimated_files_touched > 5 THEN 'too_many_files'
+             WHEN f.estimated_complexity > 8 THEN 'too_complex'
+         END as limit_exceeded
+  FROM features f
+  WHERE f.exceeds_size_limits = TRUE
+     OR (SELECT COUNT(*) FROM tasks WHERE feature_id = f.id) > 10
+     OR f.estimated_lines_of_code > 500
+     OR f.estimated_files_touched > 5
+     OR f.estimated_complexity > 8;
+  
+  
+  # ============================================
+  # BOB3 DATABASE SCHEMA ADDITIONS
+  # ============================================
+  
+  -- Add to sub_agent_runs:
+  -- ALTER TABLE sub_agent_runs ADD COLUMN mcp_enabled TEXT;  -- JSON: ["perplexity", "puppeteer"]
+  
+  CREATE TABLE IF NOT EXISTS research_results (
+      id TEXT PRIMARY KEY,
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      agent_run_id TEXT REFERENCES sub_agent_runs(id),
+      query TEXT NOT NULL,
+      findings TEXT,
+      sources TEXT,              -- JSON array of URLs
+      code_examples TEXT,        -- JSON array of code snippets
+      applied BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE TABLE IF NOT EXISTS reference_documents (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      file_path TEXT NOT NULL,
+      title TEXT,
+      extracted_text TEXT,
+      page_count INTEGER,
+      sections TEXT,             -- JSON: [{page, heading, content}, ...]
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+  
+  CREATE TABLE IF NOT EXISTS feature_references (
+      feature_id TEXT NOT NULL REFERENCES features(id),
+      reference_id TEXT NOT NULL REFERENCES reference_documents(id),
+      section_hint TEXT,
+      PRIMARY KEY (feature_id, reference_id)
+  );
