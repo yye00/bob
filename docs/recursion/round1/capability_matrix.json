@@ -1,0 +1,122 @@
+{
+  "languages": {
+    "python": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": "src/bob3"
+    },
+    "js": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": null
+    },
+    "ts": {
+      "supported": true,
+      "smoke_test_passes": false,
+      "sample_project": null
+    },
+    "java": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": null
+    },
+    "c++": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": null
+    },
+    "hip": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": null
+    }
+  },
+  "test_frameworks": {
+    "pytest": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": "tests/"
+    },
+    "jest": {
+      "supported": false,
+      "smoke_test_passes": false,
+      "sample_project": null
+    },
+    "vitest": {
+      "supported": false,
+      "smoke_test_passes": false,
+      "sample_project": null
+    },
+    "junit": {
+      "supported": true,
+      "smoke_test_passes": false,
+      "sample_project": null
+    },
+    "gtest": {
+      "supported": true,
+      "smoke_test_passes": false,
+      "sample_project": null
+    },
+    "ctest": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": null
+    }
+  },
+  "build_systems": {
+    "pip": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": "pyproject.toml"
+    },
+    "npm": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": null
+    },
+    "maven": {
+      "supported": false,
+      "smoke_test_passes": false,
+      "sample_project": null
+    },
+    "gradle": {
+      "supported": false,
+      "smoke_test_passes": false,
+      "sample_project": null
+    },
+    "cmake": {
+      "supported": true,
+      "smoke_test_passes": true,
+      "sample_project": null
+    },
+    "ninja": {
+      "supported": false,
+      "smoke_test_passes": false,
+      "sample_project": null
+    }
+  },
+  "gpu_verification": {
+    "compute-sanitizer": {
+      "supported": false,
+      "smoke_test_passes": false,
+      "sample_project": null
+    },
+    "rocprof": {
+      "supported": true,
+      "smoke_test_passes": false,
+      "sample_project": null
+    }
+  },
+  "verification_checks": [
+    "tests_pass",
+    "source_files_exist",
+    "code_changes_made",
+    "package_has_substance",
+    "test_files_exist",
+    "no_stubs_in_source",
+    "no_mocks_in_source",
+    "acceptance_criteria_met",
+    "integration_code_exists",
+    "security_scan"
+  ]
+}

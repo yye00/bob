@@ -1,0 +1,11 @@
+STALL_ATTENTION: chain_dead_locked sentinel placeholder.
+
+This file is written by the watchdog escalation mechanism when N consecutive
+spec_gate_stall_observed events are detected (default N=5, configurable via
+BOB3_STALL_ESCALATION_COUNT).
+
+Operator action required:
+  1. Drop thresholds in the chain configuration.
+  2. Manually relaunch the stuck generation.
+
+See: bob3.watchdog.escalate_stall_to_needs_human_attention

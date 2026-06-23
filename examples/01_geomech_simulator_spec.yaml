@@ -1,0 +1,714 @@
+name: geomech-sim
+version: "0.1.0"
+description: |
+  FEniCSx-based geomechanics simulator for reservoir geomechanics.
+
+  One-way coupled: reads pressure depletion fields from OPM Flow output
+  (EGRID/UNRST), solves poroelastic/thermporoelastic problems on a
+  FEniCSx mesh, and computes displacement, stress, strain, compaction,
+  subsidence, fault reactivation risk, and wellbore stability indicators.
+
+  Includes advanced fault mechanics (shear slip, intersecting faults),
+  viscoelastic creep for salt formations, thermal stress coupling,
+  and a comprehensive V&V suite against analytical solutions and
+  published benchmarks.
+
+workspace: /tmp/geomech-sim
+
+dependencies:
+  python: ">=3.11"
+  packages:
+    - fenics-dolfinx
+    - fenics-ufl
+    - fenics-basix
+    - petsc4py
+    - mpi4py
+    - gmsh
+    - meshio
+    - numpy
+    - scipy
+    - matplotlib
+    - h5py
+    - pyvista
+
+features:
+
+  # ================================================================
+  # FOUNDATION LAYER
+  # ================================================================
+
+  F001:
+    title: "Project structure and package skeleton"
+    description: |
+      Create the geomech_sim Python package with proper directory layout,
+      pyproject.toml, and dependency declarations.
+    priority: critical
+    depends_on: []
+    acceptance_criteria:
+      - "src/geomech_sim/ directory exists with __init__.py"
+      - "pyproject.toml declares all dependencies (dolfinx, ufl, basix, petsc4py, gmsh, meshio, numpy, scipy, matplotlib, h5py, pyvista)"
+      - "Package is pip-installable in editable mode"
+      - "pytest runs and discovers tests/ directory"
+
+  F002:
+    title: "Mesh I/O and generation"
+    description: |
+      Mesh handling: read Gmsh .msh files, generate simple geometries
+      (box, cylinder) programmatically via the Gmsh Python API, support
+      mesh refinement near specified regions (faults, wellbores).
+
+      Must support 2D (plane strain) and 3D meshes. Convert to DOLFINx
+      mesh format with proper cell tags and facet tags for boundary
+      condition application and material zone assignment.
+    priority: critical
+    depends_on: ['F001']
+    acceptance_criteria:
+      - "read_gmsh(path) returns a DOLFINx mesh with cell and facet MeshTags"
+      - "generate_box(nx, ny, nz, Lx, Ly, Lz) creates a structured hex mesh"
+      - "generate_cylinder(r, h, n_radial, n_axial) creates a cylinder mesh"
+      - "refine_near_point(mesh, point, radius, factor) produces graded refinement"
+      - "2D meshes produce plane-strain compatible function spaces"
+      - "3D meshes produce proper tetrahedral or hexahedral elements"
+
+  F003:
+    title: "Linear elastic material model"
+    description: |
+      Implement isotropic linear elasticity as a UFL constitutive law.
+
+      sigma = lambda * tr(epsilon) * I + 2 * mu * epsilon
+
+      where epsilon = sym(grad(u)), lambda and mu are Lame parameters
+      derived from Young's modulus E and Poisson ratio nu.
+
+      Support spatially varying material properties via DG-0 functions
+      (piecewise constant per cell) for heterogeneous reservoirs.
+    priority: critical
+    depends_on: ['F001']
+    acceptance_criteria:
+      - "lame_parameters(E, nu) returns (lambda, mu) correctly"
+      - "stress(u, E, nu) returns the Cauchy stress tensor as UFL expression"
+      - "strain(u) returns the symmetric gradient"
+      - "Material properties can be assigned per cell via MeshTags"
+      - "Homogeneous and heterogeneous cases both work"
+
+  F004:
+    title: "Transverse isotropy material model"
+    description: |
+      Implement transversely isotropic (VTI) elasticity for shales and
+      layered formations. The stiffness tensor has 5 independent constants:
+      E_h, E_v, nu_hh, nu_vh, G_vh (horizontal/vertical Young's moduli,
+      Poisson ratios, and shear modulus).
+
+      Construct the 6x6 Voigt stiffness matrix C_ij, then express the
+      constitutive law sigma_i = C_ij * epsilon_j in UFL tensor notation.
+      The symmetry axis is vertical (z-direction) by default but should
+      be configurable.
+    priority: high
+    depends_on: ['F003']
+    acceptance_criteria:
+      - "vti_stiffness(E_h, E_v, nu_hh, nu_vh, G_vh) returns the 6x6 Voigt matrix"
+      - "Stiffness matrix is symmetric and positive definite for valid parameters"
+      - "Reduces to isotropic case when E_h=E_v, nu_hh=nu_vh, G_vh=E_v/(2*(1+nu_vh))"
+      - "Symmetry axis can be rotated via a rotation tensor"
+      - "UFL form assembles correctly in both 2D and 3D"
+
+  F005:
+    title: "Mohr-Coulomb plasticity model"
+    description: |
+      Implement Mohr-Coulomb elastoplasticity with:
+      - Yield function: f = sigma_1 - sigma_3 * N_phi - 2*c*sqrt(N_phi)
+        where N_phi = (1+sin(phi))/(1-sin(phi))
+      - Non-associated flow rule with dilation angle psi
+      - Return mapping algorithm for stress integration
+      - Consistent tangent operator for Newton convergence
+
+      Use a custom Newton solver at the constitutive level (Gauss point
+      loop via DOLFINx Expression or external operator).
+    priority: high
+    depends_on: ['F003']
+    acceptance_criteria:
+      - "Yield function evaluates correctly for known stress states"
+      - "Return mapping converges for stress states beyond yield"
+      - "Uniaxial compression test matches analytical peak strength = 2*c*cos(phi)/(1-sin(phi))"
+      - "Dilation angle psi=0 gives zero plastic volumetric strain"
+      - "Consistent tangent produces quadratic convergence in global Newton"
+      - "Stress states remain on or inside yield surface after return mapping"
+
+  F006:
+    title: "Poroelastic Biot coupling"
+    description: |
+      Implement Biot's effective stress principle:
+        sigma'_ij = sigma_ij + alpha * p * delta_ij
+
+      where sigma' is effective stress, sigma is total stress, alpha is
+      Biot coefficient, and p is pore pressure.
+
+      The one-way coupling means p is given (from OPM Flow), so the
+      variational form becomes:
+        a(u,v) = integral(sigma'(u) : epsilon(v)) dx
+        L(v) = integral(f . v) dx + integral(t . v) ds - integral(alpha * p * div(v)) dx
+
+      The pressure term acts as a body force in the momentum equation.
+    priority: critical
+    depends_on: ['F003']
+    acceptance_criteria:
+      - "Biot effective stress correctly modifies the variational form"
+      - "alpha=1.0 recovers Terzaghi effective stress"
+      - "alpha=0.0 recovers dry elastic problem (no pressure effect)"
+      - "Spatially varying alpha supported via DG-0 function"
+      - "Pressure field can be passed as a DOLFINx Function on the geomech mesh"
+      - "Compaction increases with pressure depletion (delta_p < 0)"
+
+  F007:
+    title: "OPM Flow pressure field ingestion"
+    description: |
+      Read pressure fields from OPM Flow simulation output files.
+
+      OPM Flow writes results in Eclipse-format binary files:
+      - .EGRID: corner-point grid geometry
+      - .INIT: static properties (PORO, PERMX, etc.)
+      - .UNRST: dynamic restart data (PRESSURE, SWAT per time step)
+
+      Use the opm-common Python bindings (or ecl/resdata library) to read
+      these files. Extract pressure at each reservoir cell center for a
+      given report step. Interpolate the pressure from the reservoir grid
+      (corner-point) onto the geomechanics mesh (FEniCSx) using
+      nearest-neighbor or barycentric interpolation.
+    priority: critical
+    depends_on: ['F002']
+    acceptance_criteria:
+      - "read_pressure(unrst_path, egrid_path, report_step) returns cell-center pressures and coordinates"
+      - "Handles both unified (.UNRST) and separate (.Xnnnn) restart files"
+      - "interpolate_to_fenics(pressures, coords, fenics_mesh) returns a DOLFINx Function"
+      - "Interpolation preserves pressure magnitude (max error < 1% for smooth fields)"
+      - "Graceful error for missing report steps or incompatible grids"
+      - "Works with SPE1 and SPE9 benchmark datasets"
+
+  F008:
+    title: "Boundary conditions and initial stress"
+    description: |
+      Implement common geomechanical boundary conditions:
+      - Roller (zero normal displacement) on lateral and bottom faces
+      - Overburden traction on top face: t_n = rho_overburden * g * depth
+      - Gravity body force: f = rho * g (density may vary per layer)
+      - Initial stress state via K0 method: sigma_h = K0 * sigma_v
+      - Prescribed displacement (Dirichlet) for calibration
+
+      The initial stress must be in equilibrium with gravity and BCs
+      before applying pressure changes. The geomechanical problem solves
+      for the CHANGE in displacement due to pressure depletion, relative
+      to the initial equilibrium state.
+    priority: critical
+    depends_on: ['F002', 'F003', 'F006']
+    acceptance_criteria:
+      - "Roller BC produces zero normal displacement on constrained faces"
+      - "Overburden load produces correct vertical stress gradient"
+      - "K0 initial stress is in static equilibrium (zero displacement for initial state)"
+      - "Gravity loading produces hydrostatic stress in a uniform column"
+      - "Incremental formulation: u=0 when delta_p=0"
+
+  F009:
+    title: "FEniCSx solver core and output"
+    description: |
+      Assemble and solve the linear system using PETSc via DOLFINx.
+
+      - Assemble bilinear form (stiffness matrix) and linear form (load vector)
+      - Apply boundary conditions
+      - Solve with PETSc KSP (default: CG + algebraic multigrid preconditioner)
+      - Extract displacement field
+      - Compute derived quantities: stress tensor, strain tensor,
+        volumetric strain, von Mises stress, mean stress
+      - Write results to XDMF/VTK for ParaView visualization
+      - Support for multiple load steps (time stepping through pressure history)
+    priority: critical
+    depends_on: ['F003', 'F006', 'F008']
+    acceptance_criteria:
+      - "Linear solve converges for well-posed problems"
+      - "Displacement field is continuous (H1 conforming)"
+      - "Stress recovery via projection to appropriate function space"
+      - "XDMF output readable by ParaView"
+      - "Multiple time steps written as time series"
+      - "Solver reports iteration count and residual norm"
+
+  # ================================================================
+  # FAULT MECHANICS
+  # ================================================================
+
+  F010:
+    title: "Fault representation as mesh interfaces"
+    description: |
+      Represent faults as internal boundaries (lower-dimensional interfaces)
+      in the finite element mesh.
+
+      Use Gmsh to embed fault surfaces as 2D surfaces in 3D (or 1D lines
+      in 2D) that split the mesh into distinct subdomains. Tag fault facets
+      with unique identifiers for property assignment.
+
+      The fault geometry is defined by a set of points/segments (2D) or
+      a triangulated surface (3D). Support for:
+      - Planar faults (defined by strike, dip, and a point)
+      - Listric faults (curved, defined by point sets)
+      - Fault zones with finite thickness (optional)
+    priority: high
+    depends_on: ['F002']
+    acceptance_criteria:
+      - "Planar fault from (strike, dip, point) produces correctly oriented mesh interface"
+      - "Fault facets are tagged and retrievable from MeshTags"
+      - "Mesh is conforming to fault surface (no elements cross the fault)"
+      - "Duplicate nodes exist on fault surface (displacement discontinuity possible)"
+      - "2D and 3D cases both supported"
+
+  F011:
+    title: "Fault contact mechanics and Mohr-Coulomb slip"
+    description: |
+      Implement contact mechanics on fault interfaces using a penalty or
+      Lagrange multiplier method.
+
+      Fault behavior:
+      - Normal: no interpenetration (contact constraint), can open
+      - Tangential: Mohr-Coulomb friction: |tau| <= c + mu_f * sigma_n
+        where tau is shear traction, c is cohesion, mu_f is friction
+        coefficient, sigma_n is effective normal stress on fault
+
+      When the shear stress exceeds the frictional strength, the fault
+      slips. Compute:
+      - Slip vector (magnitude and direction)
+      - Stress drop on the fault
+      - Coulomb Failure Stress change: delta_CFS = delta_tau - mu_f * delta_sigma_n
+    priority: high
+    depends_on: ['F010', 'F006']
+    acceptance_criteria:
+      - "Locked fault (high friction) transmits stress without slip"
+      - "Fault slips when shear exceeds Mohr-Coulomb criterion"
+      - "Slip magnitude matches analytical solution for simple geometries"
+      - "Normal contact prevents interpenetration"
+      - "Fault opening (tensile) handled correctly"
+      - "CFS change computed on all fault facets"
+
+  F012:
+    title: "Intersecting fault networks"
+    description: |
+      Handle meshes with multiple intersecting faults.
+
+      Challenges:
+      - Mesh generation at fault intersections (triple/quadruple junctions)
+      - Consistent contact mechanics at intersection lines
+      - Slip on one fault affects stress on adjacent faults
+
+      Use Gmsh boolean fragment operations to create conforming meshes
+      at fault intersections. Each fault segment between intersections
+      gets its own properties. The contact formulation must handle
+      the junction nodes where multiple faults meet.
+    priority: medium
+    depends_on: ['F010', 'F011']
+    acceptance_criteria:
+      - "Two intersecting planar faults produce a conforming mesh"
+      - "Three or more faults can intersect at a single line"
+      - "Each fault segment has independently assigned properties"
+      - "Slip on fault A correctly transfers stress to adjacent fault B"
+      - "Junction nodes have consistent displacement constraints"
+      - "Mesh quality at intersections is acceptable (no degenerate elements)"
+
+  F013:
+    title: "Fault reactivation risk analysis"
+    description: |
+      Compute geomechanical indicators for fault reactivation potential:
+
+      - Slip Tendency (Ts): ratio of shear stress to normal stress on fault
+        Ts = tau / sigma_n (ranges 0 to ~1, higher = closer to slip)
+      - Dilation Tendency (Td): tendency to open under current stress
+      - Coulomb Failure Stress (CFS): delta_tau - mu_f * delta_sigma_n
+        Positive CFS change = closer to failure
+      - Pore pressure threshold: the delta_p that would cause reactivation
+        on each fault segment
+      - Factor of Safety: (c + mu_f * sigma_n) / tau
+
+      Output as fields on fault surfaces for visualization.
+    priority: high
+    depends_on: ['F011']
+    acceptance_criteria:
+      - "Slip tendency = 0 on fault perpendicular to sigma_1"
+      - "Slip tendency increases toward critically stressed orientation"
+      - "CFS change is positive when pressure increases (injection scenario)"
+      - "CFS change is negative when pressure decreases (depletion)"
+      - "Pore pressure threshold matches hand calculation for simple cases"
+      - "Factor of Safety < 1 implies slip has occurred"
+
+  # ================================================================
+  # ADVANCED FEATURES
+  # ================================================================
+
+  F014:
+    title: "Viscoelastic creep model for salt formations"
+    description: |
+      Implement viscoelastic creep using a generalized Maxwell model
+      (or Burger's model) for salt and other creeping formations.
+
+      Burger's model: series combination of Maxwell (E_M, eta_M) and
+      Kelvin-Voigt (E_K, eta_K) elements.
+
+      Total strain: epsilon = epsilon_elastic + epsilon_maxwell_viscous + epsilon_kelvin
+
+      Time integration via backward Euler. At each time step:
+      1. Update internal viscous strain variables
+      2. Compute effective stress using viscoelastic constitutive law
+      3. Solve for displacement increment
+
+      This requires a time-stepping loop even for static pressure loading,
+      as the creep response evolves over time.
+    priority: medium
+    depends_on: ['F003', 'F009']
+    acceptance_criteria:
+      - "Maxwell element: constant load produces linearly increasing strain"
+      - "Kelvin-Voigt element: constant load produces exponentially decaying creep"
+      - "Burger's model: combined response matches analytical creep curve"
+      - "Instantaneous elastic response at t=0 is correct"
+      - "Long-term creep rate matches eta_M for Burger's model"
+      - "Stress relaxation test: prescribed strain produces decaying stress"
+      - "Time step convergence: halving dt changes result by < 1%"
+
+  F015:
+    title: "Thermoporoelastic coupling"
+    description: |
+      Extend the poroelastic formulation to include thermal stress:
+        sigma'_ij = C_ijkl * epsilon_kl - alpha * p * delta_ij - beta_T * delta_T * delta_ij
+
+      where beta_T = E * alpha_T / (1 - 2*nu), alpha_T is the linear
+      thermal expansion coefficient, and delta_T is temperature change.
+
+      Like pressure, temperature is provided as input (one-way coupling).
+      The thermal term acts as an additional body force:
+        L_thermal(v) = -integral(beta_T * delta_T * div(v)) dx
+
+      Temperature field can come from a file or be computed analytically
+      (e.g., radial thermal front from injection).
+    priority: medium
+    depends_on: ['F006', 'F009']
+    acceptance_criteria:
+      - "Uniform heating of constrained block produces correct thermal stress"
+      - "Free thermal expansion: delta_L/L = alpha_T * delta_T"
+      - "Combined pressure and temperature effects are additive"
+      - "Spatially varying temperature field handled correctly"
+      - "Thermal stress magnitude matches hand calculation for simple geometry"
+      - "alpha_T = 0 recovers isothermal poroelastic solution"
+
+  F016:
+    title: "Reservoir compaction and surface subsidence"
+    description: |
+      Compute reservoir compaction and surface subsidence from the
+      displacement solution:
+
+      - Compaction: vertical displacement difference across reservoir interval
+        c = u_z(top_reservoir) - u_z(bottom_reservoir)
+      - Compaction coefficient: c_m = c / (delta_p * h) where h is thickness
+      - Surface subsidence bowl: u_z evaluated at the surface (z=0)
+      - Subsidence volume: integral of u_z over the surface
+
+      Also compute compaction-induced porosity and permeability changes
+      for output (useful even in one-way coupling for diagnostics):
+        delta_phi = (1-phi) * epsilon_vol
+        k/k0 = (phi/phi0)^n (power law, configurable exponent n)
+    priority: high
+    depends_on: ['F009']
+    acceptance_criteria:
+      - "Compaction is positive for pressure depletion in a normal reservoir"
+      - "Subsidence bowl is centered above the depleted zone"
+      - "Subsidence magnitude < compaction (geometric spreading)"
+      - "Geertsma analytical subsidence solution matched within 5% for simple geometry"
+      - "Compaction coefficient in range 1e-5 to 1e-3 1/MPa for typical rocks"
+      - "Porosity change is consistent with volumetric strain"
+
+  F017:
+    title: "Wellbore stability indicators"
+    description: |
+      Compute near-wellbore stress state and stability indicators.
+
+      Given a wellbore trajectory (position + orientation), compute:
+      - Stress transformation to wellbore local coordinates
+      - Hoop stress (sigma_theta) around wellbore wall using Kirsch equations
+        modified for pore pressure and thermal effects
+      - Safe mud weight window: collapse pressure < Pw < fracture pressure
+      - Breakout angle prediction (Mohr-Coulomb on wellbore wall)
+      - Tensile fracture initiation pressure
+
+      The far-field stress comes from the FEniCSx solution; the near-wellbore
+      analytical solution provides the stress concentration.
+    priority: medium
+    depends_on: ['F009']
+    acceptance_criteria:
+      - "Hoop stress at theta=90 matches Kirsch solution for vertical well in isotropic stress"
+      - "Mud weight window narrows with increasing stress anisotropy"
+      - "Breakout angle increases with stress anisotropy"
+      - "Fracture pressure = sigma_min for impermeable wellbore wall"
+      - "Inclined well rotates stress tensor correctly to wellbore frame"
+
+  F018:
+    title: "Cap rock integrity assessment"
+    description: |
+      Evaluate the mechanical integrity of the cap rock seal:
+
+      - Minimum total stress vs pore pressure: if p > sigma_3, hydraulic
+        fracturing can occur (tensile failure of cap rock)
+      - Shear failure: Mohr-Coulomb criterion applied to cap rock stress state
+      - Fault seal analysis: effective normal stress on cap rock faults
+      - Integrity factor: IF = (sigma_3 - p) / sigma_3 (>0 is intact)
+
+      Report integrity metrics at all cap rock elements and identify
+      critical locations where failure is most likely.
+    priority: medium
+    depends_on: ['F009', 'F013']
+    acceptance_criteria:
+      - "Integrity factor = 1.0 when p = 0"
+      - "Integrity factor decreases with increasing pore pressure"
+      - "Integrity factor < 0 flags tensile failure risk"
+      - "Critical location identified as point with minimum integrity factor"
+      - "Shear failure check consistent with Mohr-Coulomb criterion"
+
+  F019:
+    title: "Stress path analysis and visualization"
+    description: |
+      Track and plot stress evolution at monitoring points:
+
+      - p'-q stress paths (mean effective stress vs deviatoric stress)
+      - Mohr circles at selected locations and time steps
+      - Yield surface overlay on p'-q diagrams
+      - Stress path parameter K = delta_q / delta_p' (should be constant
+        for linear elasticity, characterizes reservoir stress path)
+      - Total stress path and effective stress path comparison
+
+      Support for monitoring points at arbitrary locations (interpolate
+      from nearest integration points).
+    priority: medium
+    depends_on: ['F009']
+    acceptance_criteria:
+      - "Stress path is linear for linear elastic material"
+      - "Stress path parameter K matches analytical value for uniaxial strain"
+      - "Mohr circle radius = (sigma_1 - sigma_3) / 2"
+      - "p' = (sigma'_1 + sigma'_2 + sigma'_3) / 3 computed correctly"
+      - "q = sqrt(3/2 * s_ij * s_ij) where s is deviatoric stress"
+      - "Monitoring point interpolation accurate within 2% of nodal values"
+
+  # ================================================================
+  # VERIFICATION AND VALIDATION
+  # ================================================================
+
+  F020:
+    title: "V&V: Terzaghi 1D consolidation"
+    description: |
+      Verify against Terzaghi's 1D consolidation analytical solution.
+
+      Setup: a saturated soil column of height H, drained at top,
+      undrained at bottom. Instantaneous load applied at top.
+
+      Analytical solution (series):
+        u(z,t) = sum_{n=0}^{inf} (2*q*H / M^2*E) * (1 - exp(-M^2*c_v*t/H^2)) * sin(M*z/H)
+      where M = pi*(2n+1)/2, c_v = k*E/(gamma_w)
+
+      For the one-way coupled geomech case, simulate by applying
+      the analytical pore pressure field at each time step and solving
+      for displacement.
+
+      Compare: displacement at top vs time, stress distribution vs depth.
+    priority: critical
+    depends_on: ['F006', 'F009']
+    acceptance_criteria:
+      - "Displacement at top converges to analytical steady-state value within 1%"
+      - "Transient displacement matches analytical solution within 2% at t = 0.1*t_c, 0.5*t_c, t_c"
+      - "Mesh convergence: error decreases with refinement"
+      - "L2 error norm < 1e-3 for fine mesh"
+
+  F021:
+    title: "V&V: Mandel's problem"
+    description: |
+      Verify against Mandel's 2D poroelastic benchmark.
+
+      Setup: a rectangular sample compressed between rigid, frictionless,
+      impermeable plates. Drainage only at the lateral boundaries.
+
+      The key phenomenon is the Mandel-Cryer effect: pore pressure at the
+      center initially INCREASES above the applied load before dissipating.
+      This non-monotonic response tests the coupling correctly.
+
+      Analytical solution involves a transcendental equation for eigenvalues
+      and infinite series.
+
+      Apply the analytical pressure field at each time step (one-way) and
+      verify the displacement and stress fields.
+    priority: critical
+    depends_on: ['F006', 'F009']
+    acceptance_criteria:
+      - "Mandel-Cryer effect visible: center pressure rises before falling"
+      - "Vertical displacement matches analytical solution within 2%"
+      - "Horizontal displacement matches analytical solution within 2%"
+      - "Steady-state stress distribution is uniform"
+      - "Early-time and late-time asymptotic behaviors are correct"
+      - "Solution matches at t/t_c = 0.01, 0.1, 0.5, 1.0, 10.0"
+
+  F022:
+    title: "V&V: Kirsch solution for stress around circular opening"
+    description: |
+      Verify stress concentration around a circular hole in a plate
+      under biaxial far-field stress (sigma_H, sigma_h).
+
+      Kirsch analytical solution:
+        sigma_r = (S/2)*(1 - a^2/r^2) + (D/2)*(1 - 4*a^2/r^2 + 3*a^4/r^4)*cos(2*theta)
+        sigma_theta = (S/2)*(1 + a^2/r^2) - (D/2)*(1 + 3*a^4/r^4)*cos(2*theta)
+        tau_r_theta = -(D/2)*(1 + 2*a^2/r^2 - 3*a^4/r^4)*sin(2*theta)
+      where S = sigma_H + sigma_h, D = sigma_H - sigma_h, a = hole radius.
+
+      Use a large domain (R_outer >> a) with far-field traction BCs.
+    priority: critical
+    depends_on: ['F003', 'F009']
+    acceptance_criteria:
+      - "Hoop stress at wall (r=a, theta=90): sigma_theta = 3*sigma_H - sigma_h (within 2%)"
+      - "Hoop stress at wall (r=a, theta=0): sigma_theta = 3*sigma_h - sigma_H (within 2%)"
+      - "Stress decays to far-field values at r > 5a"
+      - "L2 error norm over domain < 1% for fine mesh"
+      - "Stress concentration factor = 3 for hydrostatic far-field (sigma_H = sigma_h)"
+
+  F023:
+    title: "V&V: Fault slip analytical benchmark"
+    description: |
+      Verify fault slip computation against the analytical solution for
+      slip on a planar fault in a uniform stress field.
+
+      For a fault of length 2L in a uniform shear stress field:
+      - Slip distribution: delta(x) = (2*tau_excess / mu) * sqrt(L^2 - x^2)
+        where tau_excess = tau_applied - tau_friction, mu = shear modulus
+      - Maximum slip at center: delta_max = 2*tau_excess*L / mu
+      - Stress intensity at fault tips
+
+      Also verify: fault with friction higher than applied shear → zero slip.
+    priority: high
+    depends_on: ['F011']
+    acceptance_criteria:
+      - "Zero slip when applied shear < frictional strength"
+      - "Slip distribution matches elliptical analytical profile within 5%"
+      - "Maximum slip at fault center within 3% of analytical value"
+      - "Slip magnitude increases linearly with fault length"
+      - "Slip magnitude decreases with increasing friction coefficient"
+      - "Stress drop on fault matches tau_applied - tau_dynamic_friction"
+
+  F024:
+    title: "V&V: Method of Manufactured Solutions (MMS)"
+    description: |
+      Verify convergence rates using the Method of Manufactured Solutions.
+
+      Procedure:
+      1. Choose a smooth displacement field: u_mfg(x,y,z) (e.g., polynomial or trig)
+      2. Compute the strain: epsilon = sym(grad(u_mfg))
+      3. Compute the stress: sigma = C : epsilon
+      4. Compute the required body force: f = -div(sigma)
+      5. Solve with f as the body force and u_mfg as Dirichlet BC
+      6. Compare numerical u with u_mfg
+
+      Repeat for 4+ mesh refinement levels and verify:
+      - Linear elements (P1): O(h^2) convergence in L2 norm
+      - Quadratic elements (P2): O(h^3) convergence in L2 norm
+
+      Test for: isotropic, VTI, and poroelastic cases.
+    priority: critical
+    depends_on: ['F003', 'F004', 'F006', 'F009']
+    acceptance_criteria:
+      - "Isotropic P1: L2 convergence rate between 1.8 and 2.2"
+      - "Isotropic P2: L2 convergence rate between 2.8 and 3.2"
+      - "VTI P1: L2 convergence rate between 1.8 and 2.2"
+      - "Poroelastic P1: L2 convergence rate between 1.8 and 2.2"
+      - "Error decreases monotonically with refinement"
+      - "At least 4 refinement levels used for rate estimation"
+
+  F025:
+    title: "V&V: Geertsma subsidence analytical solution"
+    description: |
+      Verify surface subsidence against Geertsma's (1973) analytical
+      nucleus-of-strain solution.
+
+      For a disk-shaped reservoir of radius R at depth D with uniform
+      compaction c_m * delta_p * h:
+        u_z(r, z=0) = (c_m * delta_p * h) / (4*pi) * integral kernel
+
+      The kernel involves complete elliptic integrals. Geertsma tabulated
+      dimensionless subsidence as function of r/R and D/R.
+
+      Compare FEniCSx subsidence bowl with Geertsma's solution for
+      D/R = 0.5, 1.0, 2.0.
+    priority: high
+    depends_on: ['F016']
+    acceptance_criteria:
+      - "Maximum subsidence (at r=0) within 5% of Geertsma for D/R=1"
+      - "Subsidence bowl shape (normalized) matches Geertsma within 5%"
+      - "Subsidence decreases with increasing D/R (deeper reservoir = less subsidence)"
+      - "Subsidence at r=2R is < 20% of maximum"
+      - "Comparison for at least 3 D/R ratios"
+
+  F026:
+    title: "V&V: Viscoelastic creep verification"
+    description: |
+      Verify the viscoelastic model against analytical creep solutions.
+
+      Test cases:
+      1. Maxwell element under constant stress: strain = sigma/E + sigma*t/eta
+      2. Kelvin-Voigt under constant stress: strain = (sigma/E)*(1 - exp(-E*t/eta))
+      3. Burger's model: combination of above
+      4. Stress relaxation (constant strain): sigma(t) = sigma_0 * exp(-E*t/eta)
+
+      Run each test as a single-element problem and compare time series
+      of strain (or stress) against analytical curves.
+    priority: high
+    depends_on: ['F014']
+    acceptance_criteria:
+      - "Maxwell creep rate matches sigma/eta within 1%"
+      - "Kelvin-Voigt steady-state strain matches sigma/E within 1%"
+      - "Burger's model creep curve matches analytical within 2%"
+      - "Stress relaxation time constant matches E/eta within 1%"
+      - "Time step refinement produces convergent results"
+      - "10+ time steps for each test case"
+
+  F027:
+    title: "V&V: Thermal expansion verification"
+    description: |
+      Verify thermoporoelastic coupling against analytical solutions.
+
+      Test cases:
+      1. Free thermal expansion: unconstrained block heated uniformly
+         → displacement = alpha_T * delta_T * L, zero stress
+      2. Constrained thermal expansion: fully fixed block heated
+         → zero displacement, stress = -E * alpha_T * delta_T / (1-2*nu)
+      3. Combined: pressure depletion + heating in constrained reservoir
+         → superposition of poro and thermal effects
+      4. Thermal stress around a cooled wellbore (analytical: thermal
+         hoop stress = E * alpha_T * delta_T / (1-nu) at wall)
+    priority: high
+    depends_on: ['F015']
+    acceptance_criteria:
+      - "Free expansion: displacement matches alpha_T * delta_T * L within 0.1%"
+      - "Free expansion: stress is zero (< 1e-10 * E)"
+      - "Constrained: displacement is zero (< 1e-12 * L)"
+      - "Constrained: stress matches analytical within 0.1%"
+      - "Combined effects are superposable (within 1%)"
+      - "Wellbore thermal stress matches analytical within 3%"
+
+  F028:
+    title: "V&V: Cross-validation with published benchmark"
+    description: |
+      Implement a published geomechanics benchmark problem and compare
+      results with reference solutions from the literature.
+
+      Recommended benchmark: the Settari & Walters (1999) iterative
+      coupling benchmark, adapted for one-way coupling:
+      - Simple reservoir geometry (rectangular, single layer)
+      - Known pressure depletion profile
+      - Published displacement and stress results
+
+      Alternatively, use the SAGD geomechanics benchmark from
+      Dusseault et al. or the Weyburn CO2 storage geomechanics study
+      (published results available for comparison).
+    priority: medium
+    depends_on: ['F006', 'F009', 'F016']
+    acceptance_criteria:
+      - "Geometry and boundary conditions match published benchmark exactly"
+      - "Material properties match published values"
+      - "Pressure loading matches published scenario"
+      - "Displacement results within 10% of published reference"
+      - "Stress results within 10% of published reference"
+      - "Discrepancies explained (mesh, element type, solver differences)"

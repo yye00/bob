@@ -1,0 +1,9 @@
+{
+  "version": 13,
+  "count": 0,
+  "max_per_version": 5,
+  "feature_ids": [],
+  "policy": "auto-land all synthesized features, no signoff, focus on note-worthy capabilities (GPU optimization, SWE engineering, novel agent abilities) not low-model compensation",
+  "next_feature_id_seed": "F-R7-483",
+  "version_cap_reached": false
+}

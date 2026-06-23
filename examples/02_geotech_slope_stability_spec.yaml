@@ -1,0 +1,912 @@
+name: geoslope
+version: "0.1.0"
+description: |
+  GeoSlope — 2D geotechnical slope stability analysis application.
+
+  A desktop application for 2D limit equilibrium slope stability analysis
+  with an interactive CAD-like GUI built on PyQt6. Comparable to Rocscience
+  Slide2 in capability.
+
+  Core capabilities:
+  - Interactive 2D geometry definition (slopes, layers, water tables)
+  - Multiple limit equilibrium methods (Bishop, Janbu, Spencer, Morgenstern-Price, GLE)
+  - Circular and non-circular slip surface search
+  - Multiple material models (Mohr-Coulomb, Hoek-Brown, undrained)
+  - Support elements (anchors, soil nails, geotextiles)
+  - Seismic pseudo-static analysis
+  - Probabilistic analysis (Monte Carlo)
+  - Publication-quality result visualization
+  - Project file save/load
+
+workspace: /tmp/geoslope
+
+dependencies:
+  python: ">=3.11"
+  packages:
+    - PyQt6
+    - numpy
+    - scipy
+    - matplotlib
+    - shapely
+    - triangle
+    - h5py
+    - pydantic
+
+features:
+
+  # ================================================================
+  # APPLICATION SKELETON
+  # ================================================================
+
+  F001:
+    title: "Project structure and package skeleton"
+    description: |
+      Create the geoslope Python package with proper directory layout.
+      Separate concerns: gui/, engine/, models/, io/.
+    priority: critical
+    depends_on: []
+    acceptance_criteria:
+      - "src/geoslope/ directory exists with __init__.py"
+      - "Subdirectories: gui/, engine/, models/, io/"
+      - "pyproject.toml declares all dependencies"
+      - "Package is pip-installable in editable mode"
+      - "Entry point: geoslope command launches the application"
+      - "pytest discovers tests/ directory"
+
+  F002:
+    title: "Data model layer"
+    description: |
+      Pydantic models representing the complete geotechnical model:
+
+      - Project: top-level container with metadata, units, settings
+      - Geometry: collection of boundaries (external, material, water table)
+      - Boundary: ordered list of 2D points forming a polyline
+      - MaterialZone: closed region with assigned material properties
+      - Material: property set (Mohr-Coulomb, Hoek-Brown, undrained, etc.)
+      - WaterCondition: water table polyline, piezometric surface, or ru coefficient
+      - Support: anchor, soil nail, or geotextile with geometry and properties
+      - SlipSurface: circular (center + radius) or non-circular (point sequence)
+      - AnalysisSettings: method, search parameters, convergence tolerances
+      - AnalysisResult: factor of safety, force distributions, critical surface
+
+      All models must be serializable to/from JSON for project save/load.
+    priority: critical
+    depends_on: ['F001']
+    acceptance_criteria:
+      - "All model classes defined with proper type hints and validation"
+      - "Serialization round-trip: model → JSON → model preserves all data"
+      - "Material model types are extensible via enum/discriminated union"
+      - "Geometry validation: boundaries are valid polylines (no self-intersection)"
+      - "Default values provided for common cases"
+
+  F003:
+    title: "Project file I/O"
+    description: |
+      Save and load complete project state to/from a single file.
+
+      Format: JSON (human-readable, diffable, version-controllable).
+      Include file format version for future compatibility.
+
+      Also support import of simple geometries from DXF files
+      (external boundary and material boundaries as polylines).
+    priority: high
+    depends_on: ['F002']
+    acceptance_criteria:
+      - "save_project(project, path) writes valid JSON"
+      - "load_project(path) reconstructs identical project"
+      - "File format version is stored and checked on load"
+      - "Graceful error for corrupted or incompatible files"
+      - "DXF import reads polylines and maps to boundaries"
+
+  # ================================================================
+  # GUI — MAIN WINDOW AND CANVAS
+  # ================================================================
+
+  F004:
+    title: "Main application window and menu structure"
+    description: |
+      PyQt6 main window with:
+      - Menu bar: File (New/Open/Save/SaveAs/Export/Exit),
+        Edit (Undo/Redo/Delete), View (Zoom/Pan/Grid),
+        Geometry, Materials, Support, Analysis, Help
+      - Toolbar with common actions (selection, draw, pan, zoom)
+      - Central canvas widget (the 2D drawing area)
+      - Side panel: property inspector for selected objects
+      - Bottom panel: status bar with coordinates, current tool, messages
+      - Dockable panels that can be rearranged
+
+      Follow standard CAD application conventions for keyboard shortcuts:
+      Ctrl+Z undo, Ctrl+Y redo, Delete removes selection, Escape cancels
+      current operation, scroll wheel zooms, middle-mouse pans.
+    priority: critical
+    depends_on: ['F001']
+    acceptance_criteria:
+      - "Application launches and shows main window"
+      - "All menus present with correct structure"
+      - "Toolbar icons for core tools"
+      - "Status bar shows mouse coordinates in model space"
+      - "Window title shows project name and modified indicator"
+      - "Keyboard shortcuts work (Ctrl+Z, Ctrl+S, Delete, Escape)"
+
+  F005:
+    title: "2D CAD canvas with pan, zoom, and grid"
+    description: |
+      Custom QWidget for 2D drawing with world-coordinate system.
+
+      Features:
+      - World coordinates: engineering units (meters), y-axis up
+      - Viewport transformation: world ↔ screen coordinates
+      - Pan: middle-mouse drag or hold Space + left-drag
+      - Zoom: scroll wheel, centered on cursor position
+      - Zoom to fit: double-click middle mouse or View > Fit All
+      - Grid: configurable spacing, auto-adjusts with zoom level
+      - Axis display with tick marks and labels
+      - Snap to grid (toggleable)
+      - Snap to point (when cursor near existing vertex)
+      - Crosshair cursor showing current coordinates
+      - Anti-aliased rendering via QPainter
+
+      Performance: smooth pan/zoom for models with up to 10,000 line
+      segments (typical complex slope model).
+    priority: critical
+    depends_on: ['F004']
+    acceptance_criteria:
+      - "Pan and zoom are smooth and responsive"
+      - "Grid spacing auto-adjusts (e.g., 1m, 5m, 10m, 50m based on zoom)"
+      - "Snap to grid works within configurable pixel tolerance"
+      - "Snap to existing points works"
+      - "Zoom centers on cursor position"
+      - "Fit All shows entire model with margin"
+      - "Coordinates in status bar update in real time"
+      - "Rendering is anti-aliased"
+
+  F006:
+    title: "Geometry drawing tools"
+    description: |
+      Interactive tools for defining slope geometry by drawing polylines:
+
+      - External boundary tool: click points to define the slope profile
+        (ground surface, excavation face, toe, base, far-field boundaries).
+        Close by double-click or right-click. This defines the analysis domain.
+      - Material boundary tool: draw internal boundaries that subdivide
+        the domain into material zones (soil layers, rock interfaces).
+        Material boundaries must connect to external boundary or other
+        material boundaries at endpoints.
+      - Point tool: place individual points (for loads, monitoring, anchors)
+      - Edit tool: select and drag vertices, insert/delete vertices on
+        existing boundaries, split/join boundaries
+
+      Visual feedback during drawing: rubber-band line from last point to
+      cursor, preview of snap, highlight of nearby vertices.
+
+      Undo/redo for all geometry operations.
+    priority: critical
+    depends_on: ['F005']
+    acceptance_criteria:
+      - "External boundary can be drawn by clicking points"
+      - "Double-click or right-click closes the boundary"
+      - "Material boundaries subdivide the domain into zones"
+      - "Rubber-band line shown during drawing"
+      - "Snap indicators visible when near grid or existing points"
+      - "Vertices can be selected and dragged"
+      - "Vertices can be inserted on existing boundary segments"
+      - "Undo reverses the last operation"
+      - "Redo re-applies an undone operation"
+
+  F007:
+    title: "Material zone assignment and display"
+    description: |
+      After geometry is defined, identify closed regions (material zones)
+      and allow the user to assign materials to each zone.
+
+      Zone detection: use the external boundary and material boundaries
+      to identify enclosed polygonal regions using computational geometry
+      (Shapely polygon operations).
+
+      Each zone is displayed with:
+      - Distinct fill color (from a geotechnical color palette)
+      - Hatch pattern (optional, for print-friendly output)
+      - Material name label
+
+      Material assignment: click a zone to select it, then choose a
+      material from the materials library. Or drag-and-drop from a
+      materials panel.
+
+      Update zone display when boundaries are modified.
+    priority: high
+    depends_on: ['F006']
+    acceptance_criteria:
+      - "Closed regions are automatically detected from boundaries"
+      - "Each zone has a distinct fill color"
+      - "Clicking a zone selects it and shows properties in inspector"
+      - "Material can be assigned to selected zone"
+      - "Zone geometry updates when boundaries are edited"
+      - "Zone labels visible at zone centroids"
+
+  F008:
+    title: "Water table and pore pressure definition"
+    description: |
+      Define groundwater conditions for the analysis:
+
+      - Water table polyline: draw a piecewise-linear water table.
+        Pore pressure below the table is hydrostatic (u = gamma_w * hw).
+      - Piezometric surface: separate surface per material zone
+        (for perched water tables or artesian conditions).
+      - Pore pressure ratio (ru): constant ratio u = ru * gamma * z
+        for quick undrained analysis.
+      - Pore pressure grid: import from seepage analysis (future).
+
+      Display: water table shown as blue dashed line, saturated zone
+      shown with blue tint overlay. Pore pressure contours shown on demand.
+    priority: high
+    depends_on: ['F006']
+    acceptance_criteria:
+      - "Water table can be drawn as a polyline"
+      - "Pore pressure computed as gamma_w * depth_below_table"
+      - "Piezometric surface assignable per material zone"
+      - "ru coefficient assignable per material zone"
+      - "Water table displayed as blue dashed line"
+      - "Saturated zone has visual indicator"
+      - "Pore pressure at any point queryable"
+
+  # ================================================================
+  # MATERIAL MODELS
+  # ================================================================
+
+  F009:
+    title: "Mohr-Coulomb material model"
+    description: |
+      Implement the Mohr-Coulomb failure criterion:
+        tau_f = c' + sigma_n' * tan(phi')
+
+      Parameters:
+      - c' : effective cohesion (kPa)
+      - phi' : effective friction angle (degrees)
+      - gamma : unit weight (kN/m3)
+      - gamma_sat : saturated unit weight (kN/m3)
+
+      The shear strength on any plane is:
+        s = c' + (sigma_n - u) * tan(phi')
+      where u is pore pressure.
+
+      Support for:
+      - Drained analysis (effective stress parameters)
+      - Undrained analysis with phi=0 (s = c_u, undrained shear strength)
+      - Tension cutoff (optional): no tensile normal stress allowed
+    priority: critical
+    depends_on: ['F002']
+    acceptance_criteria:
+      - "Shear strength computed correctly for given normal stress and pore pressure"
+      - "phi=0 analysis gives constant strength = c_u"
+      - "Tension cutoff limits normal stress to zero when enabled"
+      - "Negative pore pressure (suction) increases strength"
+      - "Parameter validation: phi in [0, 60], c >= 0, gamma > 0"
+
+  F010:
+    title: "Generalized Hoek-Brown material model"
+    description: |
+      Implement the Generalized Hoek-Brown criterion for rock masses:
+        sigma_1' = sigma_3' + sigma_ci * (m_b * sigma_3'/sigma_ci + s)^a
+
+      Parameters:
+      - sigma_ci : uniaxial compressive strength of intact rock (MPa)
+      - GSI : Geological Strength Index (10-100)
+      - mi : intact rock material constant
+      - D : disturbance factor (0-1)
+
+      Derived parameters (Hoek et al. 2002):
+      - m_b = mi * exp((GSI-100)/(28-14D))
+      - s = exp((GSI-100)/(9-3D))
+      - a = 0.5 + (exp(-GSI/15) - exp(-20/3))/6
+
+      For limit equilibrium, convert to equivalent Mohr-Coulomb parameters
+      (c', phi') for a given normal stress range using the tangent or
+      secant method (Hoek et al. 2002 linearization).
+    priority: high
+    depends_on: ['F002']
+    acceptance_criteria:
+      - "Derived parameters match Hoek et al. 2002 equations"
+      - "sigma_ci=100, GSI=80, mi=25, D=0 gives correct m_b, s, a"
+      - "Intact rock: GSI=100, D=0 gives s=1, a=0.5 (original Hoek-Brown)"
+      - "Equivalent Mohr-Coulomb parameters match RocScience RocData within 5%"
+      - "Strength envelope is nonlinear (concave down)"
+      - "Parameter validation: GSI in [10,100], D in [0,1], mi > 0"
+
+  F011:
+    title: "Material properties library and editor"
+    description: |
+      GUI dialog for creating and managing materials:
+
+      - Materials list panel (left side of dialog)
+      - Property editor (right side): fields depend on material type
+      - Tabbed sections: Strength, Unit Weight, Advanced
+      - Built-in presets: "Soft Clay", "Stiff Clay", "Dense Sand",
+        "Loose Sand", "Weathered Rock", "Fresh Rock" with typical values
+      - Color picker for zone display color
+      - Import/export materials as JSON for reuse across projects
+
+      All edits are immediately reflected in the model and canvas.
+    priority: high
+    depends_on: ['F009', 'F010']
+    acceptance_criteria:
+      - "Dialog shows list of materials with add/remove/duplicate"
+      - "Property fields change based on material type selection"
+      - "Preset materials have reasonable default values"
+      - "Color picker assigns zone display color"
+      - "Changes reflected immediately in canvas"
+      - "Materials exportable to and importable from JSON"
+
+  # ================================================================
+  # LIMIT EQUILIBRIUM ENGINE
+  # ================================================================
+
+  F012:
+    title: "Slice discretization"
+    description: |
+      Given a slip surface and the slope geometry, decompose the sliding
+      mass into vertical slices.
+
+      For each slice compute:
+      - Width (b)
+      - Height at left and right boundaries
+      - Base inclination angle (alpha)
+      - Base midpoint coordinates
+      - Weight (W = gamma * area, accounting for water above/below table)
+      - Base normal stress from material properties
+      - Pore pressure at base midpoint (from water table)
+      - Material properties at base (from zone assignment)
+      - Any external loads or support forces acting on the slice
+
+      Handle:
+      - Slices crossing material boundaries (average or split)
+      - Slices partially above water table
+      - Tension cracks (optional: vertical crack at crest, filled with water)
+    priority: critical
+    depends_on: ['F002', 'F007', 'F008']
+    acceptance_criteria:
+      - "Slices cover entire sliding mass without gaps or overlaps"
+      - "Slice weight computed correctly (sum ≈ total weight of sliding mass)"
+      - "Base angle matches slip surface geometry"
+      - "Pore pressure correct for slices above and below water table"
+      - "Material boundaries handled (slice uses material at base midpoint)"
+      - "Tension crack reduces number of active slices"
+      - "Minimum 20 slices for reasonable accuracy"
+
+  F013:
+    title: "Bishop Simplified method"
+    description: |
+      Implement Bishop's Simplified method for circular slip surfaces.
+
+      Assumptions:
+      - Circular slip surface only
+      - Interslice shear forces are zero (X_i = 0)
+      - Satisfies moment equilibrium about circle center
+
+      Factor of safety equation (implicit, requires iteration):
+        F = (1/sum(W*sin(alpha))) * sum( (c'*b + (W - u*b)*tan(phi')) / m_alpha )
+      where m_alpha = cos(alpha) + sin(alpha)*tan(phi')/F
+
+      Iterate until F converges (initial guess F=1.0, tolerance 1e-4).
+      Typically converges in 5-15 iterations.
+
+      This is the most widely used method in practice and serves as the
+      baseline for validation against other methods.
+    priority: critical
+    depends_on: ['F012']
+    acceptance_criteria:
+      - "Converges within 50 iterations for all reasonable geometries"
+      - "FoS matches hand calculation for simple 3-slice example within 0.1%"
+      - "FoS for standard benchmark slopes matches published values within 1%"
+      - "FoS increases with increasing cohesion"
+      - "FoS increases with increasing friction angle"
+      - "FoS decreases with rising water table"
+      - "Handles phi=0 (undrained) analysis correctly"
+
+  F014:
+    title: "Janbu Simplified and Corrected methods"
+    description: |
+      Implement Janbu's methods for non-circular slip surfaces.
+
+      Janbu Simplified:
+      - Satisfies horizontal force equilibrium only
+      - No assumption about interslice forces
+      - FoS: F = (1/sum(W*tan(alpha))) * sum( (c'*b + (W - u*b)*tan(phi')) * sec^2(alpha) / (1 + tan(alpha)*tan(phi')/F) )
+      - Iterative solution like Bishop
+
+      Janbu Corrected:
+      - Applies a correction factor f0 to the Simplified result
+      - f0 depends on geometry (depth/length ratio) and soil strength
+      - F_corrected = f0 * F_simplified
+      - f0 ranges from 1.0 to 1.2 typically
+
+      Both methods applicable to any slip surface shape.
+    priority: high
+    depends_on: ['F012']
+    acceptance_criteria:
+      - "Janbu Simplified converges for circular and non-circular surfaces"
+      - "For circular surfaces, Janbu Simplified FoS < Bishop FoS (known property)"
+      - "Correction factor f0 in expected range [1.0, 1.2]"
+      - "Janbu Corrected FoS closer to Spencer FoS than Simplified"
+      - "Matches published benchmark values within 2%"
+
+  F015:
+    title: "Spencer method"
+    description: |
+      Implement Spencer's rigorous method.
+
+      Spencer's method:
+      - Satisfies both force and moment equilibrium
+      - Assumes interslice force inclination is constant (theta)
+      - Two equations: F_f(F, theta) = 0 (force), F_m(F, theta) = 0 (moment)
+      - Solve simultaneously for F and theta
+
+      Solution procedure:
+      1. For a range of theta values, compute F from force equilibrium (F_f)
+         and F from moment equilibrium (F_m)
+      2. Find theta where F_f = F_m (intersection of two curves)
+      3. This gives the unique (F, theta) satisfying both equilibria
+
+      Spencer's method is considered more rigorous than Bishop or Janbu
+      and works for any slip surface shape.
+    priority: high
+    depends_on: ['F012']
+    acceptance_criteria:
+      - "Both force and moment equilibrium satisfied simultaneously"
+      - "For circular surfaces, Spencer FoS ≈ Bishop FoS (within 2%)"
+      - "Interslice force angle theta is constant across all slices"
+      - "Solution found for non-circular slip surfaces"
+      - "Convergence achieved for typical slope geometries"
+      - "Matches published Spencer benchmark values within 1%"
+
+  F016:
+    title: "Morgenstern-Price / GLE method"
+    description: |
+      Implement the Morgenstern-Price (General Limit Equilibrium) method.
+
+      This is the most general method:
+      - Satisfies both force and moment equilibrium
+      - Interslice force function: X_i = E_i * lambda * f(x)
+        where f(x) is a user-selected function and lambda is solved for
+      - f(x) options: constant (=Spencer), half-sine, trapezoidal, clipped-sine
+      - Two unknowns: F and lambda, solved simultaneously
+
+      The GLE formulation encompasses Bishop, Janbu, and Spencer as
+      special cases depending on the choice of f(x) and which
+      equilibrium conditions are enforced.
+
+      Also compute and display:
+      - Interslice normal force (E) distribution
+      - Interslice shear force (X) distribution
+      - Line of thrust (point of action of E on each slice boundary)
+    priority: high
+    depends_on: ['F012']
+    acceptance_criteria:
+      - "With f(x)=constant, results match Spencer method within 0.1%"
+      - "Half-sine f(x) gives different FoS from constant (demonstrates effect)"
+      - "Line of thrust lies within slice boundaries (physical constraint)"
+      - "Interslice forces in equilibrium"
+      - "Both force and moment equilibrium satisfied"
+      - "Matches published GLE/M-P benchmark values within 1%"
+
+  # ================================================================
+  # SLIP SURFACE SEARCH
+  # ================================================================
+
+  F017:
+    title: "Circular slip surface grid search"
+    description: |
+      Search for the critical (minimum FoS) circular slip surface.
+
+      Method:
+      - Define a grid of trial circle centers above the slope
+      - For each center, try multiple radii (intersecting the slope)
+      - Compute FoS for each trial circle using the selected LE method
+      - Track minimum FoS and corresponding circle
+
+      Grid generation:
+      - Auto-generate: grid covers region above slope crest, extends
+        laterally beyond toe and crest
+      - User-defined: specify grid bounds and spacing
+      - Adaptive refinement: coarse grid first, then refine around minimum
+
+      Display: show grid of FoS values as colored contour plot,
+      critical circle highlighted.
+    priority: critical
+    depends_on: ['F013']
+    acceptance_criteria:
+      - "Grid covers reasonable search region automatically"
+      - "Critical circle found for standard slope geometries"
+      - "FoS contour plot displayed on canvas"
+      - "Critical circle highlighted in red"
+      - "Adaptive refinement reduces computation without missing minimum"
+      - "User can constrain search region"
+      - "Progress indicator during search"
+
+  F018:
+    title: "Non-circular slip surface search"
+    description: |
+      Search for critical non-circular slip surfaces using optimization.
+
+      Methods:
+      - Random generation: generate random polyline slip surfaces
+        that enter at/above crest and exit at/below toe, with
+        monotonically varying base angle (kinematically admissible)
+      - Optimization: use the random surfaces as starting points,
+        then optimize vertex positions to minimize FoS
+        (Nelder-Mead, particle swarm, or simulated annealing)
+      - Path search: dynamic programming on a grid of points
+        (Greco's method or similar)
+
+      Constraints:
+      - Surface must be kinematically admissible (no reverse curvature
+        that would prevent sliding)
+      - Surface must exit at ground surface
+      - Surface must not extend below model base
+
+      Non-circular search is essential for layered soils where weak
+      layers control the failure geometry.
+    priority: high
+    depends_on: ['F014', 'F015']
+    acceptance_criteria:
+      - "Generated surfaces are kinematically admissible"
+      - "Optimization reduces FoS from initial random surfaces"
+      - "For homogeneous slopes, non-circular ≈ circular FoS (within 5%)"
+      - "For weak layer, non-circular surface follows the weak layer"
+      - "Minimum 1000 trial surfaces for robust search"
+      - "Critical surface displayed on canvas"
+
+  # ================================================================
+  # SUPPORT ELEMENTS
+  # ================================================================
+
+  F019:
+    title: "Support elements: anchors, soil nails, geotextiles"
+    description: |
+      Implement support elements that add stabilizing forces to slices:
+
+      Rock bolts / anchors:
+      - Defined by: head position, orientation, bond length, capacity
+      - Force contribution: T * cos(alpha_bolt - alpha_base) added to
+        resisting force on intersected slice
+      - Can be pre-tensioned (active) or passive (mobilized by movement)
+
+      Soil nails:
+      - Similar to anchors but typically passive, grouted full-length
+      - Pullout resistance: pi * D * tau_bond * L_embedded
+      - Nail intersects multiple slices, contributes to each
+
+      Geotextiles / geogrids:
+      - Horizontal reinforcement layers
+      - Pullout and rupture capacity
+      - Contribution: T * cos(alpha_base) on intersected slice
+
+      GUI: draw support elements interactively on the canvas.
+      Show force diagrams on the analysis result.
+    priority: high
+    depends_on: ['F012']
+    acceptance_criteria:
+      - "Anchor drawn interactively with head position and angle"
+      - "Anchor force correctly added to intersected slice"
+      - "Soil nail pullout capacity computed correctly"
+      - "Geotextile contributes horizontal force at intersection"
+      - "FoS increases when supports are added"
+      - "Support forces shown on result display"
+      - "Multiple support elements can be combined"
+
+  F020:
+    title: "Seismic pseudo-static analysis"
+    description: |
+      Add earthquake loading as pseudo-static horizontal and vertical
+      forces on each slice:
+
+      - Horizontal seismic force: F_h = k_h * W (on each slice)
+      - Vertical seismic force: F_v = k_v * W (positive = upward)
+      - k_h : horizontal seismic coefficient (typically 0.05-0.30)
+      - k_v : vertical seismic coefficient (typically 0.5*k_h to k_h)
+
+      Modify slice equilibrium:
+      - Add k_h * W as horizontal disturbing force
+      - Modify weight: W_eff = W * (1 - k_v) for upward, (1 + k_v) for downward
+      - Critical direction: k_h acts in downslope direction
+
+      FoS under seismic loading should be less than static FoS.
+      Report FoS reduction ratio.
+    priority: medium
+    depends_on: ['F013']
+    acceptance_criteria:
+      - "FoS decreases with increasing k_h"
+      - "k_h = 0, k_v = 0 gives static FoS"
+      - "Seismic FoS matches hand calculation for simple case"
+      - "Both horizontal and vertical coefficients applied correctly"
+      - "Critical acceleration k_c (where FoS = 1.0) can be found"
+
+  # ================================================================
+  # PROBABILISTIC ANALYSIS
+  # ================================================================
+
+  F021:
+    title: "Monte Carlo probabilistic analysis"
+    description: |
+      Probabilistic slope stability via Monte Carlo simulation.
+
+      For each random variable (c', phi', gamma, water table height, etc.):
+      - Distribution type: normal, lognormal, uniform, triangular
+      - Mean, standard deviation, min/max bounds
+      - Correlation between variables (e.g., c'-phi' negative correlation)
+
+      Procedure:
+      1. Generate N random samples from joint distribution
+      2. For each sample, run deterministic analysis (critical surface search)
+      3. Collect FoS distribution
+
+      Output:
+      - Probability of failure: P_f = N(FoS<1) / N_total
+      - Reliability index: beta = (mean_FoS - 1) / std_FoS
+      - FoS histogram and CDF
+      - Sensitivity analysis: which variable contributes most to FoS variance
+      - Convergence plot: P_f vs number of samples
+
+      Must handle correlated sampling (Cholesky decomposition for
+      multivariate normal, or Nataf transformation for non-normal).
+    priority: medium
+    depends_on: ['F017']
+    acceptance_criteria:
+      - "FoS distribution is generated from N Monte Carlo samples"
+      - "P_f converges as N increases"
+      - "Correlation between c' and phi' correctly implemented"
+      - "Histogram and CDF displayed in results dialog"
+      - "Sensitivity analysis identifies dominant variable"
+      - "N=1000 samples runs in reasonable time (< 5 minutes)"
+      - "Reliability index matches analytical estimate for simple cases"
+
+  # ================================================================
+  # RESULT VISUALIZATION
+  # ================================================================
+
+  F022:
+    title: "Analysis result display on canvas"
+    description: |
+      Display analysis results overlaid on the geometry:
+
+      Critical slip surface:
+      - Shown as thick red line (circular arc or polyline)
+      - FoS label displayed at surface midpoint
+      - Slice boundaries shown as thin lines
+      - Force vectors on each slice (optional toggle):
+        weight, normal, shear, interslice forces
+
+      FoS contour plot (for circular search):
+      - Color-mapped grid of FoS values at circle centers
+      - Contour lines at FoS = 1.0, 1.5, 2.0 etc.
+      - Color scale legend
+
+      Multiple surfaces:
+      - Show top N critical surfaces (user-configurable, default 3)
+      - Each with different color and FoS label
+
+      Toggle between showing geometry-only and results overlay.
+    priority: high
+    depends_on: ['F017']
+    acceptance_criteria:
+      - "Critical surface displayed as red arc/polyline on canvas"
+      - "FoS label positioned at surface midpoint"
+      - "Slice boundaries visible when toggled on"
+      - "Force vectors shown at correct scale and direction"
+      - "FoS contour plot shown behind geometry"
+      - "Multiple critical surfaces shown with distinct colors"
+      - "Toggle between geometry and results view"
+
+  F023:
+    title: "Result tables and force diagrams"
+    description: |
+      Tabular and graphical output of detailed analysis results:
+
+      Tables (in a dockable results panel):
+      - Slice data table: slice#, width, weight, alpha, c', phi', u,
+        base normal, base shear, FoS_local
+      - Interslice forces: E_left, E_right, X_left, X_right
+      - Summary: method, FoS, convergence info, number of slices
+
+      Force diagrams (matplotlib plots in dialog):
+      - Interslice normal force (E) vs distance along surface
+      - Interslice shear force (X) vs distance
+      - Line of thrust plot
+      - Base normal stress distribution
+      - Pore pressure distribution along base
+
+      Export: tables to CSV, diagrams to PNG/SVG.
+    priority: medium
+    depends_on: ['F016']
+    acceptance_criteria:
+      - "Slice data table shows all columns with correct values"
+      - "Interslice force plots are smooth and continuous"
+      - "Line of thrust lies within slice boundaries"
+      - "Tables exportable to CSV"
+      - "Plots exportable to PNG and SVG"
+      - "Summary includes method name, FoS, iterations, date/time"
+
+  F024:
+    title: "Publication-quality figure export"
+    description: |
+      Export the analysis figure as a high-quality image or vector graphic
+      suitable for reports and publications.
+
+      Formats: PNG (configurable DPI), SVG, PDF
+      Include:
+      - Geometry with material colors and labels
+      - Critical slip surface with FoS
+      - Water table
+      - Support elements
+      - Scale bar
+      - North arrow (optional)
+      - Title block (project name, analyst, date, FoS)
+      - Legend for material colors
+      - Dimension annotations
+
+      The exported figure should match what is shown on the canvas but
+      with print-appropriate styling (thicker lines, larger fonts,
+      no screen-specific artifacts).
+    priority: medium
+    depends_on: ['F022']
+    acceptance_criteria:
+      - "PNG export at 300 DPI produces crisp image"
+      - "SVG export produces valid scalable vector graphic"
+      - "PDF export produces single-page document"
+      - "Title block contains project metadata"
+      - "Scale bar is dimensionally correct"
+      - "Legend lists all materials with colors"
+      - "Figure is self-contained (readable without the application)"
+
+  # ================================================================
+  # VERIFICATION AND VALIDATION
+  # ================================================================
+
+  F025:
+    title: "V&V: Homogeneous slope (Abramson et al. benchmark)"
+    description: |
+      Verify against the classic benchmark from Abramson et al.
+      "Slope Stability and Stabilization Methods":
+
+      - Simple homogeneous slope: height H=10m, angle 2H:1V (63.4°)
+      - Mohr-Coulomb: c'=20 kPa, phi'=20°, gamma=18 kN/m3
+      - No water table
+      - Known Bishop FoS ≈ 1.37 (published in multiple textbooks)
+
+      Compare all implemented methods (Bishop, Janbu, Spencer, M-P)
+      against published values. The spread between methods should be < 5%.
+    priority: critical
+    depends_on: ['F013', 'F014', 'F015', 'F016', 'F017']
+    acceptance_criteria:
+      - "Bishop Simplified FoS within 2% of published value (1.37)"
+      - "Spencer FoS within 2% of published value"
+      - "Janbu Corrected FoS within 3% of published value"
+      - "Morgenstern-Price FoS within 2% of Spencer FoS"
+      - "All methods find similar critical circle location"
+      - "Spread between methods < 5%"
+
+  F026:
+    title: "V&V: Underwater slope with pore pressure"
+    description: |
+      Verify pore pressure handling:
+
+      - Slope: height H=15m, angle 3H:1V
+      - Two-layer: upper clay (c'=10, phi'=25, gamma=17),
+        lower sand (c'=0, phi'=35, gamma=19)
+      - Water table at 5m below crest
+      - Compare against published solution from Duncan & Wright
+        "Soil Strength and Slope Stability" textbook
+
+      Key check: pore pressure correctly reduces effective normal stress
+      and therefore shear strength on the slip surface base.
+    priority: high
+    depends_on: ['F013', 'F008']
+    acceptance_criteria:
+      - "FoS with water table < FoS without water table"
+      - "FoS matches published Duncan & Wright value within 3%"
+      - "Pore pressure correctly applied only below water table"
+      - "Two-layer materials correctly assigned to slice bases"
+      - "Critical surface passes through or along layer boundary"
+
+  F027:
+    title: "V&V: Reinforced slope with anchors"
+    description: |
+      Verify support element contribution:
+
+      - Same slope as F025 (homogeneous, H=10m, 2:1)
+      - Add horizontal anchors at 3m and 6m height
+      - Anchor capacity: 100 kN/m (per meter out of plane)
+      - Known: FoS increase should be proportional to anchor force
+        relative to driving force
+
+      Verify:
+      - FoS(with anchors) > FoS(without anchors)
+      - FoS increase matches theoretical: delta_F ≈ T*cos(alpha) / (W*sin(alpha))
+      - Anchor forces appear in the force equilibrium
+    priority: high
+    depends_on: ['F019', 'F025']
+    acceptance_criteria:
+      - "FoS with anchors > FoS without anchors"
+      - "FoS increase matches approximate hand calculation within 10%"
+      - "Anchor intersection with critical surface is correct"
+      - "Removing anchors recovers original FoS"
+      - "Anchor force direction correctly resolved into components"
+
+  F028:
+    title: "V&V: Seismic analysis benchmark"
+    description: |
+      Verify pseudo-static analysis:
+
+      - Homogeneous slope from F025
+      - Apply k_h = 0.1, 0.2, 0.3
+      - Compare FoS reduction against published curves
+        (Hynes-Griffin & Franklin 1984 or similar)
+
+      Key checks:
+      - FoS decreases monotonically with k_h
+      - Critical acceleration k_c (where FoS=1.0) is findable
+      - FoS with k_h=0 matches static analysis exactly
+    priority: medium
+    depends_on: ['F020', 'F025']
+    acceptance_criteria:
+      - "FoS(k_h=0.1) < FoS(k_h=0) by expected amount"
+      - "FoS(k_h=0.2) < FoS(k_h=0.1)"
+      - "k_c found by bisection to tolerance < 0.001"
+      - "FoS(k_h=0) matches static FoS exactly"
+      - "Seismic FoS matches published benchmark within 5%"
+
+  F029:
+    title: "V&V: Hoek-Brown rock slope"
+    description: |
+      Verify Hoek-Brown implementation on a rock slope:
+
+      - Rock cut: height 30m, face angle 70°
+      - Intact rock: sigma_ci=50 MPa, mi=10
+      - Rock mass: GSI=50, D=0.7 (blast-damaged)
+      - Compare FoS against RocScience Slide2 published example
+        or equivalent academic benchmark
+
+      This tests:
+      - Hoek-Brown to Mohr-Coulomb conversion
+      - Nonlinear strength envelope effect on FoS
+      - Deep-seated circular failure in rock
+    priority: high
+    depends_on: ['F010', 'F017']
+    acceptance_criteria:
+      - "Hoek-Brown parameters computed correctly for GSI=50, D=0.7"
+      - "Equivalent Mohr-Coulomb parameters match RocData within 5%"
+      - "FoS matches published benchmark within 5%"
+      - "Critical circle is deep-seated (passes below toe)"
+      - "FoS increases when D decreases (less disturbance)"
+      - "FoS increases when GSI increases (better rock quality)"
+
+  F030:
+    title: "V&V: Method comparison and cross-validation"
+    description: |
+      Systematic cross-validation of all limit equilibrium methods
+      against each other and published solutions.
+
+      Run a suite of 5 benchmark problems:
+      1. Homogeneous slope (F025)
+      2. Two-layer slope with water (F026)
+      3. Cohesive slope (phi=0, undrained)
+      4. Frictional slope (c=0, granular)
+      5. Complex geometry: benched slope with 3 materials
+
+      For each problem, compute FoS with all methods and report:
+      - Method comparison table
+      - Maximum spread between methods
+      - Comparison with published reference values
+      - Ranking of methods by conservatism
+
+      Expected: Spencer ≈ M-P > Bishop > Janbu Simplified
+      (Janbu typically most conservative for deep failures)
+    priority: high
+    depends_on: ['F013', 'F014', 'F015', 'F016', 'F017']
+    acceptance_criteria:
+      - "All 5 benchmark problems solved with all methods"
+      - "Method comparison table generated for each problem"
+      - "Spencer and M-P agree within 1% for all problems"
+      - "Bishop within 2% of Spencer for circular surfaces"
+      - "Maximum spread between methods < 10% for any problem"
+      - "All methods match published values within stated tolerances"
+      - "Results reproducible on re-run"

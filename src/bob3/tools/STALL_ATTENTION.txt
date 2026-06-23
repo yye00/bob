@@ -1,0 +1,17 @@
+HALT_ATTENTION: chain_dead_locked sentinel marker
+
+This file is written by the watchdog when spec_gate_stall_observed events
+have been observed N consecutive times (default threshold: 5, configurable
+via BOB3_STALL_ESCALATION_COUNT environment variable).
+
+What this means:
+  The watchdog detected ALL_BLOCKED clean exits from bob3 and refused to
+  relaunch (correct safety behavior). After repeated stall observations,
+  this marker was written to escalate the issue to needs_human_attention.
+
+Operator action required:
+  1. Drop thresholds to allow bob3 to relaunch features.
+  2. Manually relaunch the chain.
+  3. Delete this file once the issue is resolved.
+
+See also: chain_dead_locked log events at WARN level in weekend_chain.log.

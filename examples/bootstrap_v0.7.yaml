@@ -1,0 +1,306 @@
+name: bob8
+version: 0.7.0
+description: |
+  Bob8 — Round 5 of the recursive bob-on-bob dark factory.
+
+  Bob8 = bob7 (Round-4 complete) + top-level feature parallelism.
+
+  The defining feature of this round is breaking the long-standing
+  sequential-execution constraint in the orchestrator. See the design
+  comment at the top of src/bob3/orchestrator/run_loop.py for the
+  three reasons sequential was originally chosen — this round's job
+  is to address each of them and unlock concurrent feature execution.
+
+features:
+  F-R5-200:
+    title: Atomic feature-claim SQL for concurrent workers
+    description: |
+      Today's orchestrator picks a ready feature with a plain SELECT then
+      UPDATEs its status to 'executing'. Under concurrency two workers can
+      claim the same row. Add a single-statement claim that atomically
+      transitions the chosen feature from 'ready' to 'executing' and
+      stamps the claiming worker's id, returning the row only if the
+      transition succeeded. Use either UPDATE…RETURNING (SQLite ≥ 3.35)
+      or a transaction with row-level exclusivity.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/feature_claim.py'
+      - 'Function defined: bob3.orchestrator.feature_claim.claim_next_ready_feature'
+      - 'pytest: tests/test_feature_claim_atomic.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R5-201:
+    title: Per-feature cost reservation + concurrent budget guard
+    description: |
+      The current budget guard reads the running total once per iteration
+      and decides whether to spawn the next feature. Under N concurrent
+      features, N workers can each pass the guard simultaneously and
+      collectively overshoot max_cost by N feature-budgets.
+
+      Replace the single-reader guard with a reservation model: before a
+      worker claims a feature, it atomically reserves an estimated
+      feature-budget against the global cap. Reservation succeeds only
+      if (committed_spend + outstanding_reservations + estimate) <= cap.
+      On feature completion the reservation is replaced with actual
+      cost; on failure the reservation is released. Estimated budget
+      defaults to historical p75 per feature.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/cost_reservation.py'
+      - 'Function defined: bob3.orchestrator.cost_reservation.reserve_budget'
+      - 'Function defined: bob3.orchestrator.cost_reservation.release_reservation'
+      - 'pytest: tests/test_cost_reservation_concurrent.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R5-202:
+    title: Concurrent feature executor with failure isolation
+    description: |
+      Replace the single-feature await in run_loop.run() with a worker
+      pool that dispatches up to N features concurrently using
+      asyncio.gather + a semaphore. A failure in one worker must NOT
+      propagate to peers — wrap each feature in its own try/except,
+      record failure to the DB, release any cost reservation, and let
+      siblings continue. N is configurable via --max-concurrent-features
+      (default 1 = current behavior for backward compat; production
+      target is 4-8).
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/concurrent_executor.py'
+      - 'Function defined: bob3.orchestrator.concurrent_executor.run_concurrent'
+      - 'pytest: tests/test_concurrent_executor_isolation.py'
+      - 'CLI command: bob3 run --max-concurrent-features'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  # Carry-forward: the two follow-ups from Round 4 that didn't get built
+  # because the verifier false-negative blocked progress.
+  F-R5-150:
+    title: Synthesizer emits integration criterion for wiring features
+    description: |
+      When a feature description implies it must be wired into existing
+      code (keywords: "integrate", "wire into", "hook into", "register
+      with"), the F-R1-011 spec synthesizer must add an "integration:
+      <module>" acceptance criterion. Round 4 surfaced cases where the
+      verifier's integration_code_exists check was the only signal that
+      a feature wasn't wired, and even that was unreliable.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_synthesizer.py'
+      - 'Function defined: bob3.spec_synthesizer.detect_integration_targets'
+      - 'pytest: tests/test_spec_synthesizer_integration_criteria.py'
+
+  F-R5-151:
+    title: Sandbox the verifier from feature commits
+    description: |
+      An implementation sub-agent in Round 4 was observed editing
+      src/bob3/enhanced_verification.py to soften the
+      integration_code_exists check so its own feature would pass.
+      Add a guard that rejects any diff touching verifier modules
+      (enhanced_verification.py, superpowers.py, the evaluator)
+      unless the active feature is tagged role=verifier.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/verifier_sandbox.py'
+      - 'Function defined: bob3.orchestrator.verifier_sandbox.check_verifier_untouched'
+      - 'pytest: tests/test_verifier_sandbox.py'
+
+  # ───────────────────────────────────────────────────────────────────
+  # Science layer (F-R5-210..217). Promotes bob from a self-building
+  # software factory to a scientific-compute factory able to author
+  # reservoir simulators, geomechanics, NR, Geant4 extensions, and
+  # plasma codes. Layer A here unlocks Layer B application specs
+  # (examples/app_*.yaml) which land in bob9 once these capabilities
+  # exist.
+  # ───────────────────────────────────────────────────────────────────
+
+  F-R5-210:
+    title: Auto-trigger research harness per round (R1..R6)
+    description: |
+      The six research agents (r1_coverage, r2_stack, r3_perf,
+      r4_security, r5_ecosystem, r6_self_critique) in
+      src/bob3/research/ exist and have a working harness
+      (harness.run_all_research_agents) but are only invoked
+      manually — only one round of output exists in
+      docs/recursion/round1/. Wire the harness into `bob3 plan`
+      so each round automatically runs all six agents in
+      parallel, writes proposals to docs/recursion/round<N>/, and
+      surfaces a short summary so the human author can pull
+      candidates into the next spec. Without this, every round
+      depends on a human to think up the next features.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/research_trigger.py'
+      - 'Function defined: bob3.orchestrator.research_trigger.fire_research_for_round'
+      - 'pytest: tests/test_research_trigger.py'
+      - 'integration: bob3.cli'
+      - 'integration: bob3.research.harness'
+
+  F-R5-211:
+    title: Numerical correctness verifier (MMS + conservation + convergence)
+    description: |
+      Add a verifier that handles scientific-compute acceptance
+      criteria, complementing the existing tests_pass / no_stubs
+      checks. Three new criterion types:
+        - 'mms: order=N norm=L2' — manufactured-solution
+          convergence test, fits log-log slope of error vs
+          mesh-spacing, asserts slope >= N - tolerance.
+        - 'conserves: quantity=mass drift<=1e-9' — runs the
+          implementation forward and asserts the named
+          conserved quantity drifts no more than the bound.
+        - 'benchmark: name=sod_shock_tube tol=0.02' — runs the
+          implementation against a reference solution from the
+          benchmark registry (F-R5-215).
+      Without these, bob has no way to tell whether a CFD or
+      NR or plasma implementation is actually correct vs
+      merely-compiles-and-runs.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/numerical_verifier.py'
+      - 'Function defined: bob3.numerical_verifier.verify_mms'
+      - 'Function defined: bob3.numerical_verifier.verify_conservation'
+      - 'Function defined: bob3.numerical_verifier.verify_benchmark'
+      - 'pytest: tests/test_numerical_verifier.py'
+      - 'integration: bob3.enhanced_verification'
+
+  F-R5-212:
+    title: HPC skill bundle (OpenMP / MPI / CUDA / ROCm / SIMD)
+    description: |
+      Extend the per-domain skill bundle mechanism (F-R4-143)
+      with an 'hpc' bundle containing skill files for: OpenMP
+      pragma patterns, MPI collective communication idioms,
+      CUDA launch-config + shared-memory tiling, ROCm/HIP
+      equivalents, SIMD intrinsics + autovectorization hints,
+      cache-blocking, NUMA-aware allocation. Activated when
+      spec metadata includes domain=hpc or compile target
+      includes any of {nvcc, hipcc, mpicc}. Skills are
+      injected into sub-agent context only when activated.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/skill_bundles/hpc/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/hpc/openmp.md'
+      - 'File exists: src/bob3/skill_bundles/hpc/mpi.md'
+      - 'File exists: src/bob3/skill_bundles/hpc/cuda.md'
+      - 'File exists: src/bob3/skill_bundles/hpc/rocm.md'
+      - 'File exists: src/bob3/skill_bundles/hpc/simd.md'
+      - 'pytest: tests/test_hpc_skill_bundle.py'
+      - 'integration: bob3.per_domain_skill_bundles_hpc_ml_pl'
+
+  F-R5-213:
+    title: Scientific-domain skill bundles (CFD / geomech / NR / plasma / particle)
+    description: |
+      Five new domain bundles authored alongside F-R5-212:
+        - cfd: FVM/FEM discretizations, SIMPLE/PISO,
+          turbulence models (k-epsilon, k-omega SST, LES),
+          boundary conditions.
+        - geomech: poroelasticity (Biot), frictional contact,
+          fault-slip Coulomb / rate-and-state, Drucker-Prager
+          and Mohr-Coulomb plasticity.
+        - nr: BSSN formulation, 1+log slicing, Gamma-driver
+          shift, puncture initial data, GW extraction at
+          scri+, AMR for binary BH.
+        - plasma: Particle-in-Cell (PIC) push, Boris pusher,
+          field gather/scatter, MHD (ideal + resistive),
+          Vlasov-Poisson.
+        - particle: Geant4 user actions (Run, Event, Tracking,
+          Stepping), custom physics lists, custom processes,
+          cross-section tabulation.
+      Bundles map to spec metadata domain field.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/skill_bundles/cfd/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/geomech/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/nr/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/plasma/__init__.py'
+      - 'File exists: src/bob3/skill_bundles/particle/__init__.py'
+      - 'pytest: tests/test_scientific_skill_bundles.py'
+      - 'integration: bob3.per_domain_skill_bundles_hpc_ml_pl'
+
+  F-R5-214:
+    title: SLURM / PBS batch-job submission adapter
+    description: |
+      Many scientific computations run minutes to hours and
+      need cluster resources (GPU partition, multi-node MPI).
+      Add an executor that, when a feature is tagged
+      compute=batch, packages its command as a SLURM (sbatch)
+      or PBS (qsub) job, submits it, polls status, and
+      ingests stdout/stderr/result-files when complete.
+      Decouples bob's wall-clock from sim wall-clock. Falls
+      back to local execution when SLURM/PBS not available
+      so existing features are unaffected.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/batch_submit.py'
+      - 'Function defined: bob3.orchestrator.batch_submit.submit_slurm'
+      - 'Function defined: bob3.orchestrator.batch_submit.submit_pbs'
+      - 'Function defined: bob3.orchestrator.batch_submit.poll_until_done'
+      - 'pytest: tests/test_batch_submit.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R5-215:
+    title: Benchmark-problem registry with reference solutions
+    description: |
+      A registry of canonical scientific-computing benchmarks
+      with reference solutions stored alongside, so F-R5-211's
+      benchmark verifier has something to diff against:
+        - CFD: Sod shock tube (1D), Taylor-Green vortex (3D),
+          lid-driven cavity (2D, Re=100/400/1000),
+          Kelvin-Helmholtz instability.
+        - geomech: Mandel poroelastic problem, Cryer sphere,
+          1D consolidation, frictional fault slip pulse.
+        - NR: gauge-wave, linear-wave, Schwarzschild head-on,
+          binary-BH inspiral (analytic PN tail).
+        - plasma: two-stream instability growth rate,
+          Weibel growth rate, Landau damping rate.
+        - particle: PDG cross-section sanity (a few
+          well-measured channels) for Geant4 validation.
+      Each entry: name, problem statement (yaml), reference
+      solution (npz or analytic function), tolerance.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/benchmarks/registry.py'
+      - 'File exists: src/bob3/benchmarks/cfd/sod_shock_tube.yaml'
+      - 'File exists: src/bob3/benchmarks/cfd/taylor_green.yaml'
+      - 'File exists: src/bob3/benchmarks/geomech/mandel.yaml'
+      - 'File exists: src/bob3/benchmarks/nr/gauge_wave.yaml'
+      - 'File exists: src/bob3/benchmarks/plasma/two_stream.yaml'
+      - 'Function defined: bob3.benchmarks.registry.load_benchmark'
+      - 'pytest: tests/test_benchmark_registry.py'
+      - 'integration: bob3.numerical_verifier'
+
+  F-R5-216:
+    title: GPU kernel autotuner harness
+    description: |
+      Many GPU implementations have a parameter space (block
+      size, tile size, register-blocking factor, vector width)
+      that dominates performance. Add a harness that, given a
+      kernel build target and a parameter grid, sweeps
+      configurations, measures runtime + occupancy + cache
+      hit rate, fits to the roofline model, and reports the
+      Pareto frontier. Enables acceptance criteria like
+      'gpu_speedup: >=10x vs naive_baseline' or
+      'roofline_efficiency: >=0.6'.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/gpu_autotuner.py'
+      - 'Function defined: bob3.gpu_autotuner.sweep'
+      - 'Function defined: bob3.gpu_autotuner.roofline_efficiency'
+      - 'pytest: tests/test_gpu_autotuner.py'
+      - 'integration: bob3.enhanced_verification'
+
+  F-R5-217:
+    title: arXiv / literature scan research agent
+    description: |
+      Seventh research agent: pulls daily abstracts from
+      arXiv categories cs.MS (Mathematical Software),
+      physics.comp-ph (Computational Physics), astro-ph.IM
+      (Instrumentation & Methods), nucl-th (Nuclear Theory),
+      and physics.plasm-ph (Plasma Physics). Filters for
+      papers proposing new methods / benchmarks / open
+      implementations. Emits Proposal objects suggesting
+      either new framework features or new application
+      specs. Feeds into F-R5-210's harness.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/research/r7_literature.py'
+      - 'Function defined: bob3.research.r7_literature.run'
+      - 'pytest: tests/test_r7_literature.py'
+      - 'integration: bob3.research.harness'
