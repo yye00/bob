@@ -11,6 +11,7 @@ deeper doc; [`docs/architecture.md`](docs/architecture.md) is the
 big-picture index.
 
 - **Graduated failure recovery with RCA** — when a sub-agent fails, bob3 doesn't just retry: free-retries spawn-time crashes, runs verification even on errored runs, decays confidence between attempts, spawns a Root Cause Analysis agent past the second failure, and routes its recommendation (`research` / `decompose` / `mark_needs_human`). [`docs/failure_handling.md`](docs/failure_handling.md).
+- **Model escalation ladder** — when a feature exhausts its refinement-attempt budget on the current model (after RCA and decomposition), bob3 escalates it to the next, more capable model in an ordered ladder, resets the counter, and retries — only falling through to `needs_human` when the strongest model is also exhausted. Covers both failure modes (verification-fail *and* sub-agent error). Configure with `BOB3_MODEL_ESCALATION_LADDER` (default `sonnet,opus`). API: `bob3.model_escalation` (`parse_ladder` / `resolve_model_for_tier` / `try_escalate`).
 - **Adversarial-self-review skill + persistent findings registry** — every sub-agent red-teams its own diff before claiming done. Findings are filed to a version-controlled registry (`reviews/findings.yaml`); recurring patterns are aggregated; future sub-agents query the registry *before* writing code. [`docs/adversarial_review.md`](docs/adversarial_review.md).
 - **Auto-installed skills system** — nine bundled skills (TDD, no-stubs-no-mocks, systematic debugging, brainstorming-approaches, researching-unknowns, implementing-acceptance-criteria, using-bob3-memory, checking-review-registry, adversarial-self-review) are symlinked into every sub-agent's `.claude/skills/` at spawn time. Integrity-audited per spawn.
 - **Defense-in-depth verification checklist** — eight checks run after every sub-agent spawn (even on `is_error=True`): file existence, package substance, test files, AST-level stub detection, AST-level mock detection in source, project-size-aware pytest, recent file changes, per-criterion acceptance evaluation.
@@ -42,15 +43,25 @@ Bob3 Memory is fully local and in-process: it uses [FastEmbed](https://github.co
 ```bash
 git clone https://github.com/yye00/bob.git bob3
 cd bob3
-pip install -e .
+./install.sh
 ```
 
-Verify the install:
+`install.sh` creates a `.venv`, installs bob3 editable with dev extras, and
+writes a path file so both source roots (`src/` and the gen-root `tools/`
+package) are importable. Verify:
 
 ```bash
-bob3 --version
-bob3 --help
+.venv/bin/bob3 --version
+.venv/bin/python -m pytest tests/test_model_escalation.py -q
 ```
+
+> **Why `install.sh` and not a bare `pip install -e .`?** bob3's code spans two
+> roots — `src/` (the `bob3` package plus sibling packages and a few loose
+> top-level modules) and the gen-root `tools/` package. pip's default editable
+> finder maps discovered packages individually and misses the loose modules /
+> second root, so a plain editable install can't import everything. `install.sh`
+> adds both roots to `sys.path` via a `.pth` file — no `PYTHONPATH` needed at
+> runtime. (If you install manually, set `PYTHONPATH="$PWD:$PWD/src"`.)
 
 ### Environment variables
 
@@ -67,6 +78,7 @@ bob3 --help
 | `BOB3_TEST_RUN_TIMEOUT` | No | Timeout in seconds for the auto-pytest run executed during the verification superpowers checklist. Default: `300`. |
 | `BOB3_SNAPSHOT_TIMEOUT` | No | Per-snapshot pytest timeout in seconds used by the F051 regression detection capture. Falls back to `BOB3_TEST_RUN_TIMEOUT` when unset, then to `300`. |
 | `BOB3_FEATURE_TIMEOUT_SECONDS` | No | Wall-clock timeout in seconds for a single feature's sub-agent execution. If exceeded the feature is marked `interrupted` (no cascade), and the next `bob3 run` resumes it via the F116 auto-resume path. Use to bound runaway tool calls (e.g. a hung Puppeteer / browser MCP). Default: `3600` (1 hour). |
+| `BOB3_MODEL_ESCALATION_LADDER` | No | Comma-separated, ordered list of model aliases (increasing capability) for the model-escalation ladder. When a feature exhausts its attempt budget on one model, bob3 escalates to the next, resets the counter, and retries; `needs_human` only after the last tier. Unknown entries are dropped; an empty/malformed value falls back to `sonnet`. Default: `sonnet,opus` (also accepts `fable`). |
 | `BOB3_REGRESSION_DETECTION_ENABLED` | No | Toggle the per-feature pytest snapshot pair used by F051 regression detection. When set to a falsy value (`0`, `false`, `no`, `off`), both the pre- and post-execution `capture_pytest_snapshot` calls are skipped, disabling regression detection entirely. Useful when the workspace test suite is large/slow or when regression tracking is unwanted (e.g. CI bring-up). Default: enabled. |
 | `BOB3_FAILURE_THRESHOLD_FOR_RESEARCH` | No | Number of consecutive failed feature attempts before `needs_research` Trigger 2 fires (R10-010). After 2 failures (vs the previous 3), research becomes more responsive — by failure 2 we've already burned ~2× the feature's expected cost; an expensive V&V feature needs research sooner than a cheap one. Default: `2`. Set higher (e.g. `3`) for the legacy behaviour. |
 | `BOB3_CONFIDENCE_DECAY_PER_FAILURE` | No | Amount to subtract from `conf_impl_correctness`, `conf_spec_understanding`, and `readiness_score` after each failed feature attempt (R10-011). Default: `0.15`. Setting to `0.0` disables decay entirely (a feature with `conf=0.7` will retain `0.7` across all retries, recreating the previous behaviour where Trigger 3 of `needs_research` could only fire once per feature). With the default and a starting confidence of `0.7`, the second retry has `conf=0.40` which is below the `0.5` low-confidence research threshold. |
