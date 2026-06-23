@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/context_budget.py"
+          }
+        ]
+      }
+    ]
+  },
+  "extended_thinking_default": true
+}
