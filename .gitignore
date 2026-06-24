@@ -79,3 +79,5 @@ a prior generation/
 # examples/peas.md on every run. peas.md is the canonical committed spec; the
 # extracted YAMLs are build artifacts, not source.
 examples/bootstrap_v0.*
+bob3.db
+bob.db
