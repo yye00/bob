@@ -1,0 +1,1267 @@
+name: bob12
+version: 0.11.0
+description: |
+  Bob12 — Round 9 of the recursive bob-on-bob dark factory.
+
+  Theme: SPEC-LAYER SUPREMACY.
+
+  Directive set 2026-05-23: the dark factory's value is in upstream spec
+  precision, not downstream code patches. Every feature in this round
+  invests in the feature-extraction / spec-quality / disk-state-reconciliation
+  layer so that future generations don't need code hotfixes — the spec
+  alone produces correct code on the first try.
+
+  Inheritance:
+    - Bob12 starts from bob11's source tree (symlinks v0.9 → v0.10 → v0.8
+      are NOT extended; bob12 explicitly switches to v0.11).
+    - All P0/P1 features from v0.8 are carried forward IMPLICITLY: a
+      disk-state reconciler (F-R7-401) promotes any feature whose code
+      already exists and passes isolation tests, so we don't re-pay to
+      rebuild what bob9/10/11 already produced.
+
+  Priority order:
+    1. Measurement-fix layer (P0)        — 2 features. Without these
+                                            the convergence rule itself
+                                            is unmeasurable.
+    2. Spec-quality layer (P0)           — 4 features. Catch ambiguity
+                                            at extraction time.
+    3. Anti-treadmill / sticky-completed — 3 features. Stop re-evaluating
+                                            already-validated work.
+    4. Self-healing bootstrap (P1)       — 1 feature. Break the readiness
+                                            deadlock.
+    5. Process hygiene (P2)              — 1 feature. Stale-bytecode guard.
+
+  Out of scope (carried from v0.8 directive):
+    - Web-dev / framework scaffolding
+    - Benchmarking platform
+
+features:
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P0.A — Measurement-fix layer
+  # The convergence rule (bob_(i-2) ≡ bob_(i-1) ≡ bob_(i)) is what
+  # defines "stable". If we cannot measure it correctly, every other
+  # investment is pointless.
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R7-400:
+    title: Convergence detector compares features by spec_slot, not UUID
+    description: |
+      The current weekend_watchdog.sh:check_convergence shell function
+      compares feature sets across generations by features.id. Feature
+      IDs are minted as fresh UUIDs in every `bob3 init`, so the
+      cross-generation set diff is always 100% — the convergence rule
+      cannot fire even when bob10 and bob11 have identical feature
+      NAMES (which they currently do, audit-confirmed 2026-05-23).
+
+      Add a stable `spec_slot` column to the features table populated
+      from the spec key (e.g. "F-R6-200"). Surface it via the model
+      layer. Rewrite check_convergence to set-diff by spec_slot.
+      Backfill spec_slot for existing rows by parsing the spec yaml
+      and matching by name (one-time migration).
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/migrations/add_spec_slot.py'
+      - 'Function defined: bob3.migrations.add_spec_slot.upgrade'
+      - 'Field exists on Feature model: spec_slot'
+      - 'pytest: tests/test_spec_slot_migration.py'
+      - 'pytest: tests/test_convergence_by_spec_slot.py'
+      - 'integration: tools/weekend_watchdog.sh:check_convergence'
+
+  F-R7-401:
+    title: Disk-state reconciler — promote built-on-disk features without re-spawn
+    description: |
+      Today every generation re-runs every ready feature even when its
+      acceptance-criteria artifacts already exist on disk from the
+      parent generation. This is the "eval-demotion treadmill" (bob9
+      had 5/6 science features completed; bob10 dropped to 2/6; bob11
+      to 1/6) — same files persisted, but verification kept demoting.
+
+      Add `reconcile_from_disk(project_id)`. For each feature in
+      status='ready' (or 'pending' after seed): evaluate each AC entry
+      against the workspace. If all `File exists:`, `Function defined:`,
+      and `pytest:` ACs pass in isolation AND no `integration:` AC
+      regresses, atomically transition the feature to 'completed' WITH
+      evidence_artifacts type='disk_reconciliation' recording which
+      checks passed. Run this once at the start of every `run` loop
+      before any sub-agent spawns.
+
+      This is the user-visible fix for the audit finding "1,439 LOC on
+      disk but only 2 features completed."
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/disk_reconciler.py'
+      - 'Function defined: bob3.orchestrator.disk_reconciler.reconcile_from_disk'
+      - 'Function defined: bob3.orchestrator.disk_reconciler.evaluate_ac_against_disk'
+      - 'pytest: tests/test_disk_reconciler.py'
+      - 'pytest: tests/test_disk_reconciler_idempotent.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P0.B — Spec-quality layer
+  # Direct response to user directive 2026-05-23: invest in spec
+  # extraction so bugs are caught at spec-write time, not at
+  # code-generation time. Every feature here fortifies the upstream
+  # layer so future generations need fewer hotfixes.
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R7-410:
+    title: Spec ambiguity linter — reject vague acceptance criteria
+    description: |
+      Add a pre-plan gate that scans every acceptance_criteria entry
+      and rejects ambiguous patterns: bare verbs ("works", "handles",
+      "supports"), missing concrete identifiers (no file path, no
+      function name, no test path), unbounded quantifiers ("all
+      cases", "any input"), and verbs without an observable subject.
+
+      Each AC must match one of: `File exists: <path>`, `Function
+      defined: <dotted.path>`, `Class defined: <dotted.path>`,
+      `pytest: <test_path>`, `integration: <dotted.module>`,
+      `behavior: <subject> <verb> <object> when <condition>` (the
+      EARS-style structured AC, see F-R7-412).
+
+      Run at `bob3 plan` time. Fail the plan if any feature has an
+      ambiguous AC; emit a structured report naming the offending
+      feature and AC index so the spec author can fix it before any
+      code is generated.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/ambiguity_linter.py'
+      - 'Function defined: bob3.spec_quality.ambiguity_linter.lint_feature'
+      - 'Function defined: bob3.spec_quality.ambiguity_linter.lint_spec'
+      - 'pytest: tests/test_ambiguity_linter.py'
+      - 'pytest: tests/test_ambiguity_linter_rejects_vague_ac.py'
+      - 'integration: bob3.cli.plan'
+
+  F-R7-411:
+    title: Integration-target reachability check at spec-load time
+    description: |
+      Every `integration: <dotted.module>` AC entry implies the
+      generated code will be wired into that module. Today the wiring
+      check happens AFTER code is written (F-R6-150). Move it
+      upstream: at `bob3 plan` time, for every feature with an
+      integration AC, verify the target module either exists in the
+      current workspace OR is itself a feature in the spec being
+      planned. Reject specs that reference unreachable integration
+      targets, with a structured error naming the missing module and
+      suggesting the closest match by edit distance.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/integration_reachability.py'
+      - 'Function defined: bob3.spec_quality.integration_reachability.check_spec'
+      - 'pytest: tests/test_integration_reachability.py'
+      - 'integration: bob3.cli.plan'
+
+  F-R7-412:
+    title: Structured EARS-style behavior acceptance criteria
+    description: |
+      Add a sixth AC grammar (alongside `File exists`, `Function
+      defined`, `Class defined`, `pytest`, `integration`):
+      `behavior: <subject> <verb> <object> when <condition>`.
+
+      Parse into (subject, verb, object, condition) at load time and
+      attach to the Feature model. The evaluator (Round 0 Task 1's
+      independent grader) gets a new check: for every behavior AC,
+      ask the grader specifically whether the generated code exhibits
+      that exact subject-verb-object under that exact condition,
+      using the parsed structure rather than freeform prose.
+
+      This replaces today's pattern of stuffing behavioral expectations
+      into the `description` field where they're invisible to the
+      mechanical verifier and only loosely consulted by the evaluator.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/ears_parser.py'
+      - 'Function defined: bob3.spec_quality.ears_parser.parse_behavior_ac'
+      - 'Function defined: bob3.spec_quality.ears_parser.evaluate_behavior_ac'
+      - 'pytest: tests/test_ears_parser.py'
+      - 'pytest: tests/test_ears_evaluator_uses_parsed_structure.py'
+      - 'integration: bob3.evaluator'
+
+  F-R7-413:
+    title: Spec quality score gate — features below threshold cannot reach ready
+    description: |
+      Combine the F-R7-410 ambiguity linter, F-R7-411 reachability
+      checker, F-R7-412 EARS parser, and a new "AC coverage" metric
+      (does every public API surface mentioned in the description
+      have a corresponding AC?) into a per-feature `spec_quality_score`
+      in [0, 1]. Persist on the Feature model.
+
+      Add a gate before status='ready': features with
+      spec_quality_score < 0.85 stay at 'pending' with a structured
+      remediation report. This is the spec-layer analog of the
+      readiness gate, applied upstream so bad specs never reach the
+      sub-agent.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/quality_score.py'
+      - 'Function defined: bob3.spec_quality.quality_score.compute_score'
+      - 'Function defined: bob3.spec_quality.quality_score.gate_for_ready'
+      - 'Field exists on Feature model: spec_quality_score'
+      - 'pytest: tests/test_quality_score.py'
+      - 'pytest: tests/test_quality_score_gate_blocks_ready.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P1 — Anti-treadmill / sticky-completed
+  # Recognition stability: stop demoting features whose work persists.
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R7-420:
+    title: Sticky-completed gate — re-evaluation cannot un-complete persisted work
+    description: |
+      If a feature was status='completed' in the parent generation's
+      DB (read from the parent gen's bob3.db at seed time and stamped
+      onto the new gen's feature row as parent_completed=true) AND
+      its acceptance criteria still verify on disk in the current
+      generation, no evaluator FAIL or regression-cascade vote may
+      flip its status below 'ready'. Effectively: re-evaluation can
+      request a refinement attempt, but cannot strip the
+      already-validated-elsewhere stamp.
+
+      Reset the stamp ONLY when a refinement attempt actually rewrites
+      one of the AC-named source files (track via git/mtime).
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/sticky_completed.py'
+      - 'Function defined: bob3.orchestrator.sticky_completed.stamp_from_parent'
+      - 'Function defined: bob3.orchestrator.sticky_completed.may_demote'
+      - 'Field exists on Feature model: parent_completed'
+      - 'pytest: tests/test_sticky_completed_blocks_demotion.py'
+      - 'pytest: tests/test_sticky_completed_clears_on_real_edit.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-421:
+    title: Blame-the-cause regression cascade — charge the breaking feature
+    description: |
+      Today when feature B's `tests_pass` check fails because feature
+      A's tests are broken, both A and B get demoted with rfn=0
+      (recurring pattern across bob10 and bob11). Add a regression
+      attribution step: for each failing test, walk the AC table to
+      find the feature whose `pytest:` AC owns that test path. Charge
+      a refinement attempt to that feature only. Features that merely
+      ran during the same verification but don't own any failing test
+      stay at their pre-verification status.
+
+      Supersedes the pending F-R6-320 from earlier rounds.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/regression_attribution.py'
+      - 'Function defined: bob3.orchestrator.regression_attribution.attribute_failures'
+      - 'Function defined: bob3.orchestrator.regression_attribution.charge_owners'
+      - 'pytest: tests/test_regression_attribution.py'
+      - 'pytest: tests/test_regression_attribution_does_not_charge_innocent.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-422:
+    title: Parent-gen DB inheritance at seed time
+    description: |
+      Prerequisite for F-R7-420. When `spawn_next_generation.sh`
+      seeds bob_(N+1), read every completed/needs_human/regression
+      feature row from bob_N's bob3.db. Match by spec_slot (F-R7-400).
+      Stamp the matched bob_(N+1) row with parent_status,
+      parent_completed_at, parent_evidence_hash. This carries
+      reproducibility context forward so the sticky-completed gate
+      and the disk reconciler have provenance to act on.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/parent_gen_inheritance.py'
+      - 'Function defined: bob3.orchestrator.parent_gen_inheritance.inherit_from_parent_db'
+      - 'Field exists on Feature model: parent_status'
+      - 'Field exists on Feature model: parent_completed_at'
+      - 'Field exists on Feature model: parent_evidence_hash'
+      - 'pytest: tests/test_parent_gen_inheritance.py'
+      - 'integration: tools/spawn_next_generation.sh'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P1 — Self-healing bootstrap
+  # Break the F-R6-305 self-referential deadlock.
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R7-430:
+    title: Bootstrap readiness override — one bypass execute per feature
+    description: |
+      F-R6-305 (the spec-synthesizer LLM-fallback hardening) is stuck
+      at readiness_score=0.56 with research_iterations=0. The
+      readiness gate refuses to let it execute until research lifts
+      its score, but research has nothing to lift FROM because the
+      feature never produced an execution signal. Self-referential
+      deadlock.
+
+      Add a per-feature `bootstrap_attempts` counter (default 0, max
+      1). When the readiness gate would block a feature AND
+      bootstrap_attempts < 1 AND research_iterations == 0, allow ONE
+      execute pass that bypasses the readiness gate. Increment
+      bootstrap_attempts. The execution result becomes the seed signal
+      for the next research pass.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/bootstrap_override.py'
+      - 'Function defined: bob3.orchestrator.bootstrap_override.may_bypass_readiness'
+      - 'Field exists on Feature model: bootstrap_attempts'
+      - 'pytest: tests/test_bootstrap_override.py'
+      - 'pytest: tests/test_bootstrap_override_one_shot.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P2 — Process hygiene
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R7-440:
+    title: Stale-bytecode guard at relaunch
+    description: |
+      Self-heal compares mtime of every file under
+      src/bob*/orchestrator/ against the previous bob_N process's
+      start time (cat /proc/<pid>/stat field 22, or recorded
+      `started_at` in .bob3.lock). If any orchestrator source file is
+      newer than process start, the previous run was executing stale
+      bytecode and self-heal must kill+relaunch the process even when
+      the DB looks recoverable. Emit a clear log line naming the
+      stale file so operators can correlate with their edits.
+
+      Direct response to the 2026-05-23 incident where
+      F-R6-318/319/321 patches were on disk but the running process
+      held pre-edit bytecode for 90+ minutes before being noticed.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/stale_bytecode_guard.py'
+      - 'Function defined: bob3.orchestrator.stale_bytecode_guard.check_freshness'
+      - 'Function defined: bob3.orchestrator.stale_bytecode_guard.record_start_time'
+      - 'pytest: tests/test_stale_bytecode_guard.py'
+      - 'integration: tools/self_heal.sh'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P0.C — Research-informed spec-layer additions (2026-05-23)
+  # Synthesized from research agents 1-4 (see research/intent-extraction/)
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R7-450:
+    title: Adversarial spec-critic sub-agent — gate codegen on spec quality
+    description: |
+      Add a dedicated `spec-critic` sub-agent that runs after the
+      spec-extractor and before any implementer fires. It loads a
+      versioned `spec_constitution.md` (Constitutional-AI style list
+      of spec-quality principles) and emits, per feature, a structured
+      list of defects:
+      {feature_id, ac_index, defect_type, rationale, suggested_fix}
+      where defect_type ∈ {ambiguity, missing_edge_case, untestable,
+      implementation_leak, vague_quantifier, missing_actor,
+      unreachable_integration}. Findings persist to
+      reviews/spec_findings.yaml (matches existing review registry
+      shape) keyed by spec hash so repeat runs surface regressions.
+      On non-empty critic output, the extractor runs one revise pass;
+      second-round defects escalate to F-R7-456 clarification.
+
+      Source: Agent 2 §F-S3 (MAD pattern), Agent 4 §spec-critic +
+      AC-F-SPEC-CRITIC-AGENT-1, Agent 2 §Constitutional AI.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/spec_critic.py'
+      - 'File exists: src/bob3/spec_quality/spec_constitution.md'
+      - 'Function defined: bob3.spec_quality.spec_critic.critique_feature'
+      - 'Function defined: bob3.spec_quality.spec_critic.persist_findings'
+      - 'pytest: tests/test_spec_critic_emits_structured_defects.py'
+      - 'pytest: tests/test_spec_critic_revise_loop_bounded.py'
+      - 'pytest: tests/test_spec_critic_findings_registry.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-451:
+    title: Sub-translation provenance — every AC traces to source-intent span
+    description: |
+      Borrow nl2spec's interpretability layer: each emitted AC must
+      carry a `provenance:` field naming the contiguous character
+      span(s) of the original human intent that produced it. The
+      extractor emits both the AC and the span; the verifier rejects
+      ACs with empty or non-overlapping provenance. A CLI command
+      `bob spec trace <feature_id>:<ac_index>` prints the AC alongside
+      its source spans, enabling surgical edit of a single criterion
+      without regenerating the whole spec. Round-trip test: from a
+      known intent, the union of all provenance spans must cover ≥90%
+      of load-bearing sentences (non-stopword tokens) in the intent.
+
+      Source: Agent 2 §F-S2 (nl2spec sub-translation table), Agent 1
+      §S5 (QRSPI structured-alignment artifacts).
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/provenance.py'
+      - 'Function defined: bob3.spec_quality.provenance.attach_provenance'
+      - 'Function defined: bob3.spec_quality.provenance.validate_coverage'
+      - 'Function defined: bob3.spec_quality.provenance.trace_ac'
+      - 'Field exists on Feature model: provenance_spans'
+      - 'pytest: tests/test_provenance_round_trip.py'
+      - 'pytest: tests/test_provenance_rejects_empty.py'
+      - 'integration: bob3.cli.spec_trace'
+
+  F-R7-452:
+    title: Design-by-Contract sub-grammar on behavior — pre / post / inv / raises
+    description: |
+      Extend the F-R7-412 EARS `behavior:` AC with four optional
+      sub-keys: `pre:` (precondition on caller), `post:` (postcondition
+      on routine), `inv:` (class/state invariant), `raises:` (declared
+      exception types). The codegen agent emits matching `icontract`
+      decorators; the verifier runs the same assertions during pytest.
+      This gives the verifier executable contracts rather than NL
+      paraphrase, and (per Agent 3 §8 empirical results) cuts LLM
+      verification misjudgment from 31-58% to 11-19%. Crucially, blame
+      assignment becomes mechanical: pre violations charge the caller
+      (upstream feature), post violations charge the implementer.
+
+      Source: Agent 3 §2 (Meyer DbC), Agent 1 §3 (Volere fit_criterion),
+      Agent 3 §8 (2025 LLM verification-failures study).
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/contract_grammar.py'
+      - 'Function defined: bob3.spec_quality.contract_grammar.parse_contract'
+      - 'Function defined: bob3.spec_quality.contract_grammar.emit_icontract_decorators'
+      - 'pytest: tests/test_contract_grammar_parses_pre_post_inv.py'
+      - 'pytest: tests/test_contract_grammar_emits_runnable_decorators.py'
+      - 'pytest: tests/test_contract_grammar_blame_attribution.py'
+      - 'integration: bob3.spec_quality.ears_parser'
+
+  F-R7-453:
+    title: Key-examples / property-based AC variant
+    description: |
+      Add a seventh AC grammar `property: <name> for <generator> assert
+      <predicate>` (Hypothesis-style PBT) AND a `key_example:` sub-key
+      on behavior ACs carrying explicit given/then value pairs (per
+      Adzic's Specification by Example). The codegen agent uses these
+      as few-shot context; the verifier emits one Hypothesis test per
+      property and one parametrized pytest per key_example (fixed
+      seed=0 for reproducibility). Boundary and unwanted-behaviour
+      examples are required for any AC whose response involves data
+      transformation or numeric range. Hypothesis shrinking gives the
+      LLM the minimal failing case for repair — empirically ~3× more
+      regressions per LOC vs example-only tests.
+
+      Source: Agent 1 §5 + §S3 (Specification by Example),
+      Agent 3 §3 (PBT-as-spec), Agent 3 §coverage-metrics
+      (boundary_coverage sub-metric).
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/example_grammar.py'
+      - 'Function defined: bob3.spec_quality.example_grammar.parse_property_ac'
+      - 'Function defined: bob3.spec_quality.example_grammar.parse_key_example'
+      - 'Function defined: bob3.spec_quality.example_grammar.emit_hypothesis_test'
+      - 'pytest: tests/test_property_ac_emits_hypothesis.py'
+      - 'pytest: tests/test_key_example_emits_parametrize.py'
+      - 'pytest: tests/test_boundary_required_for_numeric_range.py'
+      - 'integration: bob3.spec_quality.ears_parser'
+
+  F-R7-454:
+    title: Test-writer sub-agent — failing tests before implementer fires
+    description: |
+      Insert a `test-writer` sub-agent between spec-critic (F-R7-450)
+      and the implementer. Given the validated feature spec, it emits
+      one failing pytest per acceptance criterion ID under
+      tests/<feature_id>/test_<ac_id>.py. The implementer sub-agent
+      receives the spec AND the failing tests; its definition of done
+      is "all AC-tagged tests now pass". The verifier confirms the
+      AC↔test mapping is bijective: every AC has exactly one
+      test_<ac_id>.py, every such test maps back to a declared AC.
+      The TestGen-LLM Build/Pass/Coverage triple-filter rejects tests
+      that don't compile, mysteriously pass on stub code, or fail to
+      raise coverage of the AC-named region.
+
+      Source: Agent 4 §9 + AC-F-TEST-FIRST-CASCADE-1, Agent 2 §AutoUAT,
+      Agent 3 §predicate_coverage sub-metric.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/test_writer_agent.py'
+      - 'Function defined: bob3.orchestrator.test_writer_agent.emit_failing_tests'
+      - 'Function defined: bob3.orchestrator.test_writer_agent.verify_bijection'
+      - 'Function defined: bob3.orchestrator.test_writer_agent.triple_filter'
+      - 'pytest: tests/test_test_writer_one_test_per_ac.py'
+      - 'pytest: tests/test_test_writer_bijection_check.py'
+      - 'pytest: tests/test_test_writer_rejects_uncompilable.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-455:
+    title: Full 22-smell linter extension to F-R7-410
+    description: |
+      F-R7-410 today implements a small regex-based ambiguity linter.
+      Replace its rule set with the 22-detector catalogue from Agent 3
+      (Femmer/Smella + 2025 LLM extensions): subjective adjectives,
+      ambiguous adverbs, loopholes, open-ended enumerations, unbounded
+      superlatives, comparatives w/o baseline, vague pronouns, passive
+      w/o agent, modal weakness (RFC 2119 shall/must vs should/may),
+      negation w/o scope, magic numbers w/o units, undefined acronyms,
+      run-on multi-requirement, implementation leak, tautology, future
+      tense drift, dangling feature-ID reference, untestable adjective,
+      self-referential test, empty quantifier, shall/should mixing,
+      behavior AC w/o test mapping. Severities E/W/I; E-severity smells
+      block `bob3 plan --create`. spaCy is a new dependency (used by
+      7 of the 22 detectors).
+
+      Source: Agent 3 §smells-catalog (22 detectors with regex/AST
+      heuristics + severities). Extends F-R7-410.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/smell_catalog.py'
+      - 'File exists: src/bob3/spec_quality/smell_detectors.py'
+      - 'Function defined: bob3.spec_quality.smell_detectors.detect_all'
+      - 'Function defined: bob3.spec_quality.smell_detectors.severity_of'
+      - 'pytest: tests/test_smell_catalog_22_detectors.py'
+      - 'pytest: tests/test_smell_severity_blocks_plan.py'
+      - 'pytest: tests/test_smell_spacy_detectors.py'
+      - 'integration: bob3.spec_quality.ambiguity_linter'
+
+  F-R7-456:
+    title: Structured-uncertainty clarification loop with AskUserQuestion
+    description: |
+      Before finalising a feature spec, run a code-consistency check:
+      generate N=3 candidate stub implementations from the draft spec
+      via a cheap pass; if they disagree on observable behaviour
+      (return-type signature, side-effect set, raised exceptions),
+      mark the relevant slot ambiguous. Compute a structured
+      uncertainty score per slot (sample-disagreement rate over N
+      stubs); only slots above threshold T=0.4 trigger a question.
+      Questions are batched (1-5 per round) as multiple-choice (2-4
+      candidates + "Other"), each citing the exact provenance span
+      (F-R7-451) of the ambiguity. Answers fold back into named slots
+      (not freeform notes); an audit trail `clarifications.log` records
+      every (timestamp, question, choices, selection). In CI mode with
+      no human present, exit `SPEC_NEEDS_HUMAN` rather than confabulate.
+
+      Source: Agent 2 §F-S5 (ClarifyGPT + Ambig-SWE + Structured-
+      Uncertainty + AskUserQuestion), Agent 4 §ChatDev Communicative
+      Dehallucination.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/clarification_loop.py'
+      - 'Function defined: bob3.spec_quality.clarification_loop.code_consistency_check'
+      - 'Function defined: bob3.spec_quality.clarification_loop.compute_slot_uncertainty'
+      - 'Function defined: bob3.spec_quality.clarification_loop.ask_user_batched'
+      - 'Function defined: bob3.spec_quality.clarification_loop.fold_answer_into_slot'
+      - 'pytest: tests/test_clarification_triggers_above_threshold.py'
+      - 'pytest: tests/test_clarification_ci_mode_no_confabulate.py'
+      - 'pytest: tests/test_clarification_audit_log.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-457:
+    title: Schema-constrained spec emission — eliminate parse-failure retries
+    description: |
+      The spec-extractor today validates its JSON output post-hoc and
+      retries on schema failure. Replace with constrained decoding:
+      maintain a pinned `schemas/spec.v1.json` JSON-Schema; on remote
+      Claude calls use tool-use `input_schema`; on local model paths
+      use Outlines (logit masking against the same schema). Specs that
+      fail validation are REJECTED with an explicit error, never
+      silently coerced or auto-retried. The schema mandates every PRD
+      slot the critic grades: functional_requirements[], non_functional
+      _requirements[] (category ∈ {perf, security, observability,
+      compatibility}), acceptance_criteria[] (id, given, when, then,
+      verifier), out_of_scope[], risks[]. Adversarial regression test:
+      5+ historically parse-failing intents must now extract cleanly.
+
+      Source: Agent 2 §F-S1 + §2 (Outlines / OpenAI Structured Outputs
+      / Anthropic tool-use schemas), Agent 4 §MetaGPT SOPs +
+      AC-F-SPEC-SCHEMA-1.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/schema_constrained_emit.py'
+      - 'File exists: schemas/spec.v1.json'
+      - 'Function defined: bob3.spec_quality.schema_constrained_emit.emit_via_tool_schema'
+      - 'Function defined: bob3.spec_quality.schema_constrained_emit.emit_via_outlines'
+      - 'Function defined: bob3.spec_quality.schema_constrained_emit.validate_or_reject'
+      - 'pytest: tests/test_schema_constrained_no_retry_needed.py'
+      - 'pytest: tests/test_schema_rejects_malformed.py'
+      - 'pytest: tests/test_schema_adversarial_5_intents.py'
+      - 'integration: bob3.cli.plan'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P0.D — Regression-attribution fixes (2026-05-23, harvested from bob11 round-8)
+  # Root cause: detect_regression scapegoats arbitrary completed features
+  # when newly-failing tests cannot be mapped to an owner. See
+  # memory/regression_scapegoat_mechanism.md for the full mechanism.
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R7-458:
+    title: Regression attribution requires test-ownership map (no scapegoats)
+    description: |
+      In bob10/bob11, db.detect_regression() picks "the first completed
+      feature that isn't the causing feature" as the blame target when
+      newly-failing tests cannot be mapped to an owner. Result: each
+      generation, a different completed feature gets demoted to
+      status='regression' for tests it never touched. The "regression
+      treadmill" is largely spurious — features are scapegoated for a
+      broken/truncated baseline.
+
+      Per spec-over-code-fix: tighten the contract for what "regression"
+      means at the spec layer. Every feature MUST declare which test
+      files it owns; demotion to regression MUST require evidence that
+      the feature's OWN tests newly fail.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'Spec column added: features.test_files (list of test_*.py owned by this feature)'
+      - 'Function defined: bob3.db.detect_regression requires test_to_feature_map argument'
+      - 'Unmapped failures recorded in unattributed_failures table, NOT as regression against arbitrary feature'
+      - 'A completed feature MUST NOT be demoted to regression unless its own tests (by ownership map) newly fail'
+      - 'pytest: tests/test_regression_requires_ownership.py'
+      - 'pytest: tests/test_unmapped_failure_not_scapegoated.py'
+      - 'integration: bob3.db.detect_regression'
+
+  F-R7-459:
+    title: Stable baseline gate — abort verifier if collection fails
+    description: |
+      bob11 baseline has two test files with ImportError at collection
+      (test_property_based_test_generator_hypothesis_ears.py,
+      test_spec_linter_pre_spawn_quality_gate.py). When the baseline
+      pytest run crashes at collection, the "before" snapshot is
+      invalid; any later "after" diff fabricates regressions.
+
+      Verifier MUST refuse to capture a baseline unless the suite
+      collects cleanly. On CollectError, emit baseline_unstable status
+      and identify the failing test file as the cause — never demote an
+      unrelated feature.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/verifier/baseline_capture.py'
+      - 'Verifier runs pytest --collect-only before snapshot and aborts on any CollectError'
+      - 'Abort writes baseline_unstable status and identifies the failing test file'
+      - 'No feature is demoted to regression while baseline_unstable is set'
+      - 'pytest: tests/test_baseline_aborts_on_collect_error.py'
+      - 'pytest: tests/test_no_regression_during_unstable_baseline.py'
+      - 'integration: bob3.verifier.baseline_capture'
+
+  F-R7-460:
+    title: Deterministic pytest snapshots — disable xdist early-halt
+    description: |
+      pytest with xdist halts after ~20-25 failures non-deterministically.
+      Before/after snapshots end up containing different subsets of the
+      same crashed run; tests that weren't reached in "before" appear as
+      "newly failing" in "after".
+
+      Snapshot path MUST run pytest with --maxfail=0 (no early halt) so
+      before/after sets are comparable. If xdist is used, --maxfail=0
+      MUST be enforced at the snapshot boundary.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'Verifier snapshot path invokes pytest with --maxfail=0 (no early termination)'
+      - 'If xdist is used, --maxfail=0 is enforced'
+      - 'pytest: tests/test_snapshot_no_early_halt.py'
+      - 'pytest: tests/test_before_after_same_test_set.py'
+      - 'integration: bob3.verifier.snapshot'
+
+  F-R7-461:
+    title: bob3 init re-run after spawn fixes stale project metadata
+    description: |
+      bob11/bob3.db projects table still shows name='bob9' and
+      spec_path pointing to a pytest tmpdir leak. spawn_next_generation.sh
+      does not re-run `bob3 init --name bob{N+1} --spec
+      examples/bootstrap_v0.{N}.yaml` after rsync. Result: project-row
+      metadata lies about which gen this is, even though feature data is
+      correct.
+
+      Matches the [[spec-name-convergence-pitfall]] memory. Either fix
+      spawn_next_generation.sh to re-init, or add a startup check in
+      run_loop that verifies projects.name matches workspace dir basename.
+    tier: 2
+    role: orchestrator
+    acceptance_criteria:
+      - 'spawn_next_generation.sh executes `bob3 init --name bob{NEXT_NUM} --spec examples/bootstrap_v0.{CURRENT_NUM}.yaml` post-rsync'
+      - 'Startup check in run_loop verifies projects.name matches workspace dir basename and updates if not'
+      - 'pytest: tests/test_spawn_fixes_project_name.py'
+      - 'pytest: tests/test_no_pytest_tmpdir_in_spec_path.py'
+      - 'integration: bob3.cli.init'
+
+  # ═══════════════════════════════════════════════════════════════════
+  # P0.E — Round-2 research synthesis (2026-05-23, unsynthesized first pass)
+  # Six high-impact features mined from research/intent-extraction reports
+  # that did NOT make the initial F-R7-450-457 cut. All target bob3 v.12.
+  # F-R7-462 (CodeT triangulation) and F-R7-469 (Self-Discover) are
+  # deferred to v0.12.yaml (bob3 v.13) — they depend on primitives below.
+  # ═══════════════════════════════════════════════════════════════════
+
+  F-R7-463:
+    title: Devin-style editable plan.yaml gate before any implementer fires
+    description: |
+      Every production agent that does well on greenfield work (Devin,
+      ChatDev, MetaGPT) emits a typed plan artifact the human or critic
+      can hand-edit before code starts. bob3 today writes specs to disk
+      but does not enforce a confirm-step; the orchestrator races ahead
+      and wastes tokens on doomed implementations.
+
+      After F-R7-450 spec-critic passes, write specs/<feature>/plan.yaml
+      and emit a structured PLAN_READY event. Implementer sub-agents
+      refuse to start unless plan.yaml.approved is true (either set by
+      human or by --auto-approve in CI). Edits to plan.yaml re-trigger
+      F-R7-450 critic incrementally via F-R7-451 provenance.
+
+      Source: Agent 4 §5 (Devin), Agent 4 conclusion (3-agent prelude).
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/plan_gate.py'
+      - 'Function defined: bob3.orchestrator.plan_gate.write_plan_artifact'
+      - 'Function defined: bob3.orchestrator.plan_gate.is_approved'
+      - 'Implementer refuses to start when plan.yaml.approved=false (test_implementer_blocked_until_approved.py)'
+      - 'CLI subcommand exists: `bob3 plan diff <feature>` shows plan-vs-spec drift'
+      - 'pytest: tests/test_plan_artifact_written_after_critic.py'
+      - 'pytest: tests/test_plan_edit_retriggers_critic_incrementally.py'
+      - 'integration: bob3.cli.plan'
+
+  F-R7-464:
+    title: Persistent spec-critic findings registry with regression detection
+    description: |
+      The critic loop (F-R7-450) is per-run. Without persistence, the
+      same defect resurfaces every regeneration and the chain never
+      learns. Mirrors the existing reviews/findings.yaml (code-review
+      registry) but for the spec layer.
+
+      F-R7-450 critic writes findings to reviews/spec_findings.yaml
+      keyed by (spec_hash, slot_id, defect_type). On re-run with the
+      same defect type at the same slot, critic flags it as REGRESSION
+      and escalates severity by one level. A composite critic_repeat_rate
+      metric is tracked; halt-gate fires if rate > 0.30 over 3 runs —
+      that's the signal that the extractor itself is broken.
+
+      Directly addresses the documented [[bob11-eval-demotion-treadmill]].
+
+      Source: Agent 2 F-S3 AC-3, Agent 4 §10 (PRDJudge), existing
+      checking-review-registry skill.
+    tier: Core
+    role: spec-critic
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/spec_findings_registry.py'
+      - 'Function defined: bob3.spec_quality.spec_findings_registry.record'
+      - 'Function defined: bob3.spec_quality.spec_findings_registry.detect_regression'
+      - 'Findings persisted to reviews/spec_findings.yaml keyed by (spec_hash, slot_id, defect_type)'
+      - 'CLI: `bob3 spec findings --since <ref>` diffs findings across two runs'
+      - 'metrics.yaml exposes critic_repeat_rate; halt-gate fires if > 0.30 over 3 runs'
+      - 'pytest: tests/test_spec_findings_registry_dedup.py'
+      - 'pytest: tests/test_spec_findings_regression_escalation.py'
+      - 'pytest: tests/test_critic_repeat_rate_halt_gate.py'
+      - 'integration: bob3.spec_quality.spec_critic'
+
+  F-R7-465:
+    title: Composite spec_quality_score (8 sub-metrics, geometric mean, 0.65/0.80 gate)
+    description: |
+      Replaces the F-R7-413 placeholder with a concrete weighted
+      geometric mean of 8 sub-metrics: smell_density (0.20),
+      predicate_coverage (0.20), contract_completeness (0.15),
+      boundary_coverage (0.10), error_path_coverage (0.10),
+      traceability (0.10), spec_executability (0.10), ac_atomicity
+      (0.05). Geometric mean ensures one fatal flaw dominates instead
+      of being averaged away.
+
+      Score < 0.65 refuses `bob3 plan --create`; 0.65–0.80 warns;
+      ≥ 0.80 green. 5+ golden specs (known-good and known-bad) anchor
+      the scorer with stable scores in CI so the rubric itself can
+      regress-test.
+
+      Source: Agent 3 "Coverage metrics" + synthesis #4 (this fills in
+      the F-R7-413 placeholder with a real rubric).
+    tier: Core
+    role: spec-critic
+    acceptance_criteria:
+      - 'File exists: tools/spec_quality_score.py'
+      - 'Function defined: spec_quality_score.compute (returns 8 sub-metrics + composite)'
+      - 'Composite uses weighted geometric mean with weights {smell:0.20, predicate:0.20, contract:0.15, boundary:0.10, error:0.10, trace:0.10, exec:0.10, atomicity:0.05}'
+      - 'Score persisted to specs/<feature>/quality.yaml on every plan run'
+      - 'Score < 0.65 makes `bob3 plan --create` exit non-zero with rationale'
+      - 'Score 0.65-0.80 warns but proceeds; ≥ 0.80 silent green'
+      - 'CI tests: 5 golden specs (3 good, 2 bad) with frozen expected scores'
+      - 'pytest: tests/test_spec_quality_score_golden_corpus.py'
+      - 'pytest: tests/test_spec_quality_score_gates_plan_create.py'
+      - 'pytest: tests/test_spec_quality_score_one_zero_dominates.py'
+      - 'integration: bob3.cli.plan'
+
+  F-R7-466:
+    title: Bidirectional Requirements Traceability Matrix (RTM) artifact
+    description: |
+      Forward (AC → test → code-region) and backward (code-region → AC)
+      traceability as a first-class artifact. Without it, the verifier
+      cannot tell whether a passing test actually exercises the code
+      that claims to implement the AC — a key gap behind the F-R7-454
+      bijective AC↔test claim.
+
+      tools/spec_coverage.py emits runs/<feature>/rtm.json and rtm.html.
+      For every AC: [matched_tests], [exercised_files], orphan flag.
+      spec_coverage_pct = covered_acs / total_acs; halt-gate at 0.80.
+      Backward direction: any new function added in a feature commit
+      must trace to ≥1 AC or be flagged untraced_implementation in
+      reviews/findings.yaml.
+
+      Source: Agent 3 §6 + synthesis #5.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: tools/spec_coverage.py'
+      - 'Function defined: spec_coverage.build_rtm (forward + backward)'
+      - 'Emits runs/<feature>/rtm.json and runs/<feature>/rtm.html'
+      - 'Every AC has fields: matched_tests, exercised_files, orphan (bool)'
+      - 'spec_coverage_pct exposed in metrics.yaml; halt-gate at 0.80'
+      - 'Backward: new functions in a feature commit without ≥1 AC link are flagged untraced_implementation'
+      - 'pytest: tests/test_rtm_forward_orphan_detection.py'
+      - 'pytest: tests/test_rtm_backward_untraced_detection.py'
+      - 'pytest: tests/test_spec_coverage_halt_gate.py'
+      - 'integration: bob3.verifier.snapshot'
+
+  F-R7-467:
+    title: Spec self-consistency — N-sample stability check pre-critic
+    description: |
+      Cheap pre-critic filter (Self-Consistency pattern, ICLR 2023). Run
+      the spec extractor N=3 times in parallel with different
+      temperature/seeds. Normalize the variants and compute a Jaccard
+      stability_score over (AC.id, AC.behavior) tuples.
+
+      If stability_score < 0.7 the source intent is itself ambiguous —
+      skip critic and route directly to F-R7-456 clarification with
+      the disagreeing slots cited. If ≥ 0.9 the majority-vote spec is
+      auto-accepted into critic stage with consensus:true flag. This
+      catches ambiguity one stage earlier than the critic at ~3x
+      extractor cost only (no implementer tokens wasted).
+
+      Source: Agent 2 §3.3 (Self-Consistency) and table row "Spec
+      stability check."
+    tier: Core
+    role: spec-extractor
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/self_consistency.py'
+      - 'Function defined: bob3.spec_quality.self_consistency.run_n_samples (default N=3)'
+      - 'Function defined: bob3.spec_quality.self_consistency.jaccard_stability'
+      - 'Results normalized + persisted to specs/<feature>/variants.yaml'
+      - 'stability_score < 0.7 routes to F-R7-456 clarification with disagreeing slots cited'
+      - 'stability_score >= 0.9 auto-accepts majority vote with consensus:true'
+      - 'pytest: tests/test_self_consistency_low_score_routes_to_clarification.py'
+      - 'pytest: tests/test_self_consistency_high_score_majority_vote.py'
+      - 'pytest: tests/test_self_consistency_jaccard_normalization.py'
+      - 'integration: bob3.spec_quality.spec_extractor'
+
+  F-R7-468:
+    title: Auto-repair of smelly ACs with semantic-equivalence verification
+    description: |
+      F-R7-455's 22-smell linter only DETECTS. The 2025 auto-repair
+      paper (arXiv 2505.07270) goes further: generate a rewritten
+      requirement, then validate against the *original* test fixtures
+      to prove behavioral equivalence. Cuts the human-clarification
+      rate for the high-volume vague-pronoun / passive-voice /
+      weak-modal smells.
+
+      Per-smell: linter emits suggested_rewrite. A semantic-equivalence
+      check feeds original + rewrite to a separate LLM judge; if it
+      cannot infer they impose the same observable constraint, reject
+      the rewrite. For ERROR-severity smells where rewrite passes
+      equivalence, auto-apply and log to repairs.log with original +
+      rewrite + judge rationale. User can opt out per-feature via
+      auto_repair:false.
+
+      Source: Agent 2 §5.2.3, Agent 2 F-S4 AC-3.
+    tier: Core
+    role: spec-critic
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/ac_auto_repair.py'
+      - 'Function defined: bob3.spec_quality.ac_auto_repair.suggest_rewrite'
+      - 'Function defined: bob3.spec_quality.ac_auto_repair.verify_semantic_equivalence'
+      - 'Each WARN/ERROR smell emits a suggested_rewrite field'
+      - 'Semantic-equivalence judge is a separate LLM call; rejects unequivalent rewrites'
+      - 'ERROR-severity rewrites that pass equivalence auto-apply; logged to repairs.log with rationale'
+      - 'Per-feature opt-out via auto_repair:false in feature YAML'
+      - 'auto_repair_rate tracked in metrics.yaml; target ≥ 0.50 within 5 runs'
+      - 'pytest: tests/test_ac_auto_repair_rejects_non_equivalent.py'
+      - 'pytest: tests/test_ac_auto_repair_applies_on_error_severity.py'
+      - 'pytest: tests/test_ac_auto_repair_opt_out_respected.py'
+      - 'integration: bob3.spec_quality.spec_critic'
+
+  # ----- P0.E: research-r2 (Agent 4 high-impact findings) -----
+  # Staged from /home/yelkhamr/dark-factory/bob4/research/staged_specs/bob13_features_block.yaml
+
+  F-R7-462:
+    title: CodeT mutual-agreement triangulation (KxK code-test matrix)
+    description: |
+      F-R7-454 commits to one test-writer pass. CodeT's stronger pattern
+      (ICLR 2023): spawn K candidate test sets and K candidate impls,
+      then score each (code, test) cell of the KxK matrix by
+      mutual-agreement. Removes the failure mode where a single bad
+      test rubber-stamps a single bad implementation.
+
+      Combined with TestGen-LLM's Build/Pass/Coverage triple filter,
+      this is the cheapest known guard against AI-judge sycophancy
+      that recursive bob3 has documented for over a year.
+
+      Source: Agent 4 Section 9 (CodeT, ICLR 2023; TestGen-LLM).
+    tier: Core
+    role: implementer
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/codet_triangulation.py'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.spawn_k_tests (default K=3, framings: positive/adversarial/boundary)'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.spawn_k_impls (default K=2)'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.score_matrix (mutual-agreement = passing_tests * tests_that_uniquely_fail_other_impls)'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.triple_filter (Build/Pass/Coverage drop)'
+      - 'Winning (code, tests) cell persisted; losers archived under runs/<feature>/variants/'
+      - 'pytest: tests/test_codet_kxk_scoring.py'
+      - 'pytest: tests/test_codet_triple_filter_drops_dud_tests.py'
+      - 'pytest: tests/test_codet_winner_selection_against_golden.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-469:
+    title: Self-Discover meta-agent for per-feature spec-section selection
+    description: |
+      bob3's PRD schema (F-R7-457) is fixed: every spec must fill every
+      slot. For trivial features (e.g., add a CLI flag), that wastes
+      tokens on irrelevant NFR/security/perf sections. For complex
+      ones, it under-specifies the relevant axes. A meta-agent that
+      first picks WHICH spec sections matter, then drives a focused
+      extractor pass, beats one-size-fits-all.
+
+      Source: Agent 4 Section 7 (Self-Discover, ICML 2024).
+    tier: Core
+    role: spec-extractor
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/section_selector.py'
+      - 'Function defined: bob3.spec_quality.section_selector.select_sections'
+      - 'Selection drawn from a fixed module set of 8 spec sections: functional, perf, security, error_handling, observability, ops, ux, compat'
+      - 'Output sections.yaml schema-validated: {section_name: REQUIRED|OPTIONAL|SKIP}'
+      - 'Extractor only attempts REQUIRED + OPTIONAL slots; SKIP slots null with rationale'
+      - 'Critic SHALL NOT penalize a missing SKIP slot'
+      - 'Decisions logged to reviews/section_selections.yaml for future training-set use'
+      - 'pytest: tests/test_section_selector_emits_schema_valid_output.py'
+      - 'pytest: tests/test_section_selector_skip_sections_not_penalized.py'
+      - 'pytest: tests/test_section_selector_trivial_feature_skips_nfr.py'
+      - 'integration: bob3.spec_quality.spec_extractor'
+
+  # ----- P0.F: orchestrator hardening (from 2026-05-23 watchdog incident) -----
+
+  F-R7-470:
+    title: Python-based convergence checker with non-empty + name-based comparison
+    description: |
+      On 2026-05-23 the bob3 chain silent-exited the weekend_watchdog three
+      times after round_complete. Root cause: bob4/tools/weekend_watchdog.sh
+      check_convergence shelled out to `sqlite3` (not installed on host),
+      all six queries returned "", trivially-equal empty strings tripped a
+      false-positive convergence and the watchdog exited 0. Secondary bug:
+      check compared `id` (UUIDs differ per gen) instead of `name`, so it
+      could never legitimately fire.
+
+      Replace shell-out with a python module that opens the per-gen DB via
+      stdlib sqlite3 (no CLI dep), compares NAME sets, and refuses to
+      declare convergence on empty sets.
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/convergence_checker.py'
+      - 'Function defined: bob3.orchestrator.convergence_checker.check_three_gens(gen: int) -> ConvergenceResult'
+      - 'Uses stdlib sqlite3 (NEVER shell-out to sqlite3 CLI)'
+      - 'Compares features.name (not features.id) for completed and needs_human status'
+      - 'Returns NOT_CONVERGED if any of the three completed sets is empty'
+      - 'Returns NOT_CONVERGED if any of the three DBs is missing'
+      - 'Returns CONVERGED only when c0==c1==c2 AND h0==h1==h2 AND |c2|>0'
+      - 'Writes CONVERGENCE_ACHIEVED.json with the matching name sets when CONVERGED'
+      - 'pytest: tests/test_convergence_checker_rejects_empty_sets.py'
+      - 'pytest: tests/test_convergence_checker_compares_names_not_uuids.py'
+      - 'pytest: tests/test_convergence_checker_missing_db_returns_not_converged.py'
+      - 'pytest: tests/test_convergence_checker_positive_three_gen_match.py'
+      - 'integration: bob3.orchestrator.weekend_watchdog (replaces inline shell check_convergence)'
+
+  # ----- P0.G: live-defect dual-write fixes (from bob12 round 9 surfacing 2026-05-23) -----
+
+  F-R7-471:
+    title: Stuck-readiness decomposition trigger — kill the eval-demotion treadmill
+    description: |
+      Live failure mode observed in bob3 v.12 round 9 (and previously
+      in bob3 v.11): the readiness gate (F-R6-317) lets a feature with
+      readiness < 0.80 execute as long as `refinement_attempts < budget`.
+      But because the implementer keeps producing the same below-threshold
+      output, every retry burns budget without progress. The feature
+      churns to 5/5, decays readiness further, then lands in needs_human
+      after wasting an order of magnitude more cost than a decomposition
+      would have.
+
+      Replace this with: if a feature has refinement_attempts >= 2 AND
+      readiness_score < 0.80 AND no_readiness_improvement_this_attempt,
+      mark the feature `pending_decomposition` instead of re-executing.
+      Decomposition produces sub-features; the parent only re-enters
+      `ready` once each sub-feature passes its own gate.
+
+      Source: bob3 version 11 eval-demotion-treadmill memory + 2026-05-23
+      bob3 v.12 round 9 observation (Disk-state reconciler F-R7-401
+      churning at readiness=0.70 against 0.80 threshold).
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File modified: src/bob3/orchestrator/run_loop.py'
+      - 'Function defined: bob3.orchestrator.run_loop._should_decompose_instead_of_execute(feature) -> bool'
+      - 'Returns True iff feature.refinement_attempts >= 2 AND feature.readiness_score < 0.80 AND feature.readiness_score did not improve since last attempt'
+      - 'When True: feature.status set to "pending_decomposition", logged with reason and cost saved'
+      - 'When False and below threshold: existing F-R6-317 bypass remains'
+      - 'Cost saved per decomposition logged to metrics.yaml.eval_treadmill_avoided_cost'
+      - 'pytest: tests/test_stuck_readiness_decomposes_after_two_attempts.py'
+      - 'pytest: tests/test_stuck_readiness_does_not_decompose_on_first_attempt.py'
+      - 'pytest: tests/test_stuck_readiness_does_not_decompose_when_improving.py'
+      - 'pytest: tests/test_stuck_readiness_persists_decomposition_status.py'
+      - 'integration: bob3.orchestrator.run_loop._decide_next_action'
+
+  F-R7-472:
+    title: AC artifact-existence verifier — refuse to pass AC when referenced files are missing
+    description: |
+      Live failure mode observed in bob3 v.12 round 9: feature F-R7-401
+      had AC `pytest: tests/test_disk_reconciler_idempotent.py` but the
+      file was never written. pytest returned exit=4 ("no tests
+      collected"); the verifier reported "pytest criterion failed" but
+      this was an exit-code mismatch, not the actual root cause (file
+      missing). Same class of bug for AC `File exists: X` where the
+      file is silently not produced.
+
+      A pre-pytest pass MUST verify that every AC of the form
+      `pytest: <path>`, `File exists: <path>`, `File modified: <path>`,
+      or `Function defined: <module>.<symbol>` resolves to an actual
+      artifact in the produced workspace. Missing artifact → AC fails
+      with reason "ARTIFACT_MISSING:<path>" — never swallowed as a
+      generic pytest exit code.
+
+      Source: bob3 v.12 round 9 disk-state-reconciler observation
+      (2026-05-23).
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/verification/ac_artifact_check.py'
+      - 'Function defined: bob3.verification.ac_artifact_check.verify_ac_artifacts(feature, workspace_dir) -> list[ArtifactMiss]'
+      - 'Recognized AC prefixes: "pytest:", "File exists:", "File modified:", "File modified or created:", "Function defined:"'
+      - 'For "pytest: <path>" — path must exist and pytest --collect-only on it must report >=1 test'
+      - 'For "File exists:" / "File modified:" — path must exist (modified time check optional)'
+      - 'For "Function defined: <module>.<symbol>" — module must import without error AND symbol must be present in dir(module)'
+      - 'Each miss recorded as ArtifactMiss(ac_text=..., expected_path=..., kind=..., reason="ARTIFACT_MISSING")'
+      - 'Verifier fails the feature with explicit reason on any miss — NEVER reported as generic "pytest criterion failed"'
+      - 'pytest: tests/test_ac_artifact_check_detects_missing_pytest_file.py'
+      - 'pytest: tests/test_ac_artifact_check_detects_empty_pytest_file.py'
+      - 'pytest: tests/test_ac_artifact_check_detects_missing_function_symbol.py'
+      - 'pytest: tests/test_ac_artifact_check_passes_when_all_artifacts_present.py'
+      - 'pytest: tests/test_ac_artifact_check_failure_message_includes_specific_path.py'
+      - 'integration: bob3.verification.verifier (runs BEFORE pytest pass)'
+
+  # ----- P0.LOOP_AUTO: research-fleet auto-landed features -----
+  # Landed by the /loop research-fleet 2026-05-23 per user directive
+  # (auto-land, no signoff, max 5 per bob version, focus on note-worthy
+  # capabilities not low-model compensation).
+
+  F-R7-473:
+    title: Environment-capability preflight with research-driven workaround discovery
+    description: |
+      At spec-load: enumerate every external dependency referenced by the
+      spec (CLI tools named in AC text like "sqlite3", "git", "pytest";
+      python modules implied by "Function defined: pkg.mod.sym" paths;
+      tools invoked in shell-AC blocks). Probe each at startup using
+      `command -v` for CLIs and `python3 -c "import X"` for modules.
+
+      For each MISSING dep, spawn a one-shot research sub-agent that
+      surfaces a concrete workaround (stdlib equivalent, alternative
+      package, shim script). Auto-apply the workaround when low-risk
+      (e.g., shim a missing sqlite3 CLI via `python3 -m sqlite3`); halt
+      with operator-actionable error + the discovered workaround as
+      hint when not auto-applicable.
+
+      Motivated by 2026-05-23 incident: sqlite3 CLI was missing on host,
+      bob4/tools/weekend_watchdog.sh check_convergence shelled out to
+      sqlite3, all queries returned "" silently, watchdog false-positive
+      converged 3 times before being diagnosed.
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/env_preflight.py'
+      - 'Function defined: bob3.orchestrator.env_preflight.enumerate_deps(spec_path) -> DepInventory'
+      - 'Function defined: bob3.orchestrator.env_preflight.probe(dep) -> ProbeResult'
+      - 'Function defined: bob3.orchestrator.env_preflight.discover_workaround(missing_dep) -> Workaround | None (spawns research sub-agent)'
+      - 'Function defined: bob3.orchestrator.env_preflight.apply_or_halt(missing_deps, workarounds) -> None'
+      - 'CLI dep enumeration recognizes bash blocks, AC "command:" lines, and AC verbs like "Run pytest:"'
+      - 'Python dep enumeration parses "Function defined: <module>.<symbol>" AC text'
+      - 'Halt message names the missing dep AND the discovered workaround verbatim — never silent skip'
+      - 'Workaround application persisted to runs/<round>/applied_workarounds.yaml'
+      - 'Demonstrator: bob4/research/demonstrators/F-R7-473/spec.yaml declares a feature requiring a deliberately-absent CLI (xxd)'
+      - 'pytest: tests/test_env_preflight_enumerates_cli_deps.py'
+      - 'pytest: tests/test_env_preflight_enumerates_python_deps.py'
+      - 'pytest: tests/test_env_preflight_probe_detects_missing_cli.py'
+      - 'pytest: tests/test_env_preflight_discovers_sqlite3_workaround.py'
+      - 'pytest: tests/test_env_preflight_demo_xxd_in_worktree.py (runs bob3 against demonstrator in git worktree, asserts halt message contains both "xxd" and a workaround hint)'
+      - 'integration: bob3.cli.run (preflight runs before any feature dispatch)'
+
+  F-R7-474:
+    title: Research-augmented retry — path-finding on ambiguous AC failure
+    description: |
+      When a feature reaches refinement_attempts >= 2 AND the previous
+      attempt's failure is classifiable (missing test file, ImportError,
+      type mismatch, contract violation, empty function body, AC text
+      ambiguous on units/types/protocol), spawn a research sub-agent
+      that surfaces 1-2 alternative implementation strategies tailored
+      to the failure class and the AC text. Inject the strategies into
+      the next implementer attempt's context as a "Prior attempts failed
+      for reason X; consider approach A or B" prefix.
+
+      Path-finding distinguishes this from blind retry. The implementer
+      retries with NEW information, not the same prompt against the same
+      stuck context. Cache surfaced strategies in
+      runs/<feature>/research/<attempt_n>.yaml.
+
+      Motivated by the recurring eval-demotion treadmill (F-R6-317 +
+      F-R7-471) where features churn the retry budget without progress
+      because the implementer has no new signal each attempt.
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/path_finding_retry.py'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.classify_failure(failure_log, ac_text) -> FailureClass'
+      - 'FailureClass enum: missing_test_file | import_error | type_mismatch | contract_violation | empty_impl | ambiguous_ac | unknown'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.research_strategies(failure_class, ac_text, prior_impls) -> list[Strategy] (spawns research sub-agent; cached per feature/attempt)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.inject_into_implementer_prompt(strategies, base_prompt) -> str'
+      - 'Triggers ONLY on refinement_attempts >= 2 AND classify_failure() != unknown'
+      - 'Strategies persisted to runs/<feature>/research/attempt_<n>.yaml'
+      - 'Implementer prompt prefix verifiable in runs/<feature>/attempts/<n>/implementer_prompt.txt'
+      - 'Demonstrator: bob4/research/demonstrators/F-R7-474/spec.yaml declares a deliberately ambiguous feature ("implement a fast sort, no further context")'
+      - 'pytest: tests/test_path_finding_classify_missing_test_file.py'
+      - 'pytest: tests/test_path_finding_classify_ambiguous_ac.py'
+      - 'pytest: tests/test_path_finding_research_caches_per_attempt.py'
+      - 'pytest: tests/test_path_finding_does_not_trigger_on_first_attempt.py'
+      - 'pytest: tests/test_path_finding_demo_ambiguous_sort_in_worktree.py (runs bob3 against demonstrator in worktree; asserts attempt-2 implementer prompt differs from attempt-1 and contains strategy text)'
+      - 'integration: bob3.orchestrator.run_loop._execute_feature (called before retry dispatch)'
+
+  F-R7-475:
+    title: Mutation-testing post-impl quality gate (mutmut)
+    description: |
+      Live defect surfaced in bob3 v.12 round 9: bob3 ships features
+      with passing test suites that contain weak assertions
+      (`assert result is not None`-class). F-R7-454 (test-writer
+      sub-agent) and F-R7-462 (CodeT KxK triangulation) raise the floor
+      on test EXISTENCE and tests-vs-impl AGREEMENT, but neither
+      measures test STRENGTH against deliberate impl perturbations.
+
+      Wire mutmut 3.x as a verifier-stage quality gate: after pytest
+      passes, mutate the feature's implementation files (replace
+      arithmetic operators, flip boolean conditions, mutate constants,
+      drop statements) and re-run the test suite. Reject the feature
+      if mutation_score < 0.75 (75% of mutants killed). Surviving
+      mutants persisted to runs/<feature>/mutation_report.json — the
+      implementer's next attempt sees the surviving mutants as
+      "tests cannot distinguish your impl from these broken variants;
+      strengthen assertions."
+
+      Orthogonal to F-R7-462 (CodeT picks the winning impl) and
+      F-R7-453 (property-based ACs); operates on the produced impl,
+      not the spec.
+
+      Source: mutmut 3.x (2024) + cosmic-ray (Sixty North) + Google
+      "Practical Mutation Testing at Scale" (2021). Agent C
+      research-fleet finding 2026-05-23.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/verification/mutation_gate.py'
+      - 'Function defined: bob3.verification.mutation_gate.run_mutation_test(feature, workspace_dir) -> MutationReport'
+      - 'Function defined: bob3.verification.mutation_gate.MutationReport (dataclass: total_mutants, killed, survived, score, surviving_diffs)'
+      - 'Function defined: bob3.verification.mutation_gate.passes_gate(report, threshold=0.75) -> bool'
+      - 'Operators: AOR (arithmetic), ROR (relational), COR (conditional), LCR (logical), SDL (statement deletion), constant-replacement (mutmut defaults)'
+      - 'Runs ONLY after pytest_pass=True (no point mutating impl whose tests already fail)'
+      - 'Surviving mutants written as unified diff blocks to runs/<feature>/mutation_report.json (so implementer can read them)'
+      - 'On failure, feature.status returns to ready with mutation_report.json injected into next implementer prompt as "Tests do not kill these mutants; strengthen assertions to distinguish them."'
+      - 'Mutation gate respects budget: default time_limit_sec=180 per feature; partial runs still report'
+      - 'Demonstrator: bob4/research/demonstrators/F-R7-475/spec.yaml — declares an is_prime(n) feature with deliberately weak tests; assert mutation gate fails and lists surviving constant-mutant'
+      - 'pytest: tests/test_mutation_gate_runs_mutmut.py'
+      - 'pytest: tests/test_mutation_gate_score_calculation.py'
+      - 'pytest: tests/test_mutation_gate_below_threshold_rejects.py'
+      - 'pytest: tests/test_mutation_gate_surviving_mutants_persisted.py'
+      - 'pytest: tests/test_mutation_gate_demo_is_prime_in_worktree.py (runs bob3 against demonstrator in git worktree; asserts mutation_score < 0.75 on weak test set, then asserts score ≥ 0.75 after strengthen-attempt)'
+      - 'integration: bob3.verification.verifier (runs AFTER pytest_pass check)'
+
+F-R7-476:
+  name: triton_kernel_autotuner_subagent
+  description: |
+    GPU/Triton kernel synthesis + autotune sub-agent.
+
+    When a feature's AC mentions GPU kernel, Triton, CUDA, ROCm,
+    or "@triton.jit", the implementer routes through a specialized
+    sub-agent that:
+      1. Emits a Triton kernel skeleton matching the AC signature
+      2. Wraps the kernel in @triton.autotune with a swept config
+         space over BLOCK_M/BLOCK_N/BLOCK_K/num_warps/num_stages
+      3. Runs the sweep on whatever accelerator is visible
+         (torch.cuda.is_available() or torch.xpu / Triton-CPU fallback)
+      4. Persists the winning config to runs/<feature>/triton_config.yaml
+      5. Gates pass on numerical correctness vs a CPU torch reference
+         (atol/rtol from AC, default 1e-5 / 1e-4)
+
+    Restores the GPU code-generation capability that v0.10 had
+    (F-R6-212/213/216 HPC bundle) and was dropped during v0.11
+    spec compaction. Zero overlap with the 37 existing v.12 features.
+
+    Quality bar: this is genuine note-worthy capability (kernel
+    synthesis + autotune + cross-hardware numerical correctness),
+    not prompt-engineering. Runs only when AC triggers it, so
+    zero overhead for non-GPU features.
+
+    Source: OpenAI Triton (Tillet et al. 2019); triton.autotune
+    docs (triton-lang.org); inventory-diff agent finding 2026-05-23
+    (GPU theme = zero coverage in v.12, dropped from v.10).
+  tier: Core
+  role: implementer
+  acceptance_criteria:
+    - 'File exists: src/bob3/implementers/triton_kernel.py'
+    - 'Function defined: bob3.implementers.triton_kernel.is_gpu_feature(spec: FeatureSpec) -> bool (matches AC text for triton/cuda/rocm/@triton.jit/GPU kernel keywords)'
+    - 'Function defined: bob3.implementers.triton_kernel.synthesize_kernel(spec, signature) -> str (returns Python source containing @triton.jit kernel + Python launcher)'
+    - 'Function defined: bob3.implementers.triton_kernel.autotune_kernel(kernel_src, configs, sample_inputs) -> AutotuneResult (dataclass: best_config, all_timings, hardware_label)'
+    - 'Function defined: bob3.implementers.triton_kernel.verify_numerical(kernel_callable, reference_callable, sample_inputs, atol, rtol) -> NumericalReport'
+    - 'Default sweep space: BLOCK_M in [32,64,128], BLOCK_N in [32,64,128], num_warps in [2,4,8], num_stages in [2,3,4] (filtered by triton.autotune constraints)'
+    - 'Hardware fallback order: CUDA -> ROCm (HIP) -> Triton-CPU backend; if none available, feature.status returns to ready with halt_reason="no_accelerator_visible" and skip count incremented'
+    - 'Winning config written to runs/<feature>/triton_config.yaml with keys: best_config, hardware_label, ms_per_call, all_timings'
+    - 'Numerical correctness gate: max_abs_err and max_rel_err vs CPU torch reference must be within AC-supplied tolerances (defaults atol=1e-5, rtol=1e-4); failure returns feature to ready with numerical_report injected into next implementer prompt'
+    - 'Demonstrator: bob4/research/demonstrators/F-R7-476/spec.yaml — declares a softmax_2d(x: Tensor[M,N]) -> Tensor[M,N] feature with AC "implement as Triton kernel; numerically equal to torch.softmax(dim=-1) within atol=1e-5"; assert autotuner picks a config and numerical gate passes against torch.softmax reference'
+    - 'pytest: tests/test_triton_is_gpu_feature_detection.py'
+    - 'pytest: tests/test_triton_synthesize_kernel_signature_matches.py'
+    - 'pytest: tests/test_triton_autotune_picks_best_config.py'
+    - 'pytest: tests/test_triton_numerical_gate_catches_wrong_kernel.py'
+    - 'pytest: tests/test_triton_cpu_fallback_when_no_gpu.py (skipif=triton.runtime has no cpu backend)'
+    - 'pytest: tests/test_triton_demo_softmax_in_worktree.py (runs bob3 against demonstrator in git worktree; asserts triton_config.yaml exists, best_config has BLOCK_M+BLOCK_N keys, numerical_report.max_abs_err < 1e-5)'
+    - 'integration: bob3.implementers.dispatcher routes to triton_kernel.synthesize_kernel when is_gpu_feature returns True (instead of default whole-file implementer)'
+
+F-R7-477:
+  name: voyager_persistent_skill_library
+  description: |
+    Voyager-style persistent skill library for env workarounds + shims.
+
+    F-R7-473 (env-preflight) discovers workarounds for missing deps
+    per-run and persists them only to runs/<round>/applied_workarounds.yaml
+    (run-scoped, not retrievable). The next round / next feature /
+    next bob generation re-pays the research cost to re-discover the
+    same shim (e.g. "xxd missing -> python3 -c 'import binascii'").
+
+    This feature adds a skill_library/ directory of executable shim
+    modules, each with a docstring + natural-language capability
+    description embedded for retrieval. On preflight, BEFORE spawning
+    a research sub-agent, search the library by capability-description
+    similarity; if a hit, apply it. On success of a newly-discovered
+    workaround, write it back to the library. The library is persisted
+    across bob generations via the same disk-state reconciler that
+    already handles features (F-R6-307 / F-R7-401).
+
+    Composes multiplicatively with F-R7-473: each discovered shim
+    becomes a permanent capability, paying back across every future
+    bob generation. Note-worthy capability — Voyager (Wang 2023) is
+    the canonical reference for skill-library lifelong-learning for
+    LLM agents; no recursive AI-builds-AI chain has documented this.
+
+    Source: Wang et al. "Voyager: An Open-Ended Embodied Agent with
+    Large Language Models" (arXiv 2305.16291; github.com/MineDojo/Voyager).
+    Agent B research-fleet finding 2026-05-23 (deferred from prior
+    tick; landed this tick after re-evaluation).
+  tier: Core
+  role: implementer
+  acceptance_criteria:
+    - 'File exists: src/bob3/skill_library/__init__.py'
+    - 'File exists: src/bob3/skill_library/registry.py'
+    - 'File exists: src/bob3/skill_library/embeddings.py'
+    - 'Function defined: bob3.skill_library.registry.add_skill(capability_description: str, shim_module_src: str, provenance: dict) -> str (returns skill_id)'
+    - 'Function defined: bob3.skill_library.registry.search_skills(capability_query: str, top_k: int = 3) -> list[SkillHit] (SkillHit dataclass: skill_id, capability_description, similarity, shim_module_src)'
+    - 'Function defined: bob3.skill_library.registry.apply_skill(skill_id: str, context: dict) -> ApplyResult (executes shim in subprocess, captures stdout/stderr, returns success bool)'
+    - 'Embeddings backend: sentence-transformers all-MiniLM-L6-v2 by default; pluggable via env var BOB3_SKILL_LIBRARY_EMBED_MODEL'
+    - 'Skill storage: skill_library/<skill_id>/ with shim.py + meta.yaml (capability_description, embedding_vector, provenance, success_count, failure_count, created_at, last_used_at)'
+    - 'Integration with F-R7-473: env_preflight.preflight() FIRST calls skill_library.search_skills(missing_dep) with top_k=3 before spawning research sub-agent; if any hit has similarity >= 0.75, apply it and verify; only research if all library hits fail or none returned'
+    - 'On success of a NEW workaround (research path), call skill_library.registry.add_skill() to persist for future runs'
+    - 'Cross-generation persistence: skill_library/ directory survives bob_N -> bob_(N+1) spawn (mirrors how F-R7-401 / F-R6-307 disk reconciler treats features)'
+    - 'Demonstrator: bob4/research/demonstrators/F-R7-477/spec.yaml — declares two features both requiring missing `xxd` tool; first feature triggers research+library insertion; second feature MUST complete with ZERO research_subagent spawn calls (assert via mock-counted spawn_research_subagent)'
+    - 'pytest: tests/test_skill_library_add_and_search.py'
+    - 'pytest: tests/test_skill_library_embedding_similarity_threshold.py'
+    - 'pytest: tests/test_skill_library_apply_skill_executes_shim.py'
+    - 'pytest: tests/test_skill_library_preflight_integration_no_research_on_hit.py'
+    - 'pytest: tests/test_skill_library_persists_new_workaround_after_success.py'
+    - 'pytest: tests/test_skill_library_demo_two_features_xxd_in_worktree.py (runs bob3 against demonstrator in git worktree; asserts feature_2 completes with research_subagent.spawn_count == 0 because feature_1 populated the library)'
+    - 'integration: bob3.env_preflight.preflight (search library FIRST, research only as fallback)'

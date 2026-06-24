@@ -1,0 +1,56 @@
+BACKOFF_BASE_SECONDS: 1.0
+BACKOFF_CAP_SECONDS: 300
+BACKOFF_MULTIPLIER: 2.0
+HEALTH_PROBE_BROKEN_ENV_BACKOFF_SECONDS: 600
+HEALTH_PROBE_MAX_CONSECUTIVE_FAILURES: 3
+HEALTH_PROBE_TIMEOUT_SECONDS: 5
+RETRY_COST_CEILING_USD: 50.0
+RETRY_STORM_MAX_COUNT: 20
+RETRY_STORM_WINDOW_SECONDS: 600
+TRANSIENT_PATTERNS:
+- '429'
+- rate.?limit
+- too many requests
+- RateLimitError
+- ECONNRESET
+- ETIMEDOUT
+- ECONNREFUSED
+- Connection reset by peer
+- connection timed out
+- network.*unreachable
+- Temporary failure in name resolution
+- SSL.*handshake
+- self signed certificate
+- midstream.*abort
+- stream.*interrupted
+- ENOENT.*claude
+- No such file.*claude
+- spawn.*ENOENT
+- command not found.*claude
+- shared API key and is being deprecated
+- Application.*is a shared API key
+- 503 Service Unavailable
+- 502 Bad Gateway
+- upstream connect error
+- certificate.*expired
+- CERT_.*ERROR
+- ProxyError
+- ProcessLookupError
+- ChildProcessError
+discovered_patterns:
+- confidence: medium
+  discovered_at: '2026-05-28T15:09:48.183864+00:00'
+  feature_id: feat-001
+  pattern: test.*pattern
+- confidence: medium
+  discovered_at: '2026-06-17T18:43:33.968144+00:00'
+  feature_id: feat-010
+  pattern: ENOENT.*socket
+- confidence: medium
+  discovered_at: '2026-06-21T17:03:42.385967+00:00'
+  feature_id: feat-010
+  pattern: ECONNRESET
+- confidence: medium
+  discovered_at: '2026-06-21T17:03:42.787199+00:00'
+  feature_id: feat-orch-002
+  pattern: novel.*error

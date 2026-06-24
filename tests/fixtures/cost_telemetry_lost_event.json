@@ -1,0 +1,25 @@
+{
+  "event": "cost_telemetry_lost",
+  "description": "Example structured event emitted when stream-json cost-delta telemetry is missing but work_events indicate non-trivial agent activity. Budget enforcement applies the per-feature ceiling instead of treating zero-cost as a free run.",
+  "fields": {
+    "feature_id": "9b2e1060-example",
+    "work_events": 176217,
+    "exit_code": 1,
+    "attempt": 1,
+    "applied_pessimistic_cost": 20.0
+  },
+  "trigger_conditions": {
+    "reported_cost": 0.0,
+    "work_events_threshold": 100,
+    "work_events_actual": 176217,
+    "cost_nonzero": false
+  },
+  "budget_enforcement_behavior": {
+    "enforcement_disabled": false,
+    "charge_applied": 20.0,
+    "charge_source": "per_feature_ceiling",
+    "free_retry_path": false
+  },
+  "log_level": "WARNING",
+  "log_format": "cost_telemetry_lost: feature_id={feature_id} work_events={work_events} exit_code={exit_code} attempt={attempt} applied_pessimistic_cost={applied_pessimistic_cost}"
+}

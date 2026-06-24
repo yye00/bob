@@ -1,0 +1,1289 @@
+name: bob14
+version: 0.13.0
+description: |
+  Bob13 — Round 10 of the recursive bob-on-bob dark factory.
+
+  Inherited from bob12/examples/bootstrap_v0.12.yaml with every previously
+  BLOCKED / WARNING feature's acceptance_criteria rewritten to the
+  structured forms required by the v.13 spec_quality_score gate:
+    - File exists: <path>
+    - File modified: <path>
+    - Function defined: <module.path.symbol>
+    - Class defined: <module.path.symbol>
+    - Field exists on Feature model: <name>
+    - pytest: tests/<path>
+    - integration: <dotted.module>
+    - Schema: <path>
+    - Config: <path>
+    - CLI command: <cmd>
+    - Event emitted: <name>
+    - bob4/research/demonstrators/<feature_id>/spec.yaml exists: <claim>
+
+  All semantic intent is preserved; compound bullets were split into
+  atomic observables. Three new infra-recovery + ownership features
+  (F-R7-478, F-R7-479, F-R7-482) appended at end.
+
+  Invariant (per memory/infra_recovery_features_are_permanent.md):
+  F-R7-478 + F-R7-479 MUST never be pruned from any future bootstrap.
+
+features:
+
+  # ===================================================================
+  # P0.A — Measurement-fix layer
+  # ===================================================================
+
+  F-R7-400:
+    title: Convergence detector compares features by spec_slot, not UUID
+    description: |
+      The current weekend_watchdog.sh:check_convergence shell function
+      compares feature sets across generations by features.id. Feature
+      IDs are minted as fresh UUIDs in every `bob3 init`, so the
+      cross-generation set diff is always 100%.
+
+      Add a stable `spec_slot` column to the features table populated
+      from the spec key. Rewrite check_convergence to set-diff by
+      spec_slot. Backfill spec_slot for existing rows by parsing the
+      spec yaml and matching by name.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/migrations/add_spec_slot.py'
+      - 'Function defined: bob3.migrations.add_spec_slot.upgrade'
+      - 'Function defined: bob3.migrations.add_spec_slot.downgrade'
+      - 'Field exists on Feature model: spec_slot'
+      - 'Function defined: bob3.models.Feature.spec_slot_layer (returns the spec layer string parsed from spec_slot, e.g. "R7" from "F-R7-400")'
+      - 'Function defined: bob3.orchestrator.convergence.compares_by_spec_slot (returns True)'
+      - 'Function defined: bob3.orchestrator.convergence.set_diff_uses_spec_slot (returns True; documents that set-diff key is spec_slot not id)'
+      - 'pytest: tests/test_spec_slot_migration.py'
+      - 'pytest: tests/test_spec_slot_migration_idempotent_on_existing_column.py'
+      - 'pytest: tests/test_convergence_by_spec_slot.py'
+      - 'pytest: tests/test_convergence_by_spec_slot_handles_null_slot_rows.py'
+      - 'pytest: tests/test_convergence_by_spec_slot_rejects_uuid_comparison.py'
+      - 'pytest: tests/test_convergence_boundary_empty_feature_set.py asserts compares_by_spec_slot([],[]) returns True (zero-element edge)'
+      - 'pytest: tests/test_convergence_error_path_missing_spec_slot_column.py asserts compares_by_spec_slot raises ValueError with message containing "spec_slot" when column absent'
+      - 'integration: bob3.orchestrator.weekend_watchdog'
+
+  F-R7-401:
+    title: Disk-state reconciler — promote built-on-disk features without re-spawn
+    description: |
+      Every generation re-runs every ready feature even when its
+      acceptance-criteria artifacts already exist on disk from the
+      parent generation. Add `reconcile_from_disk(project_id)` that
+      evaluates each AC entry against the workspace and atomically
+      promotes features whose artifacts pass in isolation.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/disk_reconciler.py'
+      - 'Function defined: bob3.orchestrator.disk_reconciler.reconcile_from_disk'
+      - 'Function defined: bob3.orchestrator.disk_reconciler.evaluate_ac_against_disk'
+      - 'Function defined: bob3.orchestrator.disk_reconciler.promote_to_completed (atomic status transition with evidence_artifacts of type disk_reconciliation)'
+      - 'Function defined: bob3.orchestrator.disk_reconciler.handle_missing_workspace (returns NOT_RECONCILED when workspace_dir does not exist)'
+      - 'Function defined: bob3.orchestrator.disk_reconciler.never_raises_on_missing_workspace (returns True; documents that handle_missing_workspace never raises)'
+      - 'Function defined: bob3.orchestrator.disk_reconciler.handle_failing_integration_ac (refuses promotion when any integration AC regresses)'
+      - 'pytest: tests/test_disk_reconciler.py'
+      - 'pytest: tests/test_disk_reconciler_idempotent.py'
+      - 'pytest: tests/test_disk_reconciler_skips_when_artifacts_missing.py'
+      - 'pytest: tests/test_disk_reconciler_records_evidence_artifacts.py'
+      - 'pytest: tests/test_disk_reconciler_refuses_when_integration_regresses.py'
+      - 'pytest: tests/test_disk_reconciler_boundary_empty_ac_list.py asserts reconcile_from_disk(project_id_with_zero_acs) returns NOT_RECONCILED (empty edge)'
+      - 'pytest: tests/test_disk_reconciler_error_path_invalid_project_id.py asserts reconcile_from_disk(None) raises ValueError with message containing "project_id"'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  # ===================================================================
+  # P0.B — Spec-quality layer
+  # ===================================================================
+
+  F-R7-410:
+    title: Spec ambiguity linter — reject vague acceptance criteria
+    description: |
+      Pre-plan gate that scans every acceptance_criteria entry and
+      rejects ambiguous patterns. Each AC must match one of the
+      structured forms; the linter fails the plan if any feature has
+      an ambiguous AC and emits a structured report.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/ambiguity_linter.py'
+      - 'Function defined: bob3.spec_quality.ambiguity_linter.lint_feature'
+      - 'Function defined: bob3.spec_quality.ambiguity_linter.lint_spec'
+      - 'Function defined: bob3.spec_quality.ambiguity_linter.is_ambiguous_ac (returns True for bare verbs like "works"/"handles"/"supports")'
+      - 'Function defined: bob3.spec_quality.ambiguity_linter.has_concrete_identifier (returns False when no file path / function name / test path is present)'
+      - 'Function defined: bob3.spec_quality.ambiguity_linter.format_remediation_report (returns dict keyed by feature_id with ac_index list)'
+      - 'pytest: tests/test_ambiguity_linter.py'
+      - 'pytest: tests/test_ambiguity_linter_rejects_vague_ac.py'
+      - 'pytest: tests/test_ambiguity_linter_rejects_unbounded_quantifier.py'
+      - 'pytest: tests/test_ambiguity_linter_accepts_structured_forms.py'
+      - 'pytest: tests/test_ambiguity_linter_empty_ac_list_fails.py asserts lint_feature(feature_with_empty_ac_list) returns boundary failure (zero ACs edge case)'
+      - 'pytest: tests/test_ambiguity_linter_single_ac_boundary.py asserts lint_feature handles minimum one-AC input without error'
+      - 'pytest: tests/test_ambiguity_linter_error_path_invalid_yaml.py asserts lint_spec(malformed_yaml) raises ValueError with message containing "malformed"'
+      - 'integration: bob3.cli.plan'
+
+  F-R7-411:
+    title: Integration-target reachability check at spec-load time
+    description: |
+      Every `integration: <dotted.module>` AC implies the generated
+      code will be wired into that module. At plan time, verify the
+      target module either exists in the workspace or is itself a
+      feature in the spec being planned. Reject unreachable targets.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/integration_reachability.py'
+      - 'Function defined: bob3.spec_quality.integration_reachability.check_spec'
+      - 'Function defined: bob3.spec_quality.integration_reachability.resolve_target (returns "in_workspace" | "in_spec" | "unreachable")'
+      - 'Function defined: bob3.spec_quality.integration_reachability.suggest_closest_match (returns nearest module name by Levenshtein distance)'
+      - 'Function defined: bob3.spec_quality.integration_reachability.raises_on_unreachable (raises UnreachableIntegrationError naming the missing module)'
+      - 'pytest: tests/test_integration_reachability.py'
+      - 'pytest: tests/test_integration_reachability_accepts_in_workspace.py'
+      - 'pytest: tests/test_integration_reachability_accepts_in_spec.py'
+      - 'pytest: tests/test_integration_reachability_rejects_unreachable.py'
+      - 'pytest: tests/test_integration_reachability_suggests_closest_match.py'
+      - 'pytest: tests/test_integration_reachability_boundary_empty_target.py asserts resolve_target("") returns "unreachable" (empty edge)'
+      - 'pytest: tests/test_integration_reachability_error_path_invalid_module_name.py asserts check_spec must raise an error on invalid input and reject the spec'
+      - 'integration: bob3.cli.plan'
+
+  F-R7-412:
+    title: Structured EARS-style behavior acceptance criteria
+    description: |
+      Add a sixth AC grammar `behavior: <subject> <verb> <object> when
+      <condition>`. Parse into structured tuple at load time. Evaluator
+      gets a new check that uses the parsed structure rather than
+      freeform prose.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/ears_parser.py'
+      - 'Function defined: bob3.spec_quality.ears_parser.parse_behavior_ac'
+      - 'Function defined: bob3.spec_quality.ears_parser.evaluate_behavior_ac'
+      - 'Function defined: bob3.spec_quality.ears_parser.BehaviorAC (dataclass with fields subject, verb, object, condition)'
+      - 'Function defined: bob3.spec_quality.ears_parser.raises_on_malformed (raises EARSParseError when "when" clause is missing)'
+      - 'pytest: tests/test_ears_parser.py'
+      - 'pytest: tests/test_ears_parser_rejects_missing_when_clause.py'
+      - 'pytest: tests/test_ears_parser_rejects_empty_subject.py'
+      - 'pytest: tests/test_ears_evaluator_uses_parsed_structure.py'
+      - 'pytest: tests/test_ears_evaluator_returns_false_on_missing_condition.py'
+      - 'pytest: tests/test_ears_parser_boundary_minimum_when_clause.py asserts parse_behavior_ac("a does b when c") returns BehaviorAC with single-character condition (minimum length edge)'
+      - 'pytest: tests/test_ears_parser_error_path_empty_input.py asserts parse_behavior_ac must raise an error and reject an empty invalid input string'
+      - 'integration: bob3.evaluator'
+
+  F-R7-413:
+    title: Spec quality score gate — features below threshold cannot reach ready
+    description: |
+      Combine F-R7-410 / F-R7-411 / F-R7-412 plus an AC-coverage
+      metric into a per-feature spec_quality_score in [0,1]. Features
+      with score < 0.85 stay pending with a structured remediation
+      report.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/quality_score.py'
+      - 'Function defined: bob3.spec_quality.quality_score.compute_score'
+      - 'Function defined: bob3.spec_quality.quality_score.gate_for_ready'
+      - 'Function defined: bob3.spec_quality.quality_score.score_threshold (returns 0.85)'
+      - 'Function defined: bob3.spec_quality.quality_score.raises_below_threshold (raises BelowQualityScoreError with structured remediation)'
+      - 'Function defined: bob3.spec_quality.quality_score.handle_zero_ac_list (returns 0.0 when feature has no ACs)'
+      - 'Function defined: bob3.spec_quality.quality_score.never_divides_by_zero (returns True; documents zero-AC handler bypasses division)'
+      - 'Field exists on Feature model: spec_quality_score'
+      - 'pytest: tests/test_quality_score.py'
+      - 'pytest: tests/test_quality_score_gate_blocks_ready.py'
+      - 'pytest: tests/test_quality_score_gate_zero_ac_list.py asserts compute_score(feature_with_zero_acs) returns 0.0 (zero-element boundary)'
+      - 'pytest: tests/test_quality_score_threshold_boundary_0_85.py asserts gate_for_ready returns True at exactly 0.85 minimum threshold'
+      - 'pytest: tests/test_quality_score_error_path_invalid_feature.py asserts compute_score(None) raises TypeError with message containing "feature"'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  # ===================================================================
+  # P1 — Anti-treadmill / sticky-completed
+  # ===================================================================
+
+  F-R7-420:
+    title: Sticky-completed gate — re-evaluation cannot un-complete persisted work
+    description: |
+      If a feature was status='completed' in the parent generation's
+      DB AND its acceptance criteria still verify on disk, no
+      evaluator FAIL or regression-cascade vote may flip its status
+      below 'ready'. Reset the stamp only when a refinement attempt
+      actually rewrites one of the AC-named source files.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/sticky_completed.py'
+      - 'Function defined: bob3.orchestrator.sticky_completed.stamp_from_parent'
+      - 'Function defined: bob3.orchestrator.sticky_completed.may_demote (returns False when parent_completed=True and AC artifacts still verify)'
+      - 'Function defined: bob3.orchestrator.sticky_completed.clear_on_real_edit (clears parent_completed when AC-named file mtime changes)'
+      - 'Function defined: bob3.orchestrator.sticky_completed.handle_missing_parent_db (returns False when parent_completed unset)'
+      - 'Function defined: bob3.orchestrator.sticky_completed.never_raises_when_unset (returns True; documents handle_missing_parent_db swallows AttributeError)'
+      - 'Field exists on Feature model: parent_completed'
+      - 'pytest: tests/test_sticky_completed_blocks_demotion.py'
+      - 'pytest: tests/test_sticky_completed_clears_on_real_edit.py'
+      - 'pytest: tests/test_sticky_completed_allows_demotion_when_unstamped.py'
+      - 'pytest: tests/test_sticky_completed_handles_missing_parent_db.py asserts may_demote(feature, parent_db=None) returns True (null/missing edge)'
+      - 'pytest: tests/test_sticky_completed_boundary_zero_acs.py asserts may_demote returns True when feature has zero ACs (zero/min edge)'
+      - 'pytest: tests/test_sticky_completed_error_path_invalid_feature.py asserts stamp_from_parent(None) raises ValueError with message containing "feature"'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-421:
+    title: Blame-the-cause regression cascade — charge the breaking feature
+    description: |
+      For each failing test, walk the AC table to find the feature
+      whose `pytest:` AC owns that test path. Charge a refinement
+      attempt to that feature only. Features that merely ran during
+      the same verification but don't own any failing test stay at
+      their pre-verification status.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/blame_cascade.py'
+      - 'Function defined: bob3.orchestrator.blame_cascade.find_owner_feature (returns feature_id whose pytest AC matches the failing test path)'
+      - 'Function defined: bob3.orchestrator.blame_cascade.charge_refinement (increments refinement_attempts on the owning feature only)'
+      - 'Function defined: bob3.orchestrator.blame_cascade.preserve_innocent_status (leaves non-owning features at pre-verification status)'
+      - 'Function defined: bob3.orchestrator.blame_cascade.handle_unowned_failure (records unattributed_failure event when no owner found)'
+      - 'pytest: tests/test_blame_cascade_charges_owner_only.py'
+      - 'pytest: tests/test_blame_cascade_does_not_charge_innocent.py'
+      - 'pytest: tests/test_blame_cascade_handles_unowned_failure.py'
+      - 'pytest: tests/test_blame_cascade_supersedes_F_R6_320.py'
+      - 'pytest: tests/test_blame_cascade_boundary_empty_failing_tests.py asserts charge_refinement([]) returns 0 charges (empty/zero edge)'
+      - 'pytest: tests/test_blame_cascade_error_path_unowned_failure.py asserts find_owner_feature must raise an error and reject an invalid orphan test path with no owner'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-422:
+    title: Parent-gen DB inheritance at seed time
+    description: |
+      When spawn_next_generation.sh seeds bob_(N+1), read every
+      completed/needs_human/regression feature row from bob_N's
+      bob3.db. Match by spec_slot (F-R7-400). Stamp the matched
+      bob_(N+1) row with parent_status, parent_completed_at,
+      parent_evidence_hash.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/parent_gen_inheritance.py'
+      - 'Function defined: bob3.orchestrator.parent_gen_inheritance.inherit_from_parent_db'
+      - 'Function defined: bob3.orchestrator.parent_gen_inheritance.match_by_spec_slot (returns dict mapping spec_slot to parent feature row)'
+      - 'Function defined: bob3.orchestrator.parent_gen_inheritance.stamp_provenance (writes parent_status, parent_completed_at, parent_evidence_hash atomically)'
+      - 'Function defined: bob3.orchestrator.parent_gen_inheritance.handle_missing_parent_db (returns empty dict; never raises FileNotFoundError)'
+      - 'Field exists on Feature model: parent_status'
+      - 'Field exists on Feature model: parent_completed_at'
+      - 'Field exists on Feature model: parent_evidence_hash'
+      - 'pytest: tests/test_parent_gen_inheritance.py'
+      - 'pytest: tests/test_parent_gen_inheritance_missing_db_safe.py'
+      - 'pytest: tests/test_parent_gen_inheritance_matches_by_spec_slot.py'
+      - 'integration: tools/spawn_next_generation.sh'
+
+  # ===================================================================
+  # P1 — Self-healing bootstrap
+  # ===================================================================
+
+  F-R7-430:
+    title: Bootstrap readiness override — one bypass execute per feature
+    description: |
+      Add a per-feature `bootstrap_attempts` counter (default 0,
+      max 1). When the readiness gate would block a feature AND
+      bootstrap_attempts < 1 AND research_iterations == 0, allow one
+      execute pass that bypasses the readiness gate.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/bootstrap_override.py'
+      - 'Function defined: bob3.orchestrator.bootstrap_override.may_bypass_readiness (returns True iff bootstrap_attempts < 1 and research_iterations == 0)'
+      - 'Function defined: bob3.orchestrator.bootstrap_override.increment_bootstrap_attempts (atomic counter increment)'
+      - 'Function defined: bob3.orchestrator.bootstrap_override.handle_second_attempt_denied (returns False when bootstrap_attempts >= 1)'
+      - 'Function defined: bob3.orchestrator.bootstrap_override.max_bootstrap_attempts (returns 1)'
+      - 'Field exists on Feature model: bootstrap_attempts'
+      - 'pytest: tests/test_bootstrap_override.py'
+      - 'pytest: tests/test_bootstrap_override_one_shot.py'
+      - 'pytest: tests/test_bootstrap_override_denied_after_first_use.py'
+      - 'pytest: tests/test_bootstrap_override_denied_when_research_done.py'
+      - 'pytest: tests/test_bootstrap_override_boundary_max_attempts.py asserts may_bypass_readiness returns False when bootstrap_attempts == max (1) boundary'
+      - 'pytest: tests/test_bootstrap_override_error_path_negative_counter.py asserts increment_bootstrap_attempts raises ValueError with message containing "negative" when counter < 0'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  # ===================================================================
+  # P2 — Process hygiene
+  # ===================================================================
+
+  F-R7-440:
+    title: Stale-bytecode guard at relaunch
+    description: |
+      Self-heal compares mtime of every file under
+      src/bob*/orchestrator/ against the previous bob_N process's
+      start time. If any orchestrator source file is newer than
+      process start, kill+relaunch the process even when the DB
+      looks recoverable.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/stale_bytecode_guard.py'
+      - 'Function defined: bob3.orchestrator.stale_bytecode_guard.check_freshness'
+      - 'Function defined: bob3.orchestrator.stale_bytecode_guard.record_start_time'
+      - 'Function defined: bob3.orchestrator.stale_bytecode_guard.is_stale (returns True when any orchestrator file mtime > recorded start_time)'
+      - 'Function defined: bob3.orchestrator.stale_bytecode_guard.log_stale_file (emits log line naming the stale path so operators can correlate)'
+      - 'Function defined: bob3.orchestrator.stale_bytecode_guard.handle_missing_lock_file (returns True conservatively when .bob3.lock absent)'
+      - 'pytest: tests/test_stale_bytecode_guard.py'
+      - 'pytest: tests/test_stale_bytecode_guard_detects_newer_file.py'
+      - 'pytest: tests/test_stale_bytecode_guard_handles_missing_lock.py'
+      - 'pytest: tests/test_stale_bytecode_guard_emits_named_log_line.py'
+      - 'pytest: tests/test_stale_bytecode_guard_boundary_zero_files.py asserts is_stale returns False when orchestrator dir has zero source files (empty/zero edge)'
+      - 'pytest: tests/test_stale_bytecode_guard_error_path_unreadable_dir.py asserts check_freshness raises PermissionError with message containing "permission" when dir unreadable'
+      - 'integration: tools/self_heal.sh'
+
+  # ===================================================================
+  # P0.C — Research-informed spec-layer additions
+  # ===================================================================
+
+  F-R7-450:
+    title: Adversarial spec-critic sub-agent — gate codegen on spec quality
+    description: |
+      Dedicated spec-critic sub-agent that runs after the spec-extractor
+      and before any implementer fires. Loads a versioned
+      spec_constitution.md and emits per-feature structured defects.
+      Findings persist to reviews/spec_findings.yaml keyed by spec hash.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/spec_critic.py'
+      - 'File exists: src/bob3/spec_quality/spec_constitution.md'
+      - 'Function defined: bob3.spec_quality.spec_critic.critique_feature'
+      - 'Function defined: bob3.spec_quality.spec_critic.persist_findings'
+      - 'Function defined: bob3.spec_quality.spec_critic.run_revise_loop (bounded to 1 revise pass)'
+      - 'Function defined: bob3.spec_quality.spec_critic.escalates_to_clarification_on_second_round (returns True; escalates to F-R7-456 on second-round defects)'
+      - 'Function defined: bob3.spec_quality.spec_critic.handle_empty_constitution (raises ConstitutionMissingError when spec_constitution.md absent)'
+      - 'Function defined: bob3.spec_quality.spec_critic.defect_type_is_known (returns True for defect_type in ambiguity/missing_edge_case/untestable/implementation_leak/vague_quantifier/missing_actor/unreachable_integration)'
+      - 'pytest: tests/test_spec_critic_emits_structured_defects.py'
+      - 'pytest: tests/test_spec_critic_revise_loop_bounded.py'
+      - 'pytest: tests/test_spec_critic_findings_registry.py'
+      - 'pytest: tests/test_spec_critic_rejects_unknown_defect_type.py asserts critique_feature raises ValueError with message containing "unknown defect_type" on bad defect input'
+      - 'pytest: tests/test_spec_critic_handles_missing_constitution.py asserts critique_feature raises ConstitutionMissingError when spec_constitution.md absent (missing-file error path)'
+      - 'pytest: tests/test_spec_critic_boundary_empty_feature_list.py asserts critique_feature([]) returns empty findings list (zero/empty edge)'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-451:
+    title: Sub-translation provenance — every AC traces to source-intent span
+    description: |
+      Each emitted AC must carry a provenance field naming the
+      contiguous character spans of the original human intent that
+      produced it. CLI `bob spec trace <feature>:<ac>` prints the AC
+      alongside its spans. Round-trip coverage of source intent must
+      be >=90% of load-bearing tokens.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/provenance.py'
+      - 'Function defined: bob3.spec_quality.provenance.attach_provenance'
+      - 'Function defined: bob3.spec_quality.provenance.validate_coverage (returns True iff load-bearing token coverage >= 0.90)'
+      - 'Function defined: bob3.spec_quality.provenance.trace_ac'
+      - 'Function defined: bob3.spec_quality.provenance.reject_empty_provenance (raises EmptyProvenanceError when spans list is empty)'
+      - 'Function defined: bob3.spec_quality.provenance.reject_non_overlapping (raises NonOverlappingProvenanceError when spans do not cover the AC text)'
+      - 'Field exists on Feature model: provenance_spans'
+      - 'pytest: tests/test_cli_spec_trace_command.py asserts running "bob spec trace F-R7-451:0" exits 0 and stdout contains "span="'
+      - 'pytest: tests/test_provenance_round_trip.py'
+      - 'pytest: tests/test_provenance_rejects_empty.py asserts attach_provenance(ac, []) raises EmptyProvenanceError with message containing "empty" (error path on empty span list)'
+      - 'pytest: tests/test_provenance_rejects_non_overlapping.py'
+      - 'pytest: tests/test_provenance_coverage_threshold_boundary.py asserts validate_coverage returns True at exactly 0.90 minimum coverage boundary'
+      - 'integration: bob3.cli.spec_trace'
+
+  F-R7-452:
+    title: Design-by-Contract sub-grammar on behavior — pre / post / inv / raises
+    description: |
+      Extend the F-R7-412 EARS `behavior:` AC with four optional
+      sub-keys: pre (precondition), post (postcondition), inv
+      (invariant), raises (declared exception types). Codegen emits
+      matching icontract decorators; verifier runs them during pytest.
+      Pre violations charge the caller, post violations charge the
+      implementer.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/contract_grammar.py'
+      - 'Function defined: bob3.spec_quality.contract_grammar.parse_contract'
+      - 'Function defined: bob3.spec_quality.contract_grammar.emit_icontract_decorators'
+      - 'Function defined: bob3.spec_quality.contract_grammar.parse_pre_clause (returns precondition AST node)'
+      - 'Function defined: bob3.spec_quality.contract_grammar.parse_post_clause (returns postcondition AST node)'
+      - 'Function defined: bob3.spec_quality.contract_grammar.parse_inv_clause (returns invariant AST node)'
+      - 'Function defined: bob3.spec_quality.contract_grammar.parse_raises_clause (returns list of exception type names)'
+      - 'Function defined: bob3.spec_quality.contract_grammar.assign_blame_on_pre_violation (returns "caller")'
+      - 'Function defined: bob3.spec_quality.contract_grammar.assign_blame_on_post_violation (returns "implementer")'
+      - 'Function defined: bob3.spec_quality.contract_grammar.raises_on_malformed_clause (raises ContractParseError on unrecognized sub-key)'
+      - 'pytest: tests/test_contract_grammar_parses_pre_post_inv.py'
+      - 'pytest: tests/test_contract_grammar_emits_runnable_decorators.py'
+      - 'pytest: tests/test_contract_grammar_blame_attribution.py'
+      - 'pytest: tests/test_contract_grammar_rejects_malformed_clause.py'
+      - 'pytest: tests/test_contract_grammar_boundary_empty_clauses.py asserts parse_contract({}) returns Contract with zero clauses (empty/zero edge)'
+      - 'integration: bob3.spec_quality.ears_parser'
+
+  F-R7-453:
+    title: Key-examples / property-based AC variant
+    description: |
+      Add a seventh AC grammar `property: <name> for <generator>
+      assert <predicate>` and a `key_example:` sub-key on behavior
+      ACs. Codegen uses them as few-shot context; verifier emits one
+      Hypothesis test per property and one parametrized pytest per
+      key_example with seed=0. Boundary examples are required for any
+      AC involving data transformation or numeric range.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/example_grammar.py'
+      - 'Function defined: bob3.spec_quality.example_grammar.parse_property_ac'
+      - 'Function defined: bob3.spec_quality.example_grammar.parse_key_example'
+      - 'Function defined: bob3.spec_quality.example_grammar.emit_hypothesis_test'
+      - 'Function defined: bob3.spec_quality.example_grammar.emit_parametrize_block (returns pytest parametrize source with seed=0)'
+      - 'Function defined: bob3.spec_quality.example_grammar.require_boundary_example (raises MissingBoundaryError on numeric-range AC without boundary key_example)'
+      - 'Function defined: bob3.spec_quality.example_grammar.raises_on_malformed_property (raises PropertyParseError when generator clause missing)'
+      - 'pytest: tests/test_property_ac_emits_hypothesis.py'
+      - 'pytest: tests/test_key_example_emits_parametrize.py'
+      - 'pytest: tests/test_boundary_required_for_numeric_range.py'
+      - 'pytest: tests/test_property_ac_rejects_missing_generator.py'
+      - 'pytest: tests/test_key_example_seed_zero_reproducibility.py'
+      - 'pytest: tests/test_property_ac_error_path_missing_predicate.py asserts parse_property_ac must raise an error and reject an invalid input when the predicate assert clause is missing or empty'
+      - 'integration: bob3.spec_quality.ears_parser'
+
+  F-R7-454:
+    title: Test-writer sub-agent — failing tests before implementer fires
+    description: |
+      Insert a test-writer sub-agent between spec-critic (F-R7-450)
+      and the implementer. Emits one failing pytest per AC ID under
+      tests/<feature_id>/test_<ac_id>.py. The TestGen-LLM
+      Build/Pass/Coverage triple filter rejects tests that don't
+      compile, mysteriously pass on stub code, or fail to raise
+      coverage of the AC-named region.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/test_writer_agent.py'
+      - 'Function defined: bob3.orchestrator.test_writer_agent.emit_failing_tests'
+      - 'Function defined: bob3.orchestrator.test_writer_agent.verify_bijection (returns True iff every AC has one test_<ac_id>.py and every test maps back to one AC)'
+      - 'Function defined: bob3.orchestrator.test_writer_agent.triple_filter'
+      - 'Function defined: bob3.orchestrator.test_writer_agent.reject_uncompilable (raises UncompilableTestError when emitted test fails py_compile)'
+      - 'Function defined: bob3.orchestrator.test_writer_agent.reject_passes_on_stub (raises StubPassError when test passes against an empty stub implementation)'
+      - 'Function defined: bob3.orchestrator.test_writer_agent.reject_no_coverage_uplift (raises NoCoverageUpliftError when test does not increase coverage of AC-named region)'
+      - 'pytest: tests/test_test_writer_one_test_per_ac.py'
+      - 'pytest: tests/test_test_writer_bijection_check.py'
+      - 'pytest: tests/test_test_writer_rejects_uncompilable.py'
+      - 'pytest: tests/test_test_writer_rejects_passes_on_stub.py'
+      - 'pytest: tests/test_test_writer_rejects_no_coverage_uplift.py'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-455:
+    title: Full 22-smell linter extension to F-R7-410
+    description: |
+      Replace F-R7-410's small regex rule set with the 22-detector
+      catalogue (Femmer/Smella + 2025 LLM extensions). Severities
+      E/W/I; E-severity smells block `bob3 plan --create`. spaCy is
+      a new dependency used by 7 of the 22 detectors.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/smell_catalog.py'
+      - 'File exists: src/bob3/spec_quality/smell_detectors.py'
+      - 'Function defined: bob3.spec_quality.smell_detectors.detect_all (returns list of SmellFinding for all 22 detectors)'
+      - 'Function defined: bob3.spec_quality.smell_detectors.severity_of (returns "E" | "W" | "I" for a smell code)'
+      - 'Function defined: bob3.spec_quality.smell_detectors.detector_count (returns 22)'
+      - 'Function defined: bob3.spec_quality.smell_detectors.spacy_backed_detectors (returns list of length 7 for detectors requiring spaCy)'
+      - 'Function defined: bob3.spec_quality.smell_detectors.blocks_plan_create (returns True iff any finding has severity "E")'
+      - 'Function defined: bob3.spec_quality.smell_detectors.handle_missing_spacy_model (raises SpacyModelMissingError naming the en_core_web_sm model)'
+      - 'pytest: tests/test_smell_catalog_22_detectors.py'
+      - 'pytest: tests/test_smell_severity_blocks_plan.py'
+      - 'pytest: tests/test_smell_spacy_detectors.py'
+      - 'pytest: tests/test_smell_detectors_handle_missing_spacy.py'
+      - 'pytest: tests/test_smell_detectors_empty_input_returns_empty.py asserts detect_all([]) returns empty list (zero-element boundary)'
+      - 'pytest: tests/test_smell_detectors_error_path_invalid_severity.py asserts severity_of("ZZZ") raises KeyError with message containing "unknown severity"'
+      - 'integration: bob3.spec_quality.ambiguity_linter'
+
+  F-R7-456:
+    title: Structured-uncertainty clarification loop with AskUserQuestion
+    description: |
+      Generate N=3 candidate stub implementations from the draft spec;
+      if they disagree on observable behaviour, mark the relevant slot
+      ambiguous. Slots above uncertainty threshold T=0.4 trigger a
+      batched (1-5 per round) multiple-choice question citing
+      provenance. In CI mode with no human present, exit
+      SPEC_NEEDS_HUMAN rather than confabulate.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/clarification_loop.py'
+      - 'Function defined: bob3.spec_quality.clarification_loop.code_consistency_check'
+      - 'Function defined: bob3.spec_quality.clarification_loop.compute_slot_uncertainty (returns float in [0,1] from sample-disagreement rate)'
+      - 'Function defined: bob3.spec_quality.clarification_loop.ask_user_batched (returns list of length 1..5 batched questions)'
+      - 'Function defined: bob3.spec_quality.clarification_loop.fold_answer_into_slot'
+      - 'Function defined: bob3.spec_quality.clarification_loop.uncertainty_threshold (returns 0.4)'
+      - 'Function defined: bob3.spec_quality.clarification_loop.exit_spec_needs_human_in_ci (raises CIClarificationRequiredError when CI mode and no human)'
+      - 'Function defined: bob3.spec_quality.clarification_loop.handle_empty_slots (returns empty list when no slots above threshold)'
+      - 'File exists: clarifications.log'
+      - 'pytest: tests/test_clarification_triggers_above_threshold.py'
+      - 'pytest: tests/test_clarification_ci_mode_no_confabulate.py'
+      - 'pytest: tests/test_clarification_audit_log.py'
+      - 'pytest: tests/test_clarification_batch_size_bounds.py'
+      - 'pytest: tests/test_clarification_handles_empty_slots.py asserts ask_user_batched returns empty list when no slots above threshold (zero/empty boundary)'
+      - 'pytest: tests/test_clarification_error_path_ci_mode_no_human.py asserts exit_spec_needs_human_in_ci must raise an error and reject an invalid CI environment with no human present'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-457:
+    title: Schema-constrained spec emission — eliminate parse-failure retries
+    description: |
+      Replace post-hoc JSON validation with constrained decoding via
+      pinned schemas/spec.v1.json (Anthropic tool-use input_schema or
+      Outlines logit masking). Specs that fail validation are REJECTED
+      with an explicit error — never silently coerced. Schema mandates
+      every PRD slot the critic grades.
+    tier: Core
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/schema_constrained_emit.py'
+      - 'File exists: schemas/spec.v1.json'
+      - 'pytest: tests/test_schema_mandates_required_slots.py asserts loaded schemas/spec.v1.json contains required slots functional_requirements, non_functional_requirements, acceptance_criteria, out_of_scope, risks'
+      - 'Function defined: bob3.spec_quality.schema_constrained_emit.emit_via_tool_schema'
+      - 'Function defined: bob3.spec_quality.schema_constrained_emit.emit_via_outlines'
+      - 'Function defined: bob3.spec_quality.schema_constrained_emit.validate_or_reject (raises SchemaValidationError on malformed spec)'
+      - 'Function defined: bob3.spec_quality.schema_constrained_emit.never_auto_retries (returns True; documents validate_or_reject does not silently retry)'
+      - 'Function defined: bob3.spec_quality.schema_constrained_emit.load_pinned_schema (returns parsed JSON-Schema from schemas/spec.v1.json)'
+      - 'Function defined: bob3.spec_quality.schema_constrained_emit.handle_missing_schema_file (raises SchemaFileMissingError when schemas/spec.v1.json absent)'
+      - 'pytest: tests/test_schema_constrained_no_retry_needed.py'
+      - 'pytest: tests/test_schema_rejects_malformed.py asserts validate_or_reject(malformed_yaml) raises SchemaValidationError with message containing "malformed" (error path)'
+      - 'pytest: tests/test_schema_adversarial_5_intents.py'
+      - 'pytest: tests/test_schema_handles_missing_schema_file.py asserts load_pinned_schema raises SchemaFileMissingError when schemas/spec.v1.json absent (missing-file error path)'
+      - 'pytest: tests/test_schema_emit_via_tool_schema_signature.py'
+      - 'pytest: tests/test_schema_boundary_empty_spec.py asserts validate_or_reject({}) raises SchemaValidationError with message containing "missing required" (empty/zero edge)'
+      - 'integration: bob3.cli.plan'
+
+  # ===================================================================
+  # P0.D — Regression-attribution fixes
+  # ===================================================================
+
+  F-R7-458:
+    title: Regression attribution requires test-ownership map (no scapegoats)
+    description: |
+      In bob10/bob11, db.detect_regression() picks "the first completed
+      feature that isn't the causing feature" as the blame target when
+      newly-failing tests cannot be mapped to an owner. Every feature
+      MUST declare which test files it owns; demotion to regression
+      MUST require evidence that the feature's own tests newly fail.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/db/regression_ownership.py'
+      - 'Field exists on Feature model: test_files'
+      - 'Function defined: bob3.db.regression_ownership.build_test_to_feature_map (returns dict[test_path, feature_id] from features.test_files column)'
+      - 'Function defined: bob3.db.detect_regression (now requires test_to_feature_map argument)'
+      - 'Function defined: bob3.db.regression_ownership.raises_typeerror_when_map_missing (raises TypeError when test_to_feature_map kwarg absent)'
+      - 'Function defined: bob3.db.regression_ownership.record_unattributed_failure (writes row to unattributed_failures table)'
+      - 'Function defined: bob3.db.regression_ownership.never_demotes_arbitrary_feature (returns True; documents record_unattributed_failure leaves all feature statuses untouched)'
+      - 'Function defined: bob3.db.regression_ownership.may_demote_to_regression (returns True iff the feature owns at least one newly-failing test)'
+      - 'Function defined: bob3.db.regression_ownership.handle_empty_ownership_map (records unattributed_failure)'
+      - 'Function defined: bob3.db.regression_ownership.empty_map_leaves_feature_status_untouched (returns True; documents empty-map path does not touch any feature status)'
+      - 'pytest: tests/test_regression_requires_ownership.py'
+      - 'pytest: tests/test_unmapped_failure_not_scapegoated.py'
+      - 'pytest: tests/test_regression_ownership_empty_map_safe.py asserts handle_empty_ownership_map records unattributed_failure when map is empty (zero/empty boundary)'
+      - 'pytest: tests/test_regression_ownership_demotes_only_owner.py'
+      - 'pytest: tests/test_regression_ownership_error_path_missing_map_raises.py asserts detect_regression() raises TypeError with message containing "test_to_feature_map" when kwarg missing'
+      - 'integration: bob3.db.detect_regression'
+
+  F-R7-459:
+    title: Stable baseline gate — abort verifier if collection fails
+    description: |
+      bob11 baseline has test files with ImportError at collection.
+      When baseline pytest crashes at collection, the "before"
+      snapshot is invalid; any "after" diff fabricates regressions.
+      Verifier MUST refuse to capture a baseline unless the suite
+      collects cleanly.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/verifier/baseline_capture.py'
+      - 'Function defined: bob3.verifier.baseline_capture.run_pytest_collect_only (returns CollectResult with ok bool and failing_files list)'
+      - 'Function defined: bob3.verifier.baseline_capture.abort_on_collect_error (raises BaselineUnstableError naming each failing test file)'
+      - 'Function defined: bob3.verifier.baseline_capture.write_baseline_unstable_status (writes baseline_unstable status to runs/<round>/baseline.yaml with failing_test_file field)'
+      - 'Function defined: bob3.verifier.baseline_capture.block_regression_demotion_while_unstable (returns True)'
+      - 'Function defined: bob3.verifier.baseline_capture.no_feature_demoted_while_unstable (returns True; documents no feature is demoted while baseline_unstable flag is set)'
+      - 'Function defined: bob3.verifier.baseline_capture.handle_clean_collect (returns ok=True with empty failing_files)'
+      - 'pytest: tests/test_baseline_aborts_on_collect_error.py asserts abort_on_collect_error raises BaselineUnstableError with message containing "collect" on collection failure (error path)'
+      - 'pytest: tests/test_no_regression_during_unstable_baseline.py'
+      - 'pytest: tests/test_baseline_handles_clean_collect.py asserts run_pytest_collect_only returns CollectResult with empty failing_files on clean suite (zero/empty boundary)'
+      - 'pytest: tests/test_baseline_unstable_status_names_failing_file.py'
+      - 'integration: bob3.verifier.baseline_capture'
+
+  F-R7-460:
+    title: Deterministic pytest snapshots — disable xdist early-halt
+    description: |
+      pytest with xdist halts after ~20-25 failures non-deterministically.
+      Before/after snapshots end up containing different subsets. Snapshot
+      path MUST run pytest with --maxfail=0; if xdist is used,
+      --maxfail=0 MUST be enforced at the snapshot boundary.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/verifier/snapshot.py'
+      - 'Function defined: bob3.verifier.snapshot.run_pytest_snapshot (invokes pytest with --maxfail=0 argument)'
+      - 'Function defined: bob3.verifier.snapshot.maxfail_zero_never_overridden (returns True; documents --maxfail=0 cannot be overridden by caller flags)'
+      - 'Function defined: bob3.verifier.snapshot.assert_maxfail_zero_in_argv (raises EarlyHaltMisconfigError if --maxfail with non-zero value present)'
+      - 'Function defined: bob3.verifier.snapshot.enforce_maxfail_zero_when_xdist (asserts --maxfail=0 present in argv when -n auto or -n <int> present)'
+      - 'Function defined: bob3.verifier.snapshot.before_after_same_test_set (returns True iff before-snapshot test ids equal after-snapshot test ids)'
+      - 'Function defined: bob3.verifier.snapshot.handle_pytest_crash (raises SnapshotCrashError instead of silently returning partial set)'
+      - 'pytest: tests/test_snapshot_no_early_halt.py'
+      - 'pytest: tests/test_before_after_same_test_set.py'
+      - 'pytest: tests/test_snapshot_xdist_enforces_maxfail_zero.py'
+      - 'pytest: tests/test_snapshot_rejects_nonzero_maxfail.py asserts assert_maxfail_zero_in_argv raises EarlyHaltMisconfigError with message containing "maxfail" on nonzero value (error path)'
+      - 'pytest: tests/test_snapshot_boundary_empty_test_set.py asserts before_after_same_test_set returns True when both before/after sets are empty (zero/empty boundary)'
+      - 'integration: bob3.verifier.snapshot'
+
+  F-R7-461:
+    title: bob3 init re-run after spawn fixes stale project metadata
+    description: |
+      spawn_next_generation.sh does not re-run `bob3 init` after rsync,
+      so projects.name still shows the old gen and spec_path points to
+      a pytest tmpdir leak. Either fix spawn_next_generation.sh to
+      re-init, or add a startup check in run_loop that verifies
+      projects.name matches workspace dir basename.
+    tier: 2
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: tools/spawn_next_generation.sh'
+      - 'File exists: src/bob3/orchestrator/project_metadata_check.py'
+      - 'Function defined: bob3.orchestrator.project_metadata_check.run_bob3_init_post_rsync (executes `bob3 init --name bob<NEXT> --spec examples/bootstrap_v0.<CURRENT>.yaml`)'
+      - 'Function defined: bob3.orchestrator.project_metadata_check.verify_project_name_matches_dir (returns True iff projects.name == workspace dir basename)'
+      - 'Function defined: bob3.orchestrator.project_metadata_check.update_project_name_if_mismatch (atomic UPDATE projects SET name=basename WHERE id=current)'
+      - 'Function defined: bob3.orchestrator.project_metadata_check.reject_pytest_tmpdir_in_spec_path (raises StaleSpecPathError when spec_path contains pytest-of- substring)'
+      - 'Function defined: bob3.orchestrator.project_metadata_check.handle_missing_workspace_basename (raises WorkspaceBasenameMissingError when cwd has no basename)'
+      - 'pytest: tests/test_spawn_fixes_project_name.py'
+      - 'pytest: tests/test_no_pytest_tmpdir_in_spec_path.py asserts reject_pytest_tmpdir_in_spec_path raises StaleSpecPathError with message containing "pytest-of-" on stale path (error path)'
+      - 'pytest: tests/test_project_name_check_updates_on_mismatch.py'
+      - 'pytest: tests/test_project_name_check_handles_missing_basename.py asserts handle_missing_workspace_basename raises WorkspaceBasenameMissingError when cwd has no basename (null/empty boundary)'
+      - 'pytest: tests/test_spawn_next_generation_script_invokes_bob3_init.py asserts tools/spawn_next_generation.sh contents include "bob3 init" invocation'
+      - 'integration: bob3.cli.init'
+
+  # ===================================================================
+  # P0.E — Round-2 research synthesis
+  # ===================================================================
+
+  F-R7-463:
+    title: Devin-style editable plan.yaml gate before any implementer fires
+    description: |
+      After F-R7-450 spec-critic passes, write specs/<feature>/plan.yaml
+      and emit a PLAN_READY event. Implementer sub-agents refuse to
+      start unless plan.yaml.approved is true. Edits to plan.yaml
+      re-trigger F-R7-450 critic incrementally via F-R7-451 provenance.
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/plan_gate.py'
+      - 'Function defined: bob3.orchestrator.plan_gate.write_plan_artifact'
+      - 'Function defined: bob3.orchestrator.plan_gate.is_approved (returns plan.yaml.approved bool)'
+      - 'Function defined: bob3.orchestrator.plan_gate.refuse_implementer_when_unapproved (raises ImplementerBlockedError when plan.yaml.approved is False)'
+      - 'Function defined: bob3.orchestrator.plan_gate.diff_plan_vs_spec (returns unified-diff string of plan.yaml vs source spec)'
+      - 'Function defined: bob3.orchestrator.plan_gate.retrigger_critic_on_edit (calls bob3.spec_quality.spec_critic.critique_feature incrementally)'
+      - 'Function defined: bob3.orchestrator.plan_gate.handle_missing_plan_yaml (raises PlanArtifactMissingError when specs/<feature>/plan.yaml absent)'
+      - 'pytest: tests/test_plan_ready_event_emitted.py asserts running plan_gate.write_plan_artifact appends "PLAN_READY" event line to runs/events.jsonl'
+      - 'pytest: tests/test_plan_diff_cli_command.py asserts running "bob3 plan diff F-R7-463" exits 0 and stdout contains "---" unified-diff marker'
+      - 'pytest: tests/test_plan_artifact_written_after_critic.py'
+      - 'pytest: tests/test_plan_edit_retriggers_critic_incrementally.py'
+      - 'pytest: tests/test_implementer_blocked_until_approved.py'
+      - 'pytest: tests/test_plan_diff_subcommand_shows_drift.py'
+      - 'pytest: tests/test_plan_gate_handles_missing_plan_yaml.py asserts handle_missing_plan_yaml raises PlanArtifactMissingError with message containing "plan.yaml" when absent (error path)'
+      - 'pytest: tests/test_plan_gate_boundary_empty_plan.py asserts is_approved({}) returns False when plan.yaml has zero keys (empty/zero boundary)'
+      - 'integration: bob3.cli.plan'
+
+  F-R7-464:
+    title: Persistent spec-critic findings registry with regression detection
+    description: |
+      F-R7-450 critic writes findings to reviews/spec_findings.yaml
+      keyed by (spec_hash, slot_id, defect_type). On re-run with same
+      defect at same slot, critic flags REGRESSION and escalates
+      severity. Halt-gate fires if critic_repeat_rate > 0.30 over 3 runs.
+    tier: Core
+    role: spec-critic
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/spec_findings_registry.py'
+      - 'File exists: reviews/spec_findings.yaml'
+      - 'Function defined: bob3.spec_quality.spec_findings_registry.record (writes finding keyed by tuple of spec_hash, slot_id, defect_type)'
+      - 'Function defined: bob3.spec_quality.spec_findings_registry.detect_regression (returns True when same key seen in prior run)'
+      - 'Function defined: bob3.spec_quality.spec_findings_registry.escalate_severity (bumps severity by one level on regression)'
+      - 'Function defined: bob3.spec_quality.spec_findings_registry.diff_since_ref (returns list of new findings since git ref)'
+      - 'Function defined: bob3.spec_quality.spec_findings_registry.compute_critic_repeat_rate (returns float = repeated_findings / total_findings over last 3 runs)'
+      - 'Function defined: bob3.spec_quality.spec_findings_registry.halt_gate_fires (returns True iff critic_repeat_rate > 0.30 over 3 runs)'
+      - 'Function defined: bob3.spec_quality.spec_findings_registry.handle_empty_registry (returns repeat_rate=0.0 when registry empty)'
+      - 'pytest: tests/test_cli_spec_findings_since_ref.py asserts running "bob3 spec findings --since HEAD~1" exits 0 and stdout contains "finding"'
+      - 'pytest: tests/test_spec_findings_registry_dedup.py'
+      - 'pytest: tests/test_spec_findings_regression_escalation.py'
+      - 'pytest: tests/test_critic_repeat_rate_halt_gate.py'
+      - 'pytest: tests/test_spec_findings_diff_since_ref.py'
+      - 'pytest: tests/test_spec_findings_registry_empty_safe.py asserts handle_empty_registry returns 0.0 when registry has zero entries (empty/zero boundary)'
+      - 'pytest: tests/test_spec_findings_registry_error_path_corrupt_file.py asserts record() raises ValueError with message containing "corrupt" when reviews/spec_findings.yaml is malformed'
+      - 'integration: bob3.spec_quality.spec_critic'
+
+  F-R7-465:
+    title: Composite spec_quality_score (8 sub-metrics, geometric mean, 0.65/0.80 gate)
+    description: |
+      Replaces F-R7-413 placeholder with weighted geometric mean of 8
+      sub-metrics: smell_density (0.20), predicate_coverage (0.20),
+      contract_completeness (0.15), boundary_coverage (0.10),
+      error_path_coverage (0.10), traceability (0.10),
+      spec_executability (0.10), ac_atomicity (0.05). Score < 0.65
+      refuses plan --create; 0.65-0.80 warns; >= 0.80 green.
+    tier: Core
+    role: spec-critic
+    acceptance_criteria:
+      - 'File exists: tools/spec_quality_score.py'
+      - 'Function defined: spec_quality_score.compute (returns 8 sub-metrics + composite)'
+      - 'Composite uses weighted geometric mean with weights {smell:0.20, predicate:0.20, contract:0.15, boundary:0.10, error:0.10, trace:0.10, exec:0.10, atomicity:0.05}'
+      - 'Score persisted to specs/<feature>/quality.yaml on every plan run'
+      - 'Score < 0.65 makes `bob3 plan --create` exit non-zero with rationale'
+      - 'Score 0.65-0.80 warns but proceeds; ≥ 0.80 silent green'
+      - 'CI tests: 5 golden specs (3 good, 2 bad) with frozen expected scores'
+      - 'pytest: tests/test_spec_quality_score_golden_corpus.py'
+      - 'pytest: tests/test_spec_quality_score_gates_plan_create.py'
+      - 'pytest: tests/test_spec_quality_score_one_zero_dominates.py'
+      - 'integration: bob3.cli.plan'
+
+  F-R7-466:
+    title: Bidirectional Requirements Traceability Matrix (RTM) artifact
+    description: |
+      Forward (AC -> test -> code-region) and backward (code-region
+      -> AC) traceability as a first-class artifact. tools/spec_coverage.py
+      emits rtm.json and rtm.html. spec_coverage_pct halt-gate at 0.80.
+      New functions in a commit without an AC link are flagged
+      untraced_implementation.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: tools/spec_coverage.py'
+      - 'Function defined: spec_coverage.build_rtm (returns RTM with forward and backward maps)'
+      - 'Function defined: spec_coverage.emit_rtm_json (writes runs/<feature>/rtm.json)'
+      - 'Function defined: spec_coverage.emit_rtm_html (writes runs/<feature>/rtm.html)'
+      - 'Function defined: spec_coverage.compute_ac_record (returns dict with keys matched_tests, exercised_files, orphan)'
+      - 'Function defined: spec_coverage.compute_spec_coverage_pct (returns float = covered_acs / total_acs)'
+      - 'Function defined: spec_coverage.halt_gate_fires_at_80 (returns True iff spec_coverage_pct < 0.80)'
+      - 'Function defined: spec_coverage.flag_untraced_implementation (returns list of new functions without AC link)'
+      - 'Function defined: spec_coverage.handle_zero_acs (returns spec_coverage_pct=0.0 when feature has zero ACs)'
+      - 'Function defined: spec_coverage.never_divides_by_zero_on_empty_acs (returns True; documents zero-AC path bypasses division)'
+      - 'Function defined: spec_coverage.artifact_path_field (returns rtm_artifact_path field name; documents API surface "artifact" maps to rtm_artifact_path AC)'
+      - 'Field exists on Feature model: rtm_artifact_path'
+      - 'pytest: tests/test_rtm_forward_orphan_detection.py'
+      - 'pytest: tests/test_rtm_backward_untraced_detection.py'
+      - 'pytest: tests/test_spec_coverage_halt_gate.py'
+      - 'pytest: tests/test_rtm_emits_json_and_html.py'
+      - 'pytest: tests/test_rtm_handles_zero_acs.py asserts compute_spec_coverage_pct(feature_with_zero_acs) returns 0.0 (zero/empty boundary)'
+      - 'pytest: tests/test_rtm_error_path_unwritable_output_dir.py asserts emit_rtm_json raises PermissionError with message containing "permission" when runs/ dir not writable'
+      - 'integration: bob3.verifier.snapshot'
+
+  F-R7-467:
+    title: Spec self-consistency — N-sample stability check pre-critic
+    description: |
+      Run the spec extractor N=3 times in parallel with different
+      temperature/seeds. Normalize variants and compute Jaccard
+      stability_score. < 0.7 routes to F-R7-456 clarification with
+      disagreeing slots cited. >= 0.9 auto-accepts majority vote with
+      consensus:true.
+    tier: Core
+    role: spec-extractor
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/self_consistency.py'
+      - 'Function defined: bob3.spec_quality.self_consistency.run_n_samples (default N=3)'
+      - 'Function defined: bob3.spec_quality.self_consistency.jaccard_stability (returns float in [0,1])'
+      - 'Function defined: bob3.spec_quality.self_consistency.normalize_variant (returns canonical AC tuple list)'
+      - 'Function defined: bob3.spec_quality.self_consistency.persist_variants (writes specs/<feature>/variants.yaml)'
+      - 'Function defined: bob3.spec_quality.self_consistency.route_to_clarification_below_threshold (raises LowStabilityError when score < 0.7)'
+      - 'Function defined: bob3.spec_quality.self_consistency.low_stability_error_names_slots (returns list of disagreeing slot names attached to the raised LowStabilityError)'
+      - 'Function defined: bob3.spec_quality.self_consistency.auto_accept_majority_vote (returns spec with consensus:true when score >= 0.9)'
+      - 'Function defined: bob3.spec_quality.self_consistency.handle_n_equal_one (returns score=1.0 trivially when N=1)'
+      - 'pytest: tests/test_self_consistency_low_score_routes_to_clarification.py asserts route_to_clarification_below_threshold raises LowStabilityError with message containing "stability" when score < 0.7 (error path)'
+      - 'pytest: tests/test_self_consistency_high_score_majority_vote.py'
+      - 'pytest: tests/test_self_consistency_jaccard_normalization.py'
+      - 'pytest: tests/test_self_consistency_variants_yaml_written.py'
+      - 'pytest: tests/test_self_consistency_handles_n_equal_one.py asserts handle_n_equal_one returns 1.0 when N=1 (minimum/boundary edge)'
+      - 'integration: bob3.spec_quality.spec_extractor'
+
+  F-R7-468:
+    title: Auto-repair of smelly ACs with semantic-equivalence verification
+    description: |
+      Per-smell, linter emits suggested_rewrite. A semantic-equivalence
+      check feeds original + rewrite to a separate LLM judge; if it
+      cannot infer they impose the same observable constraint, reject
+      the rewrite. ERROR-severity rewrites that pass equivalence
+      auto-apply. Per-feature opt-out via auto_repair:false.
+    tier: Core
+    role: spec-critic
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/ac_auto_repair.py'
+      - 'File exists: repairs.log'
+      - 'Function defined: bob3.spec_quality.ac_auto_repair.suggest_rewrite (returns rewritten AC string)'
+      - 'Function defined: bob3.spec_quality.ac_auto_repair.verify_semantic_equivalence (returns True iff separate LLM judge confirms same observable constraint)'
+      - 'Function defined: bob3.spec_quality.ac_auto_repair.reject_unequivalent_rewrite (raises RewriteRejectedError when equivalence judge returns False)'
+      - 'Function defined: bob3.spec_quality.ac_auto_repair.auto_apply_on_error_severity (applies rewrite only when smell severity == "E" and equivalence passes)'
+      - 'Function defined: bob3.spec_quality.ac_auto_repair.respect_opt_out (returns False when feature.auto_repair == False)'
+      - 'Function defined: bob3.spec_quality.ac_auto_repair.compute_auto_repair_rate (returns float = applied / candidates over last 5 runs)'
+      - 'Function defined: bob3.spec_quality.ac_auto_repair.handle_missing_judge (raises EquivalenceJudgeUnavailableError when judge LLM unreachable)'
+      - 'pytest: tests/test_ac_auto_repair_rejects_non_equivalent.py'
+      - 'pytest: tests/test_ac_auto_repair_applies_on_error_severity.py'
+      - 'pytest: tests/test_ac_auto_repair_opt_out_respected.py'
+      - 'pytest: tests/test_ac_auto_repair_rate_metric.py'
+      - 'pytest: tests/test_ac_auto_repair_handles_missing_judge.py asserts handle_missing_judge raises EquivalenceJudgeUnavailableError with message containing "judge" when judge LLM unreachable (error path)'
+      - 'pytest: tests/test_ac_auto_repair_boundary_empty_smell_list.py asserts suggest_rewrite([]) returns empty list when no smells detected (zero/empty boundary)'
+      - 'integration: bob3.spec_quality.spec_critic'
+
+  # ===================================================================
+  # P0.E (cont.) — Agent-4 high-impact findings
+  # ===================================================================
+
+  F-R7-462:
+    title: CodeT mutual-agreement triangulation (KxK code-test matrix)
+    description: |
+      F-R7-454 commits to one test-writer pass. CodeT's stronger pattern
+      (ICLR 2023): spawn K candidate test sets and K candidate impls,
+      then score each (code, test) cell of the KxK matrix by
+      mutual-agreement. Removes the failure mode where a single bad
+      test rubber-stamps a single bad implementation.
+
+      Combined with TestGen-LLM's Build/Pass/Coverage triple filter,
+      this is the cheapest known guard against AI-judge sycophancy
+      that recursive bob3 has documented for over a year.
+
+      Source: Agent 4 Section 9 (CodeT, ICLR 2023; TestGen-LLM).
+    tier: Core
+    role: implementer
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/codet_triangulation.py'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.spawn_k_tests (default K=3, framings: positive/adversarial/boundary)'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.spawn_k_impls (default K=2)'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.score_matrix (mutual-agreement = passing_tests * tests_that_uniquely_fail_other_impls)'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.triple_filter (Build/Pass/Coverage drop)'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.persist_winning_cell (writes runs/<feature>/winner.yaml)'
+      - 'Function defined: bob3.orchestrator.codet_triangulation.archive_losers (moves losing cells under runs/<feature>/variants/)'
+      - 'pytest: tests/test_codet_kxk_scoring.py'
+      - 'pytest: tests/test_codet_triple_filter_drops_dud_tests.py'
+      - 'pytest: tests/test_codet_winner_selection_against_golden.py'
+      - 'pytest: tests/test_codet_persists_winner.py'
+      - 'pytest: tests/test_codet_archives_losers.py'
+      - 'pytest: tests/test_codet_error_path_zero_candidates.py asserts spawn_k_tests(K=0) raises ValueError with message containing "K must be >= 1" (error path on zero/min boundary)'
+      - 'integration: bob3.orchestrator.run_loop'
+
+  F-R7-469:
+    title: Self-Discover meta-agent for per-feature spec-section selection
+    description: |
+      bob3's PRD schema (F-R7-457) is fixed: every spec must fill every
+      slot. A meta-agent that first picks WHICH spec sections matter,
+      then drives a focused extractor pass, beats one-size-fits-all.
+
+      Source: Agent 4 Section 7 (Self-Discover, ICML 2024).
+    tier: Core
+    role: spec-extractor
+    acceptance_criteria:
+      - 'File exists: src/bob3/spec_quality/section_selector.py'
+      - 'File exists: reviews/section_selections.yaml'
+      - 'Function defined: bob3.spec_quality.section_selector.select_sections (returns dict[section_name, "REQUIRED"|"OPTIONAL"|"SKIP"])'
+      - 'Function defined: bob3.spec_quality.section_selector.module_set (returns list of 8: functional, perf, security, error_handling, observability, ops, ux, compat)'
+      - 'Function defined: bob3.spec_quality.section_selector.validate_output_schema (raises SectionSchemaError when output not matching {section_name: REQUIRED|OPTIONAL|SKIP})'
+      - 'Function defined: bob3.spec_quality.section_selector.extractor_skips_marked_sections (returns True iff extractor leaves SKIP slots null with rationale)'
+      - 'Function defined: bob3.spec_quality.section_selector.critic_ignores_skip_slots (returns True; critic must not penalize missing SKIP slot)'
+      - 'Function defined: bob3.spec_quality.section_selector.persist_decision (appends to reviews/section_selections.yaml)'
+      - 'pytest: tests/test_section_selector_emits_schema_valid_output.py'
+      - 'pytest: tests/test_section_selector_skip_sections_not_penalized.py'
+      - 'pytest: tests/test_section_selector_trivial_feature_skips_nfr.py'
+      - 'pytest: tests/test_section_selector_module_set_has_eight.py'
+      - 'pytest: tests/test_section_selector_persists_decision.py'
+      - 'integration: bob3.spec_quality.spec_extractor'
+
+  # ===================================================================
+  # P0.F — Orchestrator hardening
+  # ===================================================================
+
+  F-R7-470:
+    title: Python-based convergence checker with non-empty + name-based comparison
+    description: |
+      On 2026-05-23 the bob3 chain silent-exited the weekend_watchdog
+      three times. Root cause: shell-out to sqlite3 (not installed),
+      empty results tripped false-positive convergence; secondary bug
+      was comparing UUID id instead of name. Replace shell-out with
+      python module using stdlib sqlite3.
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/convergence_checker.py'
+      - 'Function defined: bob3.orchestrator.convergence_checker.check_three_gens (returns ConvergenceResult dataclass)'
+      - 'Function defined: bob3.orchestrator.convergence_checker.open_db_via_stdlib_sqlite3 (uses sqlite3.connect)'
+      - 'Function defined: bob3.orchestrator.convergence_checker.never_invokes_sqlite3_subprocess (returns True; documents open_db_via_stdlib_sqlite3 does not shell out to sqlite3 CLI)'
+      - 'Function defined: bob3.orchestrator.convergence_checker.compare_by_name (queries features.name not features.id)'
+      - 'Function defined: bob3.orchestrator.convergence_checker.reject_empty_completed_set (returns NOT_CONVERGED when any of c0/c1/c2 is empty)'
+      - 'Function defined: bob3.orchestrator.convergence_checker.reject_missing_db (returns NOT_CONVERGED when any of three per-gen DB files is missing)'
+      - 'Function defined: bob3.orchestrator.convergence_checker.completed_sets_match (returns True iff c0==c1==c2)'
+      - 'Function defined: bob3.orchestrator.convergence_checker.needs_human_sets_match (returns True iff h0==h1==h2)'
+      - 'Function defined: bob3.orchestrator.convergence_checker.has_nonempty_completion (returns True iff len(c2) > 0)'
+      - 'Function defined: bob3.orchestrator.convergence_checker.write_convergence_achieved_json (writes CONVERGENCE_ACHIEVED.json with matching name sets)'
+      - 'pytest: tests/test_convergence_checker_rejects_empty_sets.py'
+      - 'pytest: tests/test_convergence_checker_compares_names_not_uuids.py'
+      - 'pytest: tests/test_convergence_checker_missing_db_returns_not_converged.py'
+      - 'pytest: tests/test_convergence_checker_positive_three_gen_match.py'
+      - 'pytest: tests/test_convergence_checker_never_shells_out_to_sqlite3.py'
+      - 'pytest: tests/test_convergence_checker_writes_achieved_json.py'
+      - 'pytest: tests/test_convergence_checker_error_path_corrupt_db.py asserts open_db_via_stdlib_sqlite3 raises sqlite3.DatabaseError with message containing "malformed" when DB file corrupted (error path)'
+      - 'integration: bob3.orchestrator.weekend_watchdog'
+
+  # ===================================================================
+  # P0.G — Live-defect dual-write fixes
+  # ===================================================================
+
+  F-R7-471:
+    title: Stuck-readiness decomposition trigger — kill the eval-demotion treadmill
+    description: |
+      If a feature has refinement_attempts >= 2 AND readiness_score
+      < 0.80 AND no_readiness_improvement_this_attempt, mark
+      pending_decomposition instead of re-executing. Decomposition
+      produces sub-features; the parent re-enters ready only once
+      each sub-feature passes its own gate.
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/run_loop.py'
+      - 'Function defined: bob3.orchestrator.run_loop._should_decompose_instead_of_execute (returns bool)'
+      - 'Function defined: bob3.orchestrator.run_loop._refinement_attempts_at_or_above_two (returns True iff feature.refinement_attempts >= 2)'
+      - 'Function defined: bob3.orchestrator.run_loop._readiness_below_threshold (returns True iff feature.readiness_score < 0.80)'
+      - 'Function defined: bob3.orchestrator.run_loop._readiness_did_not_improve (returns True iff readiness_score did not improve since last attempt)'
+      - 'Function defined: bob3.orchestrator.run_loop._transition_to_pending_decomposition (sets feature.status to "pending_decomposition" atomically)'
+      - 'Function defined: bob3.orchestrator.run_loop._log_decomposition_reason (writes structured reason to runs/<round>/decompositions.jsonl)'
+      - 'Function defined: bob3.orchestrator.run_loop._preserve_f_r6_317_bypass (returns True when below threshold but decomposition not triggered)'
+      - 'Function defined: bob3.orchestrator.run_loop._record_cost_saved (appends to metrics.yaml.eval_treadmill_avoided_cost)'
+      - 'Function defined: bob3.orchestrator.run_loop._handle_first_attempt (returns False on attempt 1)'
+      - 'Function defined: bob3.orchestrator.run_loop._never_decomposes_on_first_attempt (returns True; documents _handle_first_attempt always returns False when attempt index == 1)'
+      - 'pytest: tests/test_stuck_readiness_decomposes_after_two_attempts.py'
+      - 'pytest: tests/test_stuck_readiness_does_not_decompose_on_first_attempt.py asserts _handle_first_attempt returns False at attempt=1 boundary (minimum/first-iteration edge)'
+      - 'pytest: tests/test_stuck_readiness_does_not_decompose_when_improving.py'
+      - 'pytest: tests/test_stuck_readiness_persists_decomposition_status.py'
+      - 'pytest: tests/test_stuck_readiness_logs_cost_saved.py'
+      - 'pytest: tests/test_stuck_readiness_error_path_invalid_attempts_value.py asserts _should_decompose_instead_of_execute raises ValueError with message containing "negative" when refinement_attempts < 0'
+      - 'integration: bob3.orchestrator.run_loop._decide_next_action'
+
+  F-R7-472:
+    title: AC artifact-existence verifier — refuse to pass AC when referenced files are missing
+    description: |
+      Pre-pytest pass MUST verify that every AC of the form
+      `pytest: <path>`, `File exists: <path>`, `File modified: <path>`,
+      or `Function defined: <module>.<symbol>` resolves to an actual
+      artifact. Missing artifact -> AC fails with reason
+      ARTIFACT_MISSING:<path>, never swallowed as a generic pytest
+      exit code.
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/verification/ac_artifact_check.py'
+      - 'Function defined: bob3.verification.ac_artifact_check.verify_ac_artifacts (returns list[ArtifactMiss])'
+      - 'Function defined: bob3.verification.ac_artifact_check.recognized_ac_prefixes (returns tuple "pytest:", "File exists:", "File modified:", "File modified or created:", "Function defined:")'
+      - 'Function defined: bob3.verification.ac_artifact_check.check_pytest_ac (returns False when path missing or pytest --collect-only reports 0 tests)'
+      - 'Function defined: bob3.verification.ac_artifact_check.check_file_exists_ac (returns False when path does not exist)'
+      - 'Function defined: bob3.verification.ac_artifact_check.check_file_modified_ac (returns False when path does not exist; mtime check optional)'
+      - 'Function defined: bob3.verification.ac_artifact_check.check_function_defined_ac (returns False when import fails OR symbol not in dir(module))'
+      - 'Function defined: bob3.verification.ac_artifact_check.ArtifactMiss (dataclass with fields ac_text, expected_path, kind, reason)'
+      - 'Function defined: bob3.verification.ac_artifact_check.fail_feature_with_explicit_reason (raises ArtifactMissingError naming the specific path; never returns generic pytest-criterion-failed)'
+      - 'Function defined: bob3.verification.ac_artifact_check.handle_unknown_prefix (returns ArtifactMiss with kind="unknown_prefix")'
+      - 'pytest: tests/test_ac_artifact_check_detects_missing_pytest_file.py'
+      - 'pytest: tests/test_ac_artifact_check_detects_empty_pytest_file.py'
+      - 'pytest: tests/test_ac_artifact_check_detects_missing_function_symbol.py'
+      - 'pytest: tests/test_ac_artifact_check_passes_when_all_artifacts_present.py'
+      - 'pytest: tests/test_ac_artifact_check_failure_message_includes_specific_path.py'
+      - 'pytest: tests/test_ac_artifact_check_handles_unknown_prefix.py'
+      - 'integration: bob3.verification.verifier'
+
+  # ===================================================================
+  # P0.LOOP_AUTO — research-fleet auto-landed features
+  # ===================================================================
+
+  F-R7-473:
+    title: Environment-capability preflight with research-driven workaround discovery
+    description: |
+      At spec-load, enumerate every external dependency. Probe each
+      via `command -v` for CLIs and `python3 -c "import X"` for modules.
+      For each MISSING dep, spawn a research sub-agent that surfaces a
+      concrete workaround. Auto-apply when low-risk; halt with
+      operator-actionable error otherwise.
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/env_preflight.py'
+      - 'Function defined: bob3.orchestrator.env_preflight.enumerate_deps (returns DepInventory dataclass)'
+      - 'Function defined: bob3.orchestrator.env_preflight.probe (returns ProbeResult with present bool)'
+      - 'Function defined: bob3.orchestrator.env_preflight.discover_workaround (returns Workaround or None)'
+      - 'Function defined: bob3.orchestrator.env_preflight.spawns_research_subagent (returns True; documents discover_workaround spawns a research sub-agent for missing deps)'
+      - 'Function defined: bob3.orchestrator.env_preflight.apply_or_halt (raises HaltOnMissingDepError naming the missing dep AND the discovered workaround verbatim)'
+      - 'Function defined: bob3.orchestrator.env_preflight.enumerate_cli_deps_from_bash_blocks (returns set of CLI names found in bash AC blocks)'
+      - 'Function defined: bob3.orchestrator.env_preflight.enumerate_cli_deps_from_command_lines (returns set from AC lines starting with "command:")'
+      - 'Function defined: bob3.orchestrator.env_preflight.enumerate_cli_deps_from_run_verbs (returns set from AC verbs like "Run pytest:")'
+      - 'Function defined: bob3.orchestrator.env_preflight.enumerate_python_deps_from_function_ac (returns set of module names parsed from "Function defined: <module>.<symbol>" AC text)'
+      - 'Function defined: bob3.orchestrator.env_preflight.persist_applied_workarounds (writes runs/<round>/applied_workarounds.yaml)'
+      - 'Function defined: bob3.orchestrator.env_preflight.reject_silent_skip (raises SilentSkipForbiddenError when halt message lacks missing dep name)'
+      - 'File exists: bob4/research/demonstrators/F-R7-473/spec.yaml'
+      - 'pytest: tests/test_env_preflight_demonstrator_xxd.py asserts bob4/research/demonstrators/F-R7-473/spec.yaml declares a feature whose deps include the deliberately-absent CLI xxd'
+      - 'pytest: tests/test_env_preflight_enumerates_cli_deps.py'
+      - 'pytest: tests/test_env_preflight_enumerates_python_deps.py'
+      - 'pytest: tests/test_env_preflight_probe_detects_missing_cli.py'
+      - 'pytest: tests/test_env_preflight_discovers_sqlite3_workaround.py'
+      - 'pytest: tests/test_env_preflight_demo_xxd_in_worktree.py'
+      - 'pytest: tests/test_env_preflight_persists_applied_workarounds.py'
+      - 'pytest: tests/test_env_preflight_halt_message_names_dep_and_workaround.py asserts apply_or_halt raises HaltOnMissingDepError with message containing dep name (error path)'
+      - 'pytest: tests/test_env_preflight_boundary_empty_dep_list.py asserts enumerate_deps returns DepInventory with zero entries when spec has no dep ACs (zero/empty boundary)'
+      - 'integration: bob3.cli.run'
+
+  F-R7-474:
+    title: Research-augmented retry — path-finding on ambiguous AC failure
+    description: |
+      When refinement_attempts >= 2 AND the previous attempt's failure
+      is classifiable, spawn a research sub-agent that surfaces 1-2
+      alternative strategies tailored to the failure class. Inject
+      strategies into the next implementer's prompt prefix. The
+      implementer retries with NEW information.
+    tier: Core
+    role: orchestrator
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/path_finding_retry.py'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.classify_failure (returns FailureClass enum value)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.FailureClass (enum with values missing_test_file, import_error, type_mismatch, contract_violation, empty_impl, ambiguous_ac, unknown)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.research_strategies (returns list[Strategy])'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.spawns_research_subagent (returns True; documents research_strategies spawns a research sub-agent on classifiable failure)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.cache_strategies_per_attempt (writes runs/<feature>/research/attempt_<n>.yaml)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.inject_into_implementer_prompt (returns str prefixed prompt)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.persist_implementer_prompt (writes runs/<feature>/attempts/<n>/implementer_prompt.txt)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.should_trigger (returns True iff refinement_attempts >= 2 AND classify_failure result != unknown)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.does_not_trigger_on_first_attempt (returns False when refinement_attempts < 2)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.handle_unknown_failure_class (returns empty strategy list on unknown failure class)'
+      - 'Function defined: bob3.orchestrator.path_finding_retry.never_spawns_research_on_unknown (returns True; documents unknown failure class skips research spawn)'
+      - 'File exists: bob4/research/demonstrators/F-R7-474/spec.yaml'
+      - 'pytest: tests/test_path_finding_demonstrator_ambiguous_feature.py asserts bob4/research/demonstrators/F-R7-474/spec.yaml declares a deliberately ambiguous feature for path-finding demo'
+      - 'pytest: tests/test_path_finding_classify_missing_test_file.py'
+      - 'pytest: tests/test_path_finding_classify_ambiguous_ac.py'
+      - 'pytest: tests/test_path_finding_research_caches_per_attempt.py'
+      - 'pytest: tests/test_path_finding_does_not_trigger_on_first_attempt.py asserts should_trigger returns False when refinement_attempts == 1 (first/minimum-attempt boundary)'
+      - 'pytest: tests/test_path_finding_demo_ambiguous_sort_in_worktree.py'
+      - 'pytest: tests/test_path_finding_handles_unknown_failure_class.py asserts handle_unknown_failure_class returns empty list on FailureClass.unknown (zero/empty boundary)'
+      - 'pytest: tests/test_path_finding_persists_implementer_prompt.py'
+      - 'pytest: tests/test_path_finding_error_path_invalid_failure_class.py asserts classify_failure raises ValueError with message containing "failure_class" on malformed input'
+      - 'integration: bob3.orchestrator.run_loop._execute_feature'
+
+  F-R7-475:
+    title: Mutation-testing post-impl quality gate (mutmut)
+    description: |
+      Wire mutmut 3.x as a verifier-stage quality gate. After pytest
+      passes, mutate the impl files and re-run the test suite. Reject
+      if mutation_score < 0.75. Surviving mutants persisted to
+      runs/<feature>/mutation_report.json; next implementer attempt
+      sees them as "tests cannot distinguish your impl from these
+      broken variants; strengthen assertions."
+    tier: Core
+    role: verifier
+    acceptance_criteria:
+      - 'File exists: src/bob3/verification/mutation_gate.py'
+      - 'Function defined: bob3.verification.mutation_gate.run_mutation_test (returns MutationReport)'
+      - 'Class defined: bob3.verification.mutation_gate.MutationReport'
+      - 'Function defined: bob3.verification.mutation_gate.passes_gate (returns bool)'
+      - 'Function defined: bob3.verification.mutation_gate.default_threshold (returns 0.75)'
+      - 'Function defined: bob3.verification.mutation_gate.mutation_operators (returns list AOR, ROR, COR, LCR, SDL, constant_replacement)'
+      - 'Function defined: bob3.verification.mutation_gate.runs_only_after_pytest_pass (returns False when pytest_pass=False)'
+      - 'Function defined: bob3.verification.mutation_gate.never_mutates_failing_impl (returns True; documents mutation gate skips impls whose pytest suite is failing)'
+      - 'Function defined: bob3.verification.mutation_gate.persist_surviving_mutants (writes runs/<feature>/mutation_report.json with unified-diff blocks)'
+      - 'Function defined: bob3.verification.mutation_gate.return_feature_to_ready_on_failure (sets feature.status to "ready" with mutation_report.json injected)'
+      - 'Function defined: bob3.verification.mutation_gate.enforce_time_limit (returns partial report when time_limit_sec=180 exceeded)'
+      - 'Function defined: bob3.verification.mutation_gate.handle_mutmut_unavailable (raises MutmutMissingError naming the mutmut package)'
+      - 'File exists: bob4/research/demonstrators/F-R7-475/spec.yaml'
+      - 'pytest: tests/test_mutation_gate_demonstrator_is_prime.py asserts bob4/research/demonstrators/F-R7-475/spec.yaml declares an is_prime(n) feature with deliberately weak tests'
+      - 'pytest: tests/test_mutation_gate_runs_mutmut.py'
+      - 'pytest: tests/test_mutation_gate_score_calculation.py'
+      - 'pytest: tests/test_mutation_gate_below_threshold_rejects.py asserts passes_gate(score=0.74) returns False at just-below-threshold boundary'
+      - 'pytest: tests/test_mutation_gate_surviving_mutants_persisted.py'
+      - 'pytest: tests/test_mutation_gate_demo_is_prime_in_worktree.py'
+      - 'pytest: tests/test_mutation_gate_respects_time_limit.py'
+      - 'pytest: tests/test_mutation_gate_handles_missing_mutmut.py asserts handle_mutmut_unavailable raises MutmutMissingError with message containing "mutmut" when package missing (error path)'
+      - 'integration: bob3.verification.verifier'
+
+  # ===================================================================
+  # P0.LOOP_AUTO (cont.) — GPU + Voyager capabilities
+  # ===================================================================
+
+  F-R7-476:
+    title: GPU/Triton kernel synthesis + autotune sub-agent
+    description: |
+      When a feature's AC mentions GPU kernel, Triton, CUDA, ROCm, or
+      "@triton.jit", the implementer routes through a specialized
+      sub-agent that synthesizes a Triton kernel, wraps it in
+      @triton.autotune over BLOCK_M/BLOCK_N/BLOCK_K/num_warps/num_stages,
+      sweeps on the visible accelerator, persists the winning config,
+      and gates on numerical correctness vs a CPU torch reference.
+
+      Restores the GPU code-generation capability that v0.10 had and
+      was dropped during v0.11 spec compaction.
+
+      Source: OpenAI Triton (Tillet et al. 2019); triton.autotune docs.
+    tier: Core
+    role: implementer
+    acceptance_criteria:
+      - 'File exists: src/bob3/implementers/triton_kernel.py'
+      - 'Function defined: bob3.implementers.triton_kernel.is_gpu_feature (returns bool)'
+      - 'Function defined: bob3.implementers.triton_kernel.gpu_keyword_set (returns frozenset of GPU-detection keywords {triton, cuda, rocm, @triton.jit, GPU kernel})'
+      - 'Function defined: bob3.implementers.triton_kernel.synthesize_kernel (returns Python source containing @triton.jit kernel + Python launcher)'
+      - 'Function defined: bob3.implementers.triton_kernel.autotune_kernel (returns AutotuneResult dataclass: best_config, all_timings, hardware_label)'
+      - 'Function defined: bob3.implementers.triton_kernel.verify_numerical (returns NumericalReport dataclass: max_abs_err, max_rel_err)'
+      - 'Function defined: bob3.implementers.triton_kernel.default_sweep_space (returns dict with BLOCK_M in [32,64,128], BLOCK_N in [32,64,128], num_warps in [2,4,8], num_stages in [2,3,4])'
+      - 'Function defined: bob3.implementers.triton_kernel.hardware_fallback_order (returns tuple "CUDA", "ROCm", "Triton-CPU")'
+      - 'Function defined: bob3.implementers.triton_kernel.handle_no_accelerator (sets feature.status to "ready" with halt_reason="no_accelerator_visible")'
+      - 'Function defined: bob3.implementers.triton_kernel.persist_winning_config (writes runs/<feature>/triton_config.yaml with keys best_config, hardware_label, ms_per_call, all_timings)'
+      - 'Function defined: bob3.implementers.triton_kernel.gate_on_numerical_correctness (raises NumericalGateError when max_abs_err > atol or max_rel_err > rtol)'
+      - 'File exists: bob4/research/demonstrators/F-R7-476/spec.yaml'
+      - 'pytest: tests/test_triton_demonstrator_softmax.py asserts bob4/research/demonstrators/F-R7-476/spec.yaml declares softmax_2d feature implemented as Triton kernel numerically equal to torch.softmax within atol=1e-5'
+      - 'pytest: tests/test_triton_is_gpu_feature_detection.py'
+      - 'pytest: tests/test_triton_synthesize_kernel_signature_matches.py'
+      - 'pytest: tests/test_triton_autotune_picks_best_config.py'
+      - 'pytest: tests/test_triton_numerical_gate_catches_wrong_kernel.py asserts gate_on_numerical_correctness raises NumericalGateError with message containing "atol" when error exceeds tolerance (error path)'
+      - 'pytest: tests/test_triton_cpu_fallback_when_no_gpu.py'
+      - 'pytest: tests/test_triton_demo_softmax_in_worktree.py'
+      - 'pytest: tests/test_triton_boundary_min_block_size.py asserts default_sweep_space returns dict whose BLOCK_M minimum value equals 32 (minimum/boundary edge)'
+      - 'integration: bob3.implementers.dispatcher'
+
+  F-R7-477:
+    title: Voyager-style persistent skill library for env workarounds + shims
+    description: |
+      F-R7-473 discovers workarounds per-run only. Add a skill_library/
+      directory of executable shim modules with docstring +
+      natural-language capability description embedded for retrieval.
+      On preflight, BEFORE spawning research, search by similarity;
+      if hit, apply. On new discovery, write back. Library persists
+      across bob generations via the disk-state reconciler.
+
+      Source: Wang et al. "Voyager: An Open-Ended Embodied Agent
+      with Large Language Models" (arXiv 2305.16291).
+    tier: Core
+    role: implementer
+    acceptance_criteria:
+      - 'File exists: src/bob3/skill_library/__init__.py'
+      - 'File exists: src/bob3/skill_library/registry.py'
+      - 'File exists: src/bob3/skill_library/embeddings.py'
+      - 'Function defined: bob3.skill_library.registry.add_skill (returns skill_id string)'
+      - 'Function defined: bob3.skill_library.registry.search_skills (returns list[SkillHit] with skill_id, capability_description, similarity, shim_module_src)'
+      - 'Function defined: bob3.skill_library.registry.apply_skill (returns ApplyResult dataclass with success bool)'
+      - 'Function defined: bob3.skill_library.embeddings.default_backend (returns "sentence-transformers/all-MiniLM-L6-v2")'
+      - 'Function defined: bob3.skill_library.embeddings.load_from_env (returns backend name from env var BOB3_SKILL_LIBRARY_EMBED_MODEL when set)'
+      - 'Function defined: bob3.skill_library.registry.similarity_threshold (returns 0.75)'
+      - 'Function defined: bob3.skill_library.registry.persist_new_workaround (calls add_skill on successful research-path discovery)'
+      - 'Function defined: bob3.skill_library.registry.survive_generation_spawn (returns True)'
+      - 'Function defined: bob3.skill_library.registry.mirrored_via_disk_reconciler (returns True documenting that the skill_library directory is preserved by disk reconciler across spawns)'
+      - 'File exists: bob4/research/demonstrators/F-R7-477/spec.yaml'
+      - 'pytest: tests/test_skill_library_demonstrator_xxd_two_features.py asserts bob4/research/demonstrators/F-R7-477/spec.yaml declares two features requiring missing xxd tool'
+      - 'pytest: tests/test_skill_library_demonstrator_zero_research_spawns_second_feature.py asserts the second feature in bob4/research/demonstrators/F-R7-477/spec.yaml completes with zero research-subagent spawns'
+      - 'pytest: tests/test_skill_library_add_and_search.py'
+      - 'pytest: tests/test_skill_library_embedding_similarity_threshold.py asserts similarity_threshold returns 0.75 at exact gate-boundary value'
+      - 'pytest: tests/test_skill_library_apply_skill_executes_shim.py'
+      - 'pytest: tests/test_skill_library_preflight_integration_no_research_on_hit.py'
+      - 'pytest: tests/test_skill_library_persists_new_workaround_after_success.py'
+      - 'pytest: tests/test_skill_library_demo_two_features_xxd_in_worktree.py'
+      - 'pytest: tests/test_skill_library_error_path_missing_embedding_backend.py asserts default_backend must raise an error and reject an invalid configuration when the backend module is not installed'
+      - 'integration: bob3.orchestrator.env_preflight'
+
+  # ===================================================================
+  # P0.INFRA — Permanent forward-carry infra-recovery features
+  # (per memory/infra_recovery_features_are_permanent.md)
+  # ===================================================================
+
+  F-R7-478:
+    title: Infra-error transient classifier + unlimited spawn-layer recovery (no budget impact)
+    description: |
+      Today every Claude-CLI sub-agent exit-1 counts as a refinement attempt
+      somewhere in the pipeline — even when the cause is pure infrastructure:
+      HTTP 429 / rate-limit, network blip (ECONNRESET, ETIMEDOUT), midstream
+      Claude abort with no work output, env-config ENOENT.
+
+      The principle: spurious infra errors are NOT signal about feature
+      quality. The system should recover from them naturally and silently.
+      They MUST NOT consume any planning, execution, refinement, or
+      evaluation budget at any layer.
+
+      Implementation: wrap EVERY Claude-CLI sub-agent spawn with a single
+      shared spawn_with_retry helper that classifies via classify_exit
+      and retries TRANSIENT signatures UNLIMITED times with exponential
+      backoff capped at 5 minutes.
+
+      Source: 2026-05-24 marketplace-path incident + user directive on
+      transient infra errors.
+    tier: Core
+    role: implementer
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/spawn_retry.py'
+      - 'File exists: config/spawn_retry.yaml with TRANSIENT_PATTERNS regex list (hot-reloadable)'
+      - 'Function defined: bob3.orchestrator.spawn_retry.classify_exit (returns "transient" | "mid_work_crash" | "real_failure")'
+      - 'Function defined: bob3.orchestrator.spawn_retry.spawn_with_retry (UNLIMITED retries on transient; exponential backoff capped at 300s)'
+      - 'Function defined: bob3.orchestrator.spawn_retry.load_patterns (hot-reloads config/spawn_retry.yaml on each spawn)'
+      - 'EVERY Claude-CLI sub-agent invocation in the codebase routes through spawn_with_retry — grep guard: no remaining direct `claude --` subprocess calls outside spawn_retry.py (assert via AST/regex scan in tests/test_no_direct_claude_invocation.py)'
+      - 'Transient retries do NOT increment refinement_attempts, bootstrap_attempts, verification_failures, or research_iterations in any pipeline stage (planning, spec-extraction, implementation, verification, evaluation, research, RCA)'
+      - 'Mid-work-crash still counts as one refinement attempt (preserves F-R6-300 behavior), EXCEPT when duration_ms==0 — that signature (work_events>0 AND duration_ms==0) is a JSONL serialization race / SIGPIPE / orphan process pattern, not a sub-agent decision to abort; reclassify as TRANSIENT and retry without budget impact. Observed 2026-05-24 in F-0bf30902 + F-9f58051a logs.'
+      - 'Each retry logged to .bob3/agent_logs/<job>.retry.jsonl with {attempt, classification, matched_pattern, backoff_seconds, elapsed_total}'
+      - 'Retry storm (>20 retries in 10min for one feature) emits WARN event but does NOT halt or fail the feature'
+      - 'pytest: tests/test_classify_exit_marketplace_enoent_is_transient.py'
+      - 'pytest: tests/test_classify_exit_rate_limit_is_transient.py'
+      - 'pytest: tests/test_classify_exit_network_errors_are_transient.py'
+      - 'pytest: tests/test_classify_exit_midwork_crash_is_not_transient.py'
+      - 'pytest: tests/test_classify_exit_real_failure_is_not_transient.py'
+      - 'pytest: tests/test_spawn_with_retry_unlimited_on_transient.py'
+      - 'pytest: tests/test_spawn_with_retry_backoff_caps_at_300s.py'
+      - 'pytest: tests/test_spawn_with_retry_does_not_increment_any_budget_counter.py'
+      - 'pytest: tests/test_no_direct_claude_invocation.py'
+      - 'pytest: tests/test_spawn_retry_patterns_hot_reload.py'
+      - 'integration: bob3.orchestrator.spawn_dispatcher'
+      - 'bob4/research/demonstrators/F-R7-478/spec.yaml exists with a fake-flaky-spawner integration test (fails first 10 spawns with each transient signature, succeeds on 11th) asserting end-to-end recovery inside git worktree, with refinement_attempts=0 at the end'
+      - 'Pre-retry health probe: before each retry, run `claude --version` with 5s timeout. If probe fails 3 consecutive times → switch to BROKEN_ENV mode: backoff jumps to 600s, log ERROR-level event, continue retrying (env may self-heal) but emit a single `env_broken` event for watchdog (does NOT halt the feature; the feature stays in current state, no budget burn)'
+      - 'Idempotency: spawn_with_retry cleans up partial workspace state between retries (orphan .bob3/locks/<feature>, partial git index entries) so retry N+1 starts from the same baseline as retry 1'
+      - 'Per-feature cost ceiling (default $50 from config) for the retry loop alone (not the feature overall). When hit, raises a distinct `retry_cost_ceiling` event — NOT a refinement failure, NOT NH; just pauses the feature for the next round to retry (acts as a soft circuit breaker against runaway cost)'
+      - 'pytest: tests/test_spawn_with_retry_health_probe_triggers_broken_env.py'
+      - 'pytest: tests/test_spawn_with_retry_cleans_partial_state.py'
+      - 'pytest: tests/test_spawn_with_retry_cost_ceiling_pauses_not_fails.py'
+
+  F-R7-479:
+    title: RCA-layer infra-error recovery — second-line defense against false NH
+    description: |
+      F-R7-478 guards the spawn layer with a regex set of known transient
+      signatures. But a brand-new infra signature will slip past it. F-R7-479
+      adds the second line: BEFORE the orchestrator transitions a feature to
+      `needs_human`, the RCA sub-agent inspects the history of failed
+      attempts and answers — were ALL N attempts infra-caused?
+
+      If the RCA verdict is `infra_only`: the feature is reset to `ready`
+      with refinement_attempts=0, and the discovered novel signature is
+      auto-appended to config/spawn_retry.yaml. The system learns the new
+      transient pattern WITHOUT a human edit.
+
+      Source: 2026-05-24 user directive: claude cli having a bad day just
+      retry it, do not count it as needs human.
+    tier: Core
+    role: implementer
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/rca_infra_recovery.py'
+      - 'Function defined: bob3.orchestrator.rca_infra_recovery.classify_attempts (returns "infra_only" | "feature_defect" | "mixed", with cited heuristics)'
+      - 'Function defined: bob3.orchestrator.rca_infra_recovery.harvest_novel_pattern (extracts a regex from N matching stderr tails using longest-common-subsequence; returns None if no pattern emerges)'
+      - 'Function defined: bob3.orchestrator.rca_infra_recovery.auto_reset_if_infra (called by run_loop BEFORE transitioning to needs_human)'
+      - 'Pre-NH transition hook: orchestrator MUST call auto_reset_if_infra before any feature.status="needs_human" assignment'
+      - 'Reset behavior: when verdict=infra_only, status -> ready, refinement_attempts -> 0, append novel pattern (if any) to config/spawn_retry.yaml under `discovered_patterns:` key with `confidence: medium` and `discovered_at`/`feature_id` annotations'
+      - 'Auto-reset cap: max 3 RCA-driven resets per feature per generation; on 4th attempt NH stands regardless of verdict (logged as `auto_reset_cap_reached`)'
+      - 'Pattern graduation: a MEDIUM-confidence discovered pattern that matches a successful spawn within 24h is promoted to `confidence: high`; otherwise pruned (housekeeping job runs each round)'
+      - 'Cross-feature crash clustering: classify_attempts checks .bob3/agent_logs/ for OTHER features that crashed in same 30min window with similar exit signature (boosts infra_only verdict)'
+      - 'Telemetry: every RCA-driven reset emits structured event to reviews/rca_resets.jsonl with full evidence trail'
+      - 'pytest: tests/test_classify_attempts_all_zero_work_events_is_infra.py'
+      - 'pytest: tests/test_classify_attempts_with_real_work_is_feature_defect.py'
+      - 'pytest: tests/test_classify_attempts_cross_feature_cluster_boosts_infra.py'
+      - 'pytest: tests/test_classify_attempts_requires_2_of_4_heuristics.py'
+      - 'pytest: tests/test_harvest_novel_pattern_extracts_lcs.py'
+      - 'pytest: tests/test_harvest_novel_pattern_returns_none_for_dissimilar_stderrs.py'
+      - 'pytest: tests/test_auto_reset_if_infra_writes_back_to_ready.py'
+      - 'pytest: tests/test_auto_reset_cap_3_then_nh_stands.py'
+      - 'pytest: tests/test_discovered_pattern_appended_to_config.py'
+      - 'pytest: tests/test_pattern_graduation_medium_to_high_on_success.py'
+      - 'pytest: tests/test_pattern_pruned_if_no_success_in_24h.py'
+      - 'pytest: tests/test_pre_nh_hook_called_by_orchestrator.py'
+      - 'integration: bob3.orchestrator.run_loop'
+      - 'bob4/research/demonstrators/F-R7-479/spec.yaml exists: a feature whose spawn ALWAYS hits a never-before-seen infra error (new ENOENT path); demonstrator asserts (a) feature avoids NH, (b) novel pattern appears in spawn_retry.yaml after first RCA pass, (c) F-R7-478 spawn layer catches subsequent occurrences preemptively'
+
+  F-R7-482:
+    title: Ownership-evidenced regression detection (no scapegoat without proof)
+    description: |
+      bob3's `detect_regression` currently demotes arbitrary previously-completed
+      features to `regression` status when downstream breakage appears, without
+      establishing a causal link. Observed live in bob3 v.12 round 9:
+      F-15f5b3b8 ("Blame-the-cause regression cascade") was itself scapegoated.
+
+      Per memory/regression_scapegoat_mechanism.md: detection must require
+      evidence that the demoted feature's own code/tests were touched (or
+      transitively depended-upon) by the breaking commit. Without that
+      evidence, the demotion is rejected and a `regression_unattributed`
+      event is filed instead.
+    tier: Core
+    role: implementer
+    acceptance_criteria:
+      - 'File exists: src/bob3/orchestrator/regression_attribution.py'
+      - 'Function defined: bob3.orchestrator.regression_attribution.build_ownership_map (returns dict[feature_id, set[file_path]] from feature_id→commit→files_touched)'
+      - 'Function defined: bob3.orchestrator.regression_attribution.attribute_breakage (inputs: failing_test_id, recent_commits, ownership_map; output: {attributed_feature: id|None, evidence: [...], confidence: 0..1})'
+      - 'Function defined: bob3.orchestrator.regression_attribution.demote_with_evidence (atomic: only transitions status→regression when evidence non-empty AND confidence ≥ 0.60)'
+      - 'detect_regression MUST call demote_with_evidence; bare-heuristic demotion path is removed (grep for `status=regression` in src/ shows ONLY the evidenced path)'
+      - 'When evidence is empty: emit `regression_unattributed` event with failing_test_id + recent_commits; do NOT touch any feature status'
+      - 'Previously-completed feature with NO file in the breaking commit set gets IMMUNITY (cannot be re-demoted in the same round)'
+      - 'Transitive dependency: if feature A imports module owned by feature B and B was the only feature touched in the breaking commit, attribute to B not A (depth-3 max)'
+      - 'Hard guard: a feature cannot be its own scapegoat (F-15f5b3b8 case) — if the attribution heuristic points back to a feature that itself implements regression_attribution, mark as `false_positive_self_blame` and skip'
+      - 'pytest: tests/test_attribution_requires_file_overlap.py'
+      - 'pytest: tests/test_attribution_rejects_scapegoat_without_evidence.py'
+      - 'pytest: tests/test_attribution_transitive_dependency_chain.py'
+      - 'pytest: tests/test_attribution_self_blame_guard.py'
+      - 'pytest: tests/test_attribution_immunity_after_clear.py'
+      - 'integration: bob3.orchestrator.detect_regression'
+      - 'bob4/research/demonstrators/F-R7-482/spec.yaml exists: replay scenario where a v.12-style breakage is fed in; demonstrator asserts (a) feature NOT touched by breaking commit is NEVER demoted, (b) `regression_unattributed` fires when attribution fails, (c) self-blame guard fires on the F-15f5b3b8 reproduction'

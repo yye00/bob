@@ -1,0 +1,21 @@
+feature_id: 026abd96-2ac9-40ba-b3ab-ec11a0502d02
+name: Devin-style editable plan.yaml gate before any implementer fires
+description: "After F-R7-450 spec-critic passes, write specs/<feature>/plan.yaml\nand
+  emit a PLAN_READY event. Implementer sub-agents refuse to\nstart unless plan.yaml.approved\
+  \ is true. Edits to plan.yaml\nre-trigger F-R7-450 critic incrementally via F-R7-451\
+  \ provenance."
+acceptance_criteria:
+- 'File exists: specs/devin_editable_plan/plan.yaml'
+- 'Function defined: bob3.planner.emit_plan_ready_event'
+- 'Function defined: bob3.implementer.check_plan_approved'
+- 'pytest: tests/test_plan_approval_gate.py'
+- 'integration: bob3.orchestrator'
+- "pytest: tests/test_devin_style_editable_plan_yaml_gate_before_any_imp_boundary.py\
+  \ — empty, zero, or minimum input returns a well-defined result rather than\
+  \ raising (boundary case)"
+- "pytest: tests/test_devin_style_editable_plan_yaml_gate_before_any_imp_error.py\
+  \ — invalid input raises ValueError and the function does not silently succeed\
+  \ (error path)"
+approved: true
+spec_hash: e3a4b5c6d7e8f901
+written_at: '2026-06-19T14:30:00.000000+00:00'

@@ -1,0 +1,10 @@
+{
+  "id": "87f0d6aa-0000-0000-0000-000000000001",
+  "name": "Sticky-completed gate",
+  "status": "interrupted",
+  "project_id": "proj-87f0d6aa-fixture",
+  "description": "Feature that was interrupted mid-run (max_turns hit or async timeout).",
+  "acceptance_criteria": ["behavior: feature completes normally"],
+  "priority": 1,
+  "artifacts_on_disk": 7
+}

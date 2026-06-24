@@ -1,0 +1,268 @@
+name: bob6
+version: 0.5.0
+description: "Bob6 — Round 3 of the recursive bob-on-bob dark factory.\n\nBob6 = bob5 (Round-2 complete)\
+  \ + Strong tier features from the flagship\nfeature backlog (~19 features). These add deeper verification,\
+  \ richer\nmemory, and the external baseline / A/B comparison infrastructure.\n\nFull acceptance criteria:\
+  \ TBD — synthesize via F-R1-011 (spec synthesizer)\nafter Round-2 research agents (R1..R6) complete\
+  \ their proposals.\n\nOut of scope this round:\n  Remaining Stretch tier — Round 4\n  Paper artifacts\
+  \ (F-153..F-156) — Round 5\n\nNamespace: F-R3-107, F-R3-110, F-R3-113..F-R3-122, F-R3-129,\n       \
+  \    F-R3-132, F-R3-136, F-R3-139, F-R3-142, F-R3-144,\n           F-R3-150, F-R3-157.\n"
+workspace: /home/yelkhamr/dark-factory/bob6
+features:
+  F-R3-107:
+    title: External baseline runners (Aider, Claude Code)
+    description: 'Tools emitting F-105 telemetry schema for Aider and Claude Code as
+
+      external baselines. Same sandbox and format as internal runs so the
+
+      sweep orchestrator can compare them directly.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/external_baseline_runners_aider_claude_code.py'
+    - 'pytest: tests/test_external_baseline_runners_aider_claude_code.py'
+  F-R3-110:
+    title: Reproducibility bundle — single-command tarball export
+    description: 'bob3 bundle --run-id <id> exports a tarball containing spec,
+
+      transcript, diff, telemetry line, and env lockfile. Bundle must be
+
+      self-contained: re-running from it should reproduce the same verdict.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/reproducibility_bundle_single_command_tarball_export.py'
+    - 'pytest: tests/test_reproducibility_bundle_single_command_tarball_export.py'
+  F-R3-113:
+    title: 'forbidden_imports: criterion type'
+    description: 'New criterion type that bans named top-level imports in the
+
+      implementation (e.g., forbid: [transformers, torch.autograd]).
+
+      Closes delegation-to-library exploits. Checked by enhanced_verification
+
+      via AST scan.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/forbidden_imports_criterion_type.py'
+    - 'pytest: tests/test_forbidden_imports_criterion_type.py'
+  F-R3-114:
+    title: 'behavioral_signature: criterion type'
+    description: 'Criterion that validates loss-curve shape (e.g., monotone decrease,
+
+      convergence within N steps), not just a final scalar. Catches fake
+
+      training scripts that emit a hardcoded loss.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/behavioral_signature_criterion_type.py'
+    - 'pytest: tests/test_behavioral_signature_criterion_type.py'
+  F-R3-115:
+    title: 'deterministic_output: criterion type'
+    description: 'Criterion asserting identical output across seed 0-3 runs. Wraps
+
+      the existing build-twice infrastructure from Round 2 (F-R2-G07)
+
+      into a declarative spec-level criterion.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/deterministic_output_criterion_type.py'
+    - 'pytest: tests/test_deterministic_output_criterion_type.py'
+  F-R3-116:
+    title: 'resource_limit: criterion type'
+    description: 'Hard wall-clock and peak-memory caps in the spec preventing
+
+      indefinite-run gaming. Enforced via the spawn watchdog from Round 2
+
+      (F-R2-127).
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/resource_limit_criterion_type.py'
+    - 'pytest: tests/test_resource_limit_criterion_type.py'
+  F-R3-117:
+    title: AST-grade plagiarism detector
+    description: 'Fingerprint implementation source against known reference
+
+      implementations; flag near-verbatim copies (similarity > threshold).
+
+      Integrates with reward-hacking detector verdict.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/ast_grade_plagiarism_detector.py'
+    - 'pytest: tests/test_ast_grade_plagiarism_detector.py'
+  F-R3-118:
+    title: Test-implementation coupling detector
+    description: 'AST flag for suspicious test-impl sharing: direct internal imports
+
+      of implementation modules from test files, shared helper functions,
+
+      or identical constant definitions. Hard fail when detected.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/test_implementation_coupling_detector.py'
+    - 'pytest: tests/test_test_implementation_coupling_detector.py'
+  F-R3-119:
+    title: Hardcoded-reference-value detector
+    description: 'Flag float literals in source files that match known benchmark
+
+      values (e.g., perplexity=24.5 for nanoGPT GPT-2 small). Findings
+
+      routed to reward-hacking detector.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/hardcoded_reference_value_detector.py'
+    - 'pytest: tests/test_hardcoded_reference_value_detector.py'
+  F-R3-120:
+    title: Coverage-based hack detector
+    description: 'Reject implementations whose passing tests cover less than a
+
+      configurable threshold (BOB3_MIN_COVERAGE, default 70%) of source
+
+      lines. Uses coverage.py data from the pytest run.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/coverage_based_hack_detector.py'
+    - 'pytest: tests/test_coverage_based_hack_detector.py'
+  F-R3-122:
+    title: Differential-testing harness
+    description: 'Side-by-side comparison of AI implementation vs. reference
+
+      implementation on fuzzed inputs (hypothesis-generated). Reports
+
+      divergences as reward-hacking findings.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/differential_testing_harness.py'
+    - 'pytest: tests/test_differential_testing_harness.py'
+  F-R3-129:
+    title: Calibration-aware budget allocator
+    description: 'Use calibration signal (ECE per task class from F-R2-128) to
+
+      allocate retries. Low-confidence predictions on hard task classes
+
+      get additional attempts; high-confidence easy features get fewer.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/calibration_aware_budget_allocator.py'
+    - 'pytest: tests/test_calibration_aware_budget_allocator.py'
+  F-R3-132:
+    title: Per-spec compute-budget cap
+    description: 'max_cost_usd: field in YAML spec. When the running cost for a spec
+
+      exceeds this cap, the orchestrator escalates (human alert or graceful
+
+      abort) rather than burning the global budget.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/per_spec_compute_budget_cap.py'
+    - 'pytest: tests/test_per_spec_compute_budget_cap.py'
+  F-R3-136:
+    title: Typed memory pools (Pydantic entity schemas)
+    description: 'Replace free-text lesson strings in the learning ledger with
+
+      Pydantic-typed entities: BugPattern, SkillLesson, CalibrationDatum.
+
+      Enables structured retrieval, deduplication, and schema evolution.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/typed_memory_pools_pydantic_entity_schemas.py'
+    - 'pytest: tests/test_typed_memory_pools_pydantic_entity_schemas.py'
+  F-R3-139:
+    title: Public registry release (versioned artifact export)
+    description: 'Export the findings registry as a versioned, citable YAML artifact
+
+      with a stable schema. Include provenance metadata (bob_version,
+
+      experiment_run_ids, timestamp). Suitable for inclusion in paper
+
+      supplementary materials.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/public_registry_release_versioned_artifact_export.py'
+    - 'pytest: tests/test_public_registry_release_versioned_artifact_export.py'
+  F-R3-142:
+    title: Skill-effectiveness scoring
+    description: 'Measure the reduction in refinement attempts (delta) when a skill
+
+      is active vs. inactive across matched feature pairs. Store scores
+
+      in the skills registry. Surface via bob3 skill-report.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/skill_effectiveness_scoring.py'
+    - 'pytest: tests/test_skill_effectiveness_scoring.py'
+  F-R3-144:
+    title: Skill SHA and provenance recording
+    description: 'Record the SHA-256 of each skill''s SKILL.md content alongside each
+
+      spawn record. Enables reproducibility: a skill change mid-experiment
+
+      is detectable from telemetry.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/skill_sha_and_provenance_recording.py'
+    - 'pytest: tests/test_skill_sha_and_provenance_recording.py'
+  F-R3-150:
+    title: Spec linter — pre-spawn quality gate
+    description: 'Before spawning any sub-agent, run the spec linter to catch:
+
+      ambiguous criteria (no measurable outcome), missing edge cases
+
+      (no failure path), redundant criteria, and banned operations in
+
+      python: criterion expressions. Hard fail blocks spawn; warnings
+
+      are filed to reviews/findings.yaml.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/spec_linter_pre_spawn_quality_gate.py'
+    - 'pytest: tests/test_spec_linter_pre_spawn_quality_gate.py'
+  F-R3-157:
+    title: A/B comparison CLI
+    description: 'bob3 compare --run-a <id> --run-b <id> prints a side-by-side
+
+      telemetry comparison: cost, success rate, calibration ECE, hack
+
+      detection rate, per-feature outcomes. Used for ablation case
+
+      studies and debugging.
+
+      '
+    tier: Strong
+    acceptance_criteria:
+    - 'File exists: src/bob3/a_b_comparison_cli.py'
+    - 'pytest: tests/test_a_b_comparison_cli.py'

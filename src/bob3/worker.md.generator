@@ -1,0 +1,115 @@
+"""Worker WORKER.md generator for bob3 slim per-worker context (Feature d6241f82).
+
+This module exposes the canonical generate_worker_md() entry point that
+produces a slim WORKER.md for a feature-implementing Claude Code worker.
+
+The generated document contains only:
+  - Feature title + description
+  - Resolved AC list
+  - Localization shortlist
+  - Workspace path
+
+The operator-loop CLAUDE.md content is intentionally excluded to avoid
+billing ~6K operator-loop tokens on every worker session.
+
+Public API
+----------
+generate_worker_md(feature, workspace) -> str
+    Generate and return the WORKER.md markdown content.
+
+write_worker_md(feature, workspace, output_path) -> Path
+    Generate WORKER.md and write it to output_path. Returns the path.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+
+def generate_worker_md(feature: Any, workspace: str | Path) -> str:
+    """Generate slim WORKER.md content for *feature*.
+
+    Produces only the fields relevant to a feature-implementing worker,
+    excluding the operator-loop CLAUDE.md content.
+
+    Args:
+        feature:   Feature object with name, description, acceptance_criteria,
+                   localization_shortlist attributes.
+        workspace: Project workspace directory path.
+
+    Returns:
+        Markdown string suitable for writing to WORKER.md.
+    """
+    name = getattr(feature, "name", "") or ""
+    description = getattr(feature, "description", "") or ""
+    workspace = str(workspace)
+
+    acs_raw = getattr(feature, "acceptance_criteria", None)
+    acs: list[str] = []
+    if acs_raw:
+        try:
+            acs = json.loads(acs_raw) if isinstance(acs_raw, str) else list(acs_raw)
+        except (json.JSONDecodeError, TypeError):
+            acs = []
+
+    localization: list[str] = list(getattr(feature, "localization_shortlist", None) or [])
+
+    lines = [
+        f"# Feature: {name}",
+        "",
+    ]
+    if description:
+        lines += [description, ""]
+
+    lines += ["## Acceptance Criteria", ""]
+    if acs:
+        for ac in acs:
+            lines.append(f"- {ac}")
+    else:
+        lines.append("_(none recorded)_")
+    lines.append("")
+
+    if localization:
+        lines += ["## Localization Shortlist", ""]
+        for path in localization:
+            lines.append(f"- {path}")
+        lines.append("")
+
+    lines += [
+        "## Workspace",
+        "",
+        workspace,
+        "",
+    ]
+
+    return "\n".join(lines)
+
+
+def write_worker_md(
+    feature: Any,
+    workspace: str | Path,
+    output_path: str | Path,
+) -> Path:
+    """Generate WORKER.md content and write it to *output_path*.
+
+    Args:
+        feature:     Feature object (read-only).
+        workspace:   Project workspace directory path.
+        output_path: Destination file path for WORKER.md.
+
+    Returns:
+        Path to the written file.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    content = generate_worker_md(feature, workspace)
+    output_path.write_text(content)
+    return output_path
+
+
+__all__ = [
+    "generate_worker_md",
+    "write_worker_md",
+]

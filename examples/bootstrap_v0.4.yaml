@@ -1,0 +1,470 @@
+name: bob5
+version: "0.4.0"
+description: |
+  Bob5 — Round 2 of the recursive bob-on-bob dark factory.
+
+  Bob5 = bob4 (Round-1 complete) + the following:
+    Block tier (F-101..F-141 subset): ablation mode, telemetry, sandboxes,
+      calibration, registry features — the full 21-feature Block list from
+      the flagship feature backlog MINUS F-153/F-154/F-155/F-156 (paper
+      artifacts deferred to Round 5).
+    F-145 (async parallel sub-agents) pulled forward from Stretch tier
+      because it is the critical-path bottleneck for the 700-run sweep.
+    Gap #6 (plan-review): independent agent reviews each plan before
+      sub-agent spawn, catching spec-misreads early.
+    Gap #7 (build-twice): build every feature twice with different seeds,
+      compare outputs for nondeterminism.
+
+  Out of scope this round:
+    Strong tier (F-107..F-157 subset)  — Round 3
+    Remaining Stretch tier              — Round 4
+    Paper artifacts (F-153..F-156)     — Round 5
+
+  Namespace: F-R2-101..F-R2-157 for backlog features,
+             F-R2-145 for pulled-forward async,
+             F-R2-G06, F-R2-G07 for internal gaps.
+
+# bob4 (orchestrator) lives at /home/yelkhamr/dark-factory/bob4/
+# bob5 (target) is seeded as a clone before `bob4 run` starts.
+workspace: /home/yelkhamr/dark-factory/bob5
+
+features:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Block tier — ablation framework core
+  # ──────────────────────────────────────────────────────────────────────────
+
+  F-R2-101:
+    title: "BOB3_ABLATION_MODE environment variable and CLI flag"
+    description: |
+      Add src/bob3/ablation.py with AblationMode enum (V-1, V0, V1, V2, V3).
+      Wire BOB3_ABLATION_MODE env var and --ablation-mode CLI flag into the
+      orchestrator startup sequence. Each mode freezes a specific subset of
+      the config (e.g., V-1 disables all AI assistance; V0 is baseline;
+      V1..V3 progressively enable features). Record the active mode in every
+      telemetry line.
+    priority: 1
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/ablation.py"
+      - "Function defined: bob3.ablation.get_ablation_mode"
+      - "pytest: tests/test_ablation_mode.py"
+      - "python: from bob3.ablation import AblationMode; assert hasattr(AblationMode, 'V0')"
+    files_likely_touched:
+      - src/bob3/ablation.py
+      - src/bob3/cli.py
+      - src/bob3/orchestrator/run_loop.py
+      - tests/test_ablation_mode.py
+
+  F-R2-102:
+    title: "Uniform predicted-confidence elicitor"
+    description: |
+      After each sub-agent spawn completes, run a lightweight post-spawn LLM
+      probe (haiku, 1 turn) asking the sub-agent to estimate its own
+      confidence on a 0-1 scale. The probe must be identical across all
+      ablation variants to ensure fair Expected Calibration Error (ECE)
+      computation. Store result in bob3.db calibration_data table. Emit a
+      cost_checkpoint event for each probe.
+    priority: 2
+    depends_on: ['F-R2-101']
+    acceptance_criteria:
+      - "File exists: src/bob3/confidence_elicitor.py"
+      - "Function defined: bob3.confidence_elicitor.elicit_confidence"
+      - "pytest: tests/test_confidence_elicitor.py"
+    files_likely_touched:
+      - src/bob3/confidence_elicitor.py
+      - src/bob3/orchestrator/run_loop.py
+      - tests/test_confidence_elicitor.py
+
+  F-R2-103:
+    title: "Spec perturbation generator"
+    description: |
+      Add src/bob3/spec_perturbation.py with deterministic, seedable
+      transforms: rename (substitute identifier names), reorder (shuffle
+      acceptance criteria order), red_herring (add an extra irrelevant
+      criterion). Each transform must be round-trip invertible (original
+      recoverable from perturbed + seed). Used by the sweep orchestrator
+      to generate variant specs for ablation runs.
+    priority: 2
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/spec_perturbation.py"
+      - "Function defined: bob3.spec_perturbation.perturb_spec"
+      - "Function defined: bob3.spec_perturbation.invert_perturbation"
+      - "pytest: tests/test_spec_perturbation.py"
+    files_likely_touched:
+      - src/bob3/spec_perturbation.py
+      - tests/test_spec_perturbation.py
+
+  F-R2-104:
+    title: "Reward-hacking detector (LLM judge)"
+    description: |
+      Add src/bob3/reward_hacking_detector.py with detect_reward_hacking(
+      feature_id: str, diff: str, test_output: str) -> HackingVerdict.
+      Run a post-implementation LLM judge evaluating five attack vectors:
+      test hardcoding, delegation to library, spec gaming, metric overfitting,
+      and implementation elision. Target: ≥85% precision, ≥80% recall on
+      the hand-labeled corpus (F-155 fixture). Record verdict in bob3.db.
+    priority: 3
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/reward_hacking_detector.py"
+      - "Function defined: bob3.reward_hacking_detector.detect_reward_hacking"
+      - "pytest: tests/test_reward_hacking_detector.py"
+    files_likely_touched:
+      - src/bob3/reward_hacking_detector.py
+      - tests/test_reward_hacking_detector.py
+
+  F-R2-105:
+    title: "Unified telemetry exporter — run.jsonl"
+    description: |
+      Add src/bob3/telemetry.py with emit_telemetry_line(run_id: str, **fields)
+      writing one fixed-schema JSON object per line to <workspace>/.bob3/run.jsonl.
+      Schema fields: run_id, variant (ablation mode), spec_id, spec_version,
+      seed, feature_id, attempt_number, completion_status, cost_usd,
+      tokens_in, tokens_out, duration_ms, hack_verdict, confidence_predicted,
+      timestamp_utc. Every orchestrator code path that completes a feature
+      attempt must call emit_telemetry_line. This supersedes claude-progress.txt
+      for machine-readable consumption.
+    priority: 1
+    depends_on: ['F-R2-101']
+    acceptance_criteria:
+      - "File exists: src/bob3/telemetry.py"
+      - "Function defined: bob3.telemetry.emit_telemetry_line"
+      - "pytest: tests/test_telemetry_exporter.py"
+    files_likely_touched:
+      - src/bob3/telemetry.py
+      - src/bob3/orchestrator/run_loop.py
+      - tests/test_telemetry_exporter.py
+
+  F-R2-106:
+    title: "Sweep orchestrator with cost-budget guard rails"
+    description: |
+      Add src/bob3/sweep_orchestrator.py with run_sweep(plan: SweepPlan) ->
+      SweepResult. The sweep orchestrator dispatches multiple ablation runs
+      in parallel (asyncio, up to BOB3_SWEEP_PARALLELISM workers), enforces
+      a total cost budget (BOB3_SWEEP_BUDGET_USD), and writes resumable
+      checkpoints to .bob3/sweep_checkpoint.json so an interrupted sweep
+      can restart from the last completed run. Plan input is a YAML file
+      listing variant × spec × seed combinations.
+    priority: 3
+    depends_on: ['F-R2-101', 'F-R2-105']
+    acceptance_criteria:
+      - "File exists: src/bob3/sweep_orchestrator.py"
+      - "Function defined: bob3.sweep_orchestrator.run_sweep"
+      - "pytest: tests/test_sweep_orchestrator.py"
+    files_likely_touched:
+      - src/bob3/sweep_orchestrator.py
+      - tests/test_sweep_orchestrator.py
+
+  F-R2-108:
+    title: "Hermetic per-run containerisation"
+    description: |
+      Add src/bob3/container_runner.py with run_in_container(cmd: list[str],
+      image: str, workspace: Path) -> ContainerResult. Each sweep run
+      executes in a fresh Docker container using a pinned base image
+      (recorded in telemetry). Container gets an isolated /workspace mount,
+      no network access after image pull, no shared state between runs.
+      Gracefully degrades to direct execution when Docker is unavailable
+      (logged as a warning, not an error).
+    priority: 4
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/container_runner.py"
+      - "Function defined: bob3.container_runner.run_in_container"
+      - "pytest: tests/test_container_runner.py"
+    files_likely_touched:
+      - src/bob3/container_runner.py
+      - tests/test_container_runner.py
+
+  F-R2-109:
+    title: "Model and SDK version pinning"
+    description: |
+      Record the exact Anthropic SDK version and model ID in every telemetry
+      line. Add src/bob3/version_probe.py with get_sdk_version() -> str and
+      get_model_id() -> str. Wire into emit_telemetry_line. Add a pre-flight
+      check that warns if the SDK version differs from the pinned version in
+      pyproject.toml (but does not block — experiments run on the installed
+      version, discrepancies are noted in telemetry).
+    priority: 2
+    depends_on: ['F-R2-105']
+    acceptance_criteria:
+      - "File exists: src/bob3/version_probe.py"
+      - "Function defined: bob3.version_probe.get_sdk_version"
+      - "Function defined: bob3.version_probe.get_model_id"
+      - "pytest: tests/test_version_probe.py"
+    files_likely_touched:
+      - src/bob3/version_probe.py
+      - src/bob3/telemetry.py
+      - tests/test_version_probe.py
+
+  F-R2-123:
+    title: "GPU sandbox — Docker with CUDA/MPS, pinned drivers"
+    description: |
+      Extend container_runner.py with a gpu_sandbox profile that uses a
+      CUDA-pinned Docker image (nvidia/cuda:12.x-base) or Apple Silicon MPS
+      equivalent. Add resource caps (GPU memory, wall-clock, concurrent jobs).
+      Pin driver version to the image tag and record in telemetry. Provide a
+      smoke test that runs a tiny nanoGPT forward pass inside the sandbox and
+      confirms GPU utilization > 0.
+    priority: 5
+    depends_on: ['F-R2-108']
+    acceptance_criteria:
+      - "Function defined: bob3.container_runner.run_gpu_sandbox"
+      - "pytest: tests/test_gpu_sandbox.py"
+    files_likely_touched:
+      - src/bob3/container_runner.py
+      - tests/test_gpu_sandbox.py
+
+  F-R2-124:
+    title: "WASM toolchain sandbox"
+    description: |
+      Add a wasm_sandbox profile to container_runner.py using an image
+      containing wabt + wasmtime. Supports differential testing of WASM
+      interpreters: compile .wat → .wasm with wat2wasm, execute with
+      wasmtime, capture stdout/exit code. Used by F-155 corpus and
+      future D2 spec (WASM interpreter task).
+    priority: 5
+    depends_on: ['F-R2-108']
+    acceptance_criteria:
+      - "Function defined: bob3.container_runner.run_wasm_sandbox"
+      - "pytest: tests/test_wasm_sandbox.py"
+    files_likely_touched:
+      - src/bob3/container_runner.py
+      - tests/test_wasm_sandbox.py
+
+  F-R2-125:
+    title: "Scientific-compute sandbox — pinned NumPy/SciPy/JAX"
+    description: |
+      Add a sci_sandbox profile to container_runner.py with a pinned
+      NumPy/SciPy/JAX image and deterministic BLAS settings
+      (OMP_NUM_THREADS=1, OPENBLAS_NUM_THREADS=1, MKL_NUM_THREADS=1,
+      JAX_PLATFORM_NAME=cpu). Used for reproducibility tests on the
+      Navier-Stokes cavity task (D3 spec).
+    priority: 5
+    depends_on: ['F-R2-108']
+    acceptance_criteria:
+      - "Function defined: bob3.container_runner.run_sci_sandbox"
+      - "pytest: tests/test_sci_sandbox.py"
+    files_likely_touched:
+      - src/bob3/container_runner.py
+      - tests/test_sci_sandbox.py
+
+  F-R2-127:
+    title: "Long-running spawn support — timeout, watchdog, heartbeat"
+    description: |
+      Add src/bob3/spawn_watchdog.py with SpawnWatchdog context manager that
+      wraps long-running sub-agent invocations (>30 minutes expected).
+      Emits a heartbeat event every 5 minutes to .bob3/progress.jsonl.
+      On wall-clock timeout, sends SIGTERM then SIGKILL to the sub-agent
+      process group. Records timeout events in telemetry. Integrates with
+      existing BOB3_CRITERION_EXEC_TIMEOUT env var.
+    priority: 4
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/spawn_watchdog.py"
+      - "Function defined: bob3.spawn_watchdog.SpawnWatchdog"
+      - "pytest: tests/test_spawn_watchdog.py"
+    files_likely_touched:
+      - src/bob3/spawn_watchdog.py
+      - src/bob3/orchestrator/run_loop.py
+      - tests/test_spawn_watchdog.py
+
+  F-R2-128:
+    title: "Per-task-class calibration buckets"
+    description: |
+      Extend calibration_data schema to include task_class (one of:
+      file_manipulation, algorithm_implementation, integration, refactor,
+      research_synthesis). Add task class inference in the orchestrator
+      (simple keyword heuristic on feature description). Track ECE per
+      bucket: Expected Calibration Error = mean(|predicted_conf -
+      empirical_accuracy|) over samples in each bucket. Expose bucket stats
+      via a CLI command: bob3 calibration-report.
+    priority: 4
+    depends_on: ['F-R2-102']
+    acceptance_criteria:
+      - "Function defined: bob3.calibration.compute_ece_by_bucket"
+      - "pytest: tests/test_calibration_buckets.py"
+    files_likely_touched:
+      - src/bob3/calibration.py
+      - src/bob3/cli.py
+      - tests/test_calibration_buckets.py
+
+  F-R2-133:
+    title: "Cross-project registry transfer"
+    description: |
+      Add src/bob3/registry_transfer.py with export_registry(project_id: str,
+      out_path: Path) and import_registry(in_path: Path, project_id: str).
+      When starting a new project, bob3 loads findings from the most recent
+      exported registry if BOB3_REGISTRY_TRANSFER_PATH is set. Registry
+      entries include skill lessons, bug ledger entries, and calibration data.
+      Collision resolution: prefer imported entries when local count < 3.
+    priority: 5
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/registry_transfer.py"
+      - "Function defined: bob3.registry_transfer.export_registry"
+      - "Function defined: bob3.registry_transfer.import_registry"
+      - "pytest: tests/test_registry_transfer.py"
+    files_likely_touched:
+      - src/bob3/registry_transfer.py
+      - tests/test_registry_transfer.py
+
+  F-R2-134:
+    title: "Frozen-registry mode"
+    description: |
+      Add a --frozen-registry flag (and BOB3_FROZEN_REGISTRY env var) that
+      pins the registry state at process start and disables all writes during
+      the run. Used to reproduce past experiment conditions exactly. Emit a
+      warning at startup and record frozen_registry=true in every telemetry
+      line when active.
+    priority: 5
+    depends_on: ['F-R2-133']
+    acceptance_criteria:
+      - "Function defined: bob3.registry_transfer.freeze_registry"
+      - "pytest: tests/test_frozen_registry.py"
+    files_likely_touched:
+      - src/bob3/registry_transfer.py
+      - src/bob3/cli.py
+      - tests/test_frozen_registry.py
+
+  F-R2-135:
+    title: "Pattern-promotion config knob (promote_on_n)"
+    description: |
+      Expose a BOB3_PROMOTE_ON_N environment variable (default: 3) that
+      controls how many evidence observations are required before a lesson
+      in the learning ledger is promoted to a promoted pattern (applied
+      automatically on every spawn). Add promote_on_n to the ablation
+      switch so V1/V2/V3 can ablate promotion vs. accumulation. Record
+      promote_on_n value in telemetry.
+    priority: 5
+    depends_on: ['F-R2-101']
+    acceptance_criteria:
+      - "Function defined: bob3.learnings.get_promote_on_n"
+      - "pytest: tests/test_pattern_promotion.py"
+    files_likely_touched:
+      - src/bob3/learnings.py
+      - tests/test_pattern_promotion.py
+
+  F-R2-141:
+    title: "Per-spawn skill-activation log"
+    description: |
+      When the skills installer selects skills for a spawn, emit a structured
+      event recording: spawn_id, feature_id, skills_activated (list of skill
+      ids), skills_considered (full list), selection_reason (heuristic or
+      registry-driven). Write to .bob3/progress.jsonl. Add a CLI command
+      bob3 skill-activation-report that summarises which skills fired most
+      and their correlation with feature success.
+    priority: 4
+    depends_on: []
+    acceptance_criteria:
+      - "Function defined: bob3.skills_installer.log_skill_activation"
+      - "pytest: tests/test_skill_activation_log.py"
+    files_likely_touched:
+      - src/bob3/skills_installer.py
+      - src/bob3/cli.py
+      - tests/test_skill_activation_log.py
+
+  F-R2-151:
+    title: "Spec versioning and diff tracking"
+    description: |
+      Add src/bob3/spec_versioning.py with version_spec(spec_dict: dict) ->
+      str (SHA-256 of canonical YAML) and diff_specs(old: dict, new: dict)
+      -> SpecDiff. Record spec_version in every telemetry line. If the spec
+      changes mid-run (file modified on disk), emit a spec_version_changed
+      event and optionally abort the run (controlled by
+      BOB3_ABORT_ON_SPEC_CHANGE, default True).
+    priority: 3
+    depends_on: ['F-R2-105']
+    acceptance_criteria:
+      - "File exists: src/bob3/spec_versioning.py"
+      - "Function defined: bob3.spec_versioning.version_spec"
+      - "Function defined: bob3.spec_versioning.diff_specs"
+      - "pytest: tests/test_spec_versioning.py"
+    files_likely_touched:
+      - src/bob3/spec_versioning.py
+      - src/bob3/orchestrator/run_loop.py
+      - tests/test_spec_versioning.py
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Pulled-forward Stretch feature: async parallel sub-agents
+  # ──────────────────────────────────────────────────────────────────────────
+
+  F-R2-145:
+    title: "Async parallel sub-agent execution (pull-forward from Stretch)"
+    description: |
+      Refactor the OrchestrationLoop to parallelize features with no
+      outstanding dependencies (DAG-respecting). Use asyncio.gather with
+      a semaphore capped at BOB3_PARALLELISM (default 4). This is the
+      critical-path bottleneck for 700-run sweeps: serial execution of
+      20 features × ~8 min each = 160 min; parallel at 4 = ~40 min.
+      Preserves all existing safety invariants: each sub-agent still runs
+      in its own subprocess, writes to an isolated workspace snapshot,
+      and commits atomically.
+    priority: 1
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/orchestrator/parallel_loop.py"
+      - "Function defined: bob3.orchestrator.parallel_loop.run_parallel_loop"
+      - "pytest: tests/test_parallel_loop.py"
+    files_likely_touched:
+      - src/bob3/orchestrator/parallel_loop.py
+      - src/bob3/orchestrator/run_loop.py
+      - src/bob3/cli.py
+      - tests/test_parallel_loop.py
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Internal Gap #6 — Plan review before sub-agent spawn
+  # ──────────────────────────────────────────────────────────────────────────
+
+  F-R2-G06:
+    title: "Gap #6: Independent plan-review agent before sub-agent spawn"
+    description: |
+      Add src/bob3/plan_reviewer.py with review_plan(plan: str, feature: dict)
+      -> PlanReview. After the planning phase generates a plan but before the
+      implementation sub-agent is spawned, a separate haiku-grade agent
+      reviews the plan against the spec. It checks for: spec misreads,
+      missing acceptance criteria coverage, over-ambitious scope (>200 LOC
+      estimate), and risky patterns (direct file deletion, unconditional
+      rewrites of existing code). If any blocker is found, the plan is
+      returned to the planning agent for revision (max 2 revision cycles).
+      PlanReview includes: verdict (approve/revise/block), findings list,
+      confidence score.
+    priority: 2
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/plan_reviewer.py"
+      - "Function defined: bob3.plan_reviewer.review_plan"
+      - "pytest: tests/test_plan_reviewer.py"
+    files_likely_touched:
+      - src/bob3/plan_reviewer.py
+      - src/bob3/orchestrator/run_loop.py
+      - tests/test_plan_reviewer.py
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Internal Gap #7 — Build-twice nondeterminism detector
+  # ──────────────────────────────────────────────────────────────────────────
+
+  F-R2-G07:
+    title: "Gap #7: Build-twice nondeterminism detector"
+    description: |
+      Add src/bob3/build_twice.py with compare_builds(feature_id: str,
+      workspace: Path) -> NondeterminismReport. After a feature passes
+      verification, re-run the implementation sub-agent from the same spec
+      with a different seed (seed+1). Compare the two implementations:
+      AST-normalize both, compute token-level diff, flag if >30% divergence
+      (indicating the feature is under-specified or the implementation is
+      highly stochastic). Log nondeterminism events to .bob3/progress.jsonl
+      and reviews/findings.yaml. Controlled by BOB3_BUILD_TWICE (default
+      False — opt-in to avoid 2x cost by default; enabled automatically
+      during sweep runs).
+    priority: 3
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/bob3/build_twice.py"
+      - "Function defined: bob3.build_twice.compare_builds"
+      - "pytest: tests/test_build_twice.py"
+    files_likely_touched:
+      - src/bob3/build_twice.py
+      - src/bob3/orchestrator/run_loop.py
+      - tests/test_build_twice.py

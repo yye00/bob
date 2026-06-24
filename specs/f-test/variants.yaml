@@ -1,0 +1,27 @@
+feature_id: f-test
+stability_score: 0.333333
+route: clarification
+consensus: false
+variants:
+- - id: AC-1
+    behavior: 'AC-1: do something'
+  - id: AC-2
+    behavior: 'AC-2: do something else'
+- - id: AC-1
+    behavior: 'AC-1: do something [variant-1]'
+  - id: AC-2
+    behavior: 'AC-2: do something else'
+- - id: AC-1
+    behavior: 'AC-1: do something'
+  - id: AC-2
+    behavior: 'AC-2: do something else'
+disagreeing_slots:
+- id: AC-1
+  behavior: 'AC-1: do something'
+- id: AC-1
+  behavior: 'AC-1: do something [variant-1]'
+majority_vote:
+- id: AC-2
+  behavior: 'AC-2: do something else'
+- id: AC-1
+  behavior: 'AC-1: do something'

@@ -1,0 +1,76 @@
+# DB + locks
+bob3.db
+bob3.db.bak_*
+.bob3.db
+.bob3.lock
+features.db
+
+# Runtime data
+.bob3/
+# .claude/hooks/*.py are SOURCE dependencies (bf_8_context_budget imports
+# .claude/hooks/context_budget.py at module load) — they MUST be committed or a
+# clean clone crashes on import. Only the runtime/generated parts are ignored.
+.claude/projects/
+.claude/skills/
+.worktrees/
+
+# Logs
+*.log
+round*.log
+weekend_chain.log
+clarifications.log
+repairs.log
+claude-progress.txt
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Reviews — corrupt yaml backups + runtime jsonl
+reviews/*.corrupt.*
+reviews/rca_resets.jsonl
+
+# NH investigations (per-session research)
+nh_investigations/
+
+# Capability matrix runtime history
+capability_matrix_history.jsonl
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# --- source-only commit cleanup (2026-06-22) ---
+# Nested ancestor generation scaffolding inside this gen
+/bob[0-9]*/
+# Generated per-feature test dirs (UUID-named); keep the real suite (tests/bob3, tests/orchestrator, conftest, test_*.py)
+tests/*-*-*-*-*/
+# Other runtime caches / artifacts
+.mypy_cache/
+.hypothesis/
+.remember/
+runs/
+reviews/
+.approval_tests_temp/
+.bob3_startup_exempt
+file.claude/
+# Runtime reports / scratch generated at root
+rtm.html
+rtm.json
+*.out
+regen_blocked.py
+regen_gate.py
+gen_drain_tests.py
+# Bad path-join scaffolding + stray generated files at root
+a prior generation/
+/orchestrator/
+/test_ac_13_integration_bob3_orchestrator_run_loop.py
+/test_cli_spec_trace_command.py
