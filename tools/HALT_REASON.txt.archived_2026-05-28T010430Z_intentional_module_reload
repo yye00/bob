@@ -1,0 +1,24 @@
+WATCHDOG HALT — 2026-05-23T23:49:25Z
+======================================================
+Reason   : Wall-clock time exceeded 168 hours (7 days)
+Detail   : Elapsed: 699281s since 2026-05-15T21:34:44Z
+
+State at halt:
+  current_gen    : 4
+  current_round  : 1
+  total_cost_usd : $43.9332
+  chain_started  : 2026-05-15T21:34:44Z
+  halt_time      : 2026-05-23T23:49:25Z
+
+Chain log: /home/yelkhamr/dark-factory/bob12/weekend_chain.log
+State file: /home/yelkhamr/dark-factory/bob12/tools/watchdog_state.json
+
+Action required: Review the chain log and bob.db in
+  ~/dark-factory/bob4/
+before deciding whether to restart or continue manually.
+
+To restart from this point (if safe):
+  cd ~/dark-factory/bob4
+  nohup tools/weekend_watchdog.sh > /dev/null 2>&1 & disown
+  (remove HALT_REASON.txt first, or it will halt again on
+   the 'halt:true' gate)

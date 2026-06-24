@@ -1,0 +1,19 @@
+feature_id: test-default-n
+stability_score: 0.0
+route: clarification
+consensus: false
+variants:
+- - id: AC-1
+    behavior: 'File exists: src/bob/x.py'
+- - id: AC-1
+    behavior: 'File exists: src/bob/x.py [variant-1]'
+- - id: AC-1
+    behavior: 'File exists: src/bob/x.py'
+disagreeing_slots:
+- id: AC-1
+  behavior: 'File exists: src/bob/x.py'
+- id: AC-1
+  behavior: 'File exists: src/bob/x.py [variant-1]'
+majority_vote:
+- id: AC-1
+  behavior: 'File exists: src/bob/x.py'

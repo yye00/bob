@@ -1,0 +1,5 @@
+feature_id: f
+stability_score: 1.0
+route: auto_accept
+consensus: true
+variants: []

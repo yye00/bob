@@ -1,0 +1,32 @@
+name: calculator
+version: "0.1.0"
+description: |
+  A simple calculator library — implements addition, subtraction, multiplication.
+  Designed as a quickstart bob target with stdlib-only dependencies.
+workspace: /tmp/calculator
+features:
+  F001:
+    title: "Project structure"
+    description: "Create src/calculator/ package with __init__.py and pyproject.toml"
+    priority: critical
+    depends_on: []
+    acceptance_criteria:
+      - "File exists: src/calculator/__init__.py"
+      - "File exists: pyproject.toml"
+  F002:
+    title: "Basic arithmetic operations"
+    description: "Implement add(a,b), subtract(a,b), multiply(a,b) in src/calculator/ops.py"
+    priority: critical
+    depends_on: ['F001']
+    acceptance_criteria:
+      - "pytest: tests/test_ops.py::test_add"
+      - "pytest: tests/test_ops.py::test_subtract"
+      - "pytest: tests/test_ops.py::test_multiply"
+  F003:
+    title: "Division with zero-handling"
+    description: "Implement divide(a,b) that raises ZeroDivisionError on b=0"
+    priority: high
+    depends_on: ['F002']
+    acceptance_criteria:
+      - "pytest: tests/test_ops.py::test_divide"
+      - "pytest: tests/test_ops.py::test_divide_by_zero_raises"

@@ -1,0 +1,212 @@
+"""MCP (Model Context Protocol) server configuration for Bob sub-agents.
+
+Defines configuration for each MCP server that Bob sub-agents can use.
+Only bob-memory is started and managed by Bob directly. Perplexity
+and Puppeteer are already available in the Claude Code environment.
+
+MCP Servers:
+    bob-memory: Persistent semantic memory with pool-based categorization
+        and feedback tracking. Backed by mem0ai + FastEmbed + Qdrant (fully
+        local, no external API keys). Managed by Bob.
+    PERPLEXITY: Web-grounded search and research (available via Claude Code)
+    PUPPETEER: Browser automation (available via Claude Code)
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+from dataclasses import dataclass, field
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MCPServerConfig:
+    """Configuration for a single MCP server.
+
+    Attributes:
+        name: Unique identifier for the MCP server.
+        command: Shell command to start the server (empty for unmanaged servers).
+        env_vars: Environment variables required by this server.
+        required: Whether this server is required for Bob to function.
+        managed_by_bob: Whether Bob is responsible for starting this server.
+    """
+
+    name: str
+    command: list[str] = field(default_factory=list)
+    env_vars: list[str] = field(default_factory=list)
+    required: bool = False
+    managed_by_bob: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Server configurations
+# ---------------------------------------------------------------------------
+
+BOB_MEMORY_MCP = MCPServerConfig(
+    name="bob-memory",
+    command=[
+        sys.executable,
+        "-m",
+        "bob.memory_mcp",
+    ],
+    env_vars=[],
+    required=True,
+    managed_by_bob=True,
+)
+
+PERPLEXITY_MCP = MCPServerConfig(
+    name="perplexity",
+    command=[],
+    env_vars=["PERPLEXITY_API_KEY"],
+    required=False,
+    managed_by_bob=False,
+)
+
+PUPPETEER_MCP = MCPServerConfig(
+    name="puppeteer",
+    command=[],
+    env_vars=[],
+    required=False,
+    managed_by_bob=False,
+)
+
+# All known MCP server configs
+_ALL_CONFIGS: list[MCPServerConfig] = [
+    BOB_MEMORY_MCP,
+    PERPLEXITY_MCP,
+    PUPPETEER_MCP,
+]
+
+# Bob Memory tool names that sub-agents can use
+_MEMORY_TOOLS: list[str] = [
+    "memory_add",
+    "memory_search",
+    "memory_get",
+    "memory_record_feedback",
+    "memory_archive",
+    "memory_demote",
+    "memory_delete",
+    "memory_get_stats",
+    "memory_get_candidates",
+    "memory_list_pools",
+]
+
+# Perplexity MCP tool names (available via the Claude Code MCP plugin)
+_PERPLEXITY_TOOLS: list[str] = [
+    "mcp__plugin_perplexity_perplexity__perplexity_ask",
+    "mcp__plugin_perplexity_perplexity__perplexity_search",
+    "mcp__plugin_perplexity_perplexity__perplexity_research",
+    "mcp__plugin_perplexity_perplexity__perplexity_reason",
+]
+
+# Puppeteer MCP tool names (available via the @anthropic/puppeteer-mcp plugin)
+_PUPPETEER_TOOLS: list[str] = [
+    "mcp__puppeteer__puppeteer_navigate",
+    "mcp__puppeteer__puppeteer_screenshot",
+    "mcp__puppeteer__puppeteer_click",
+    "mcp__puppeteer__puppeteer_fill",
+    "mcp__puppeteer__puppeteer_select",
+    "mcp__puppeteer__puppeteer_hover",
+    "mcp__puppeteer__puppeteer_evaluate",
+]
+
+
+def get_mcp_config() -> dict[str, MCPServerConfig]:
+    """Return all MCP server configurations keyed by server name."""
+    return {config.name: config for config in _ALL_CONFIGS}
+
+
+def get_bob_managed_servers() -> list[MCPServerConfig]:
+    """Return only MCP servers that Bob needs to start and manage."""
+    return [config for config in _ALL_CONFIGS if config.managed_by_bob]
+
+
+def get_allowed_tools() -> list[str]:
+    """Return the list of MCP tool names available to sub-agents.
+
+    Currently returns bob-memory tools. Perplexity and Puppeteer tools
+    are available automatically via the Claude Code environment.
+    """
+    return list(_MEMORY_TOOLS)
+
+
+def get_perplexity_tools() -> list[str]:
+    """Return the list of Perplexity MCP tool names."""
+    return list(_PERPLEXITY_TOOLS)
+
+
+def get_puppeteer_tools() -> list[str]:
+    """Return the list of Puppeteer MCP tool names."""
+    return list(_PUPPETEER_TOOLS)
+
+
+def validate_perplexity_available() -> tuple[bool, str]:
+    """Check whether the Perplexity MCP is usable in the current environment.
+
+    Returns a (ok, message) tuple. ``ok`` is True iff PERPLEXITY_API_KEY is
+    set to a non-empty value. The ``message`` describes the reason when
+    ``ok`` is False, or is empty otherwise.
+
+    Callers (e.g. anything about to spawn a research sub-agent) should
+    consult this helper before invoking the agent so they can short-circuit
+    with a useful error rather than letting the sub-agent burn turns
+    hitting auth errors at runtime.
+    """
+    api_key = os.environ.get("PERPLEXITY_API_KEY", "")
+    if not api_key:
+        return False, (
+            "PERPLEXITY_API_KEY is not set; the Perplexity MCP server will "
+            "start but every call will fail with an auth error at runtime."
+        )
+    return True, ""
+
+
+def build_perplexity_mcp_dict() -> dict[str, Any]:
+    """Build an mcp_servers dict entry for the Perplexity MCP plugin.
+
+    Returns a dict suitable for passing to ClaudeCodeOptions.mcp_servers.
+    The Perplexity MCP uses npx to run the @anthropic/perplexity-mcp server.
+
+    Note on PERPLEXITY_API_KEY:
+        If ``PERPLEXITY_API_KEY`` is unset or empty, this function still
+        returns a usable mcp_servers dict (with an empty key) so that the
+        MCP subprocess can start, but a warning is logged and every
+        Perplexity call will fail with an auth error at runtime. Callers
+        that want to fail fast should invoke :func:`validate_perplexity_available`
+        before spawning the research agent (the ``spawn_research_agent``
+        call site in ``claude_executor.py`` is the primary intended user).
+    """
+    api_key = os.environ.get("PERPLEXITY_API_KEY", "")
+    if not api_key:
+        logger.warning(
+            "PERPLEXITY_API_KEY not set; Perplexity MCP will fail at runtime"
+        )
+    return {
+        PERPLEXITY_MCP.name: {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@anthropic/perplexity-mcp"],
+            "env": {
+                "PERPLEXITY_API_KEY": api_key,
+            },
+        }
+    }
+
+
+def build_puppeteer_mcp_dict() -> dict[str, Any]:
+    """Build an mcp_servers dict entry for the Puppeteer MCP plugin.
+
+    Returns a dict suitable for passing to ClaudeCodeOptions.mcp_servers.
+    The Puppeteer MCP uses npx to run the @anthropic/puppeteer-mcp server.
+    """
+    return {
+        PUPPETEER_MCP.name: {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@anthropic/puppeteer-mcp"],
+        }
+    }

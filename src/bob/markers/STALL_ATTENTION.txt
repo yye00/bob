@@ -1,0 +1,1 @@
+STALL_ATTENTION: chain_dead_locked sentinel marker. When this file exists, the watchdog has detected repeated spec_gate_stall_observed events and escalated to needs_human_attention. Operator action required: drop thresholds and manually relaunch the chain.

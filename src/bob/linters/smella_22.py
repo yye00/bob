@@ -1,0 +1,56 @@
+"""bob.linters.smella_22 — Full 22-smell spec linter (F-R7-410 extension).
+
+Extends F-R7-410 with the complete Femmer/Smella + 2025 LLM-extension
+catalogue of 22 smell detectors. Severity levels E/W/I; E-severity findings
+block ``bob plan --create``.
+
+spaCy (en_core_web_sm) is used by 7 of the 22 detectors (S01, S02, S05,
+S06, S07, S08, S18). When unavailable those detectors fall back to regex
+heuristics.
+
+Public API::
+
+    from bob.linters.smella_22 import detect_smells, SmellFinding, blocks_plan_create
+
+    findings = detect_smells("The system shall be fast and simple.")
+    if blocks_plan_create(findings):
+        raise RuntimeError("E-severity smells block plan --create")
+"""
+
+from __future__ import annotations
+
+from bob.linter_22_smells import (
+    BLOCKING_SMELLS,
+    SMELL_BY_ID,
+    SMELL_CATALOG,
+    SPACY_SMELLS,
+    SmellDefinition,
+    SmellFinding,
+    SmellSeverity,
+    SpacyModelMissingError,
+    blocks_plan_create,
+    detect_smells,
+    detector_count,
+    handle_missing_spacy_model,
+    is_blocking,
+    severity_of,
+    spacy_backed_detectors,
+)
+
+__all__ = [
+    "detect_smells",
+    "SmellFinding",
+    "SmellDefinition",
+    "SmellSeverity",
+    "SMELL_CATALOG",
+    "SMELL_BY_ID",
+    "BLOCKING_SMELLS",
+    "SPACY_SMELLS",
+    "blocks_plan_create",
+    "severity_of",
+    "is_blocking",
+    "detector_count",
+    "spacy_backed_detectors",
+    "SpacyModelMissingError",
+    "handle_missing_spacy_model",
+]

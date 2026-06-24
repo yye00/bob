@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bob/schemas/spec.v1.json",
+  "title": "Bob Spec v1",
+  "description": "Pinned schema for bob spec emission. All slots required by the spec critic must be present.",
+  "type": "object",
+  "required": [
+    "functional_requirements",
+    "non_functional_requirements",
+    "acceptance_criteria",
+    "out_of_scope",
+    "risks"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "functional_requirements": {
+      "type": "array",
+      "description": "List of functional requirements describing what the system must do.",
+      "items": {
+        "type": "object",
+        "required": ["id", "description"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this requirement (e.g. F-R1-001)",
+            "pattern": "^[A-Za-z][A-Za-z0-9_\\-]*$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable description of the requirement"
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["must", "should", "could", "wont"],
+            "description": "MoSCoW priority"
+          }
+        }
+      },
+      "minItems": 0
+    },
+    "non_functional_requirements": {
+      "type": "array",
+      "description": "List of non-functional requirements (perf, security, observability, compatibility).",
+      "items": {
+        "type": "object",
+        "required": ["id", "category", "description"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this NFR",
+            "pattern": "^[A-Za-z][A-Za-z0-9_\\-]*$"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["perf", "security", "observability", "compatibility"],
+            "description": "Category of the non-functional requirement"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable description of the requirement"
+          },
+          "threshold": {
+            "type": "string",
+            "description": "Measurable threshold or target (optional)"
+          }
+        }
+      },
+      "minItems": 0
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "description": "Machine-verifiable acceptance criteria in GIVEN/WHEN/THEN form.",
+      "items": {
+        "type": "object",
+        "required": ["id", "given", "when", "then", "verifier"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this AC (e.g. AC-F-SPEC-SCHEMA-1)",
+            "pattern": "^[A-Za-z][A-Za-z0-9_\\-]*$"
+          },
+          "given": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Precondition / context"
+          },
+          "when": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Action / trigger"
+          },
+          "then": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Expected outcome"
+          },
+          "verifier": {
+            "type": "string",
+            "minLength": 1,
+            "description": "How to verify this criterion (pytest path, CLI command, etc.)"
+          }
+        }
+      },
+      "minItems": 0
+    },
+    "out_of_scope": {
+      "type": "array",
+      "description": "Items explicitly excluded from this spec to prevent scope creep.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "risks": {
+      "type": "array",
+      "description": "Known risks and mitigations for this spec.",
+      "items": {
+        "type": "object",
+        "required": ["description"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this risk"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Description of the risk"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"],
+            "description": "Severity of this risk"
+          },
+          "mitigation": {
+            "type": "string",
+            "description": "How to mitigate this risk"
+          }
+        }
+      },
+      "minItems": 0
+    }
+  }
+}

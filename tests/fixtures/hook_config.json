@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/context_budget.py"
+          }
+        ]
+      }
+    ]
+  },
+  "context_budget": {
+    "threshold": 0.60,
+    "events_log": ".bob/events.jsonl",
+    "model_windows": {
+      "claude-sonnet-4-5-20250929": 200000,
+      "claude-opus-4-6": 200000,
+      "claude-haiku-4-5-20251001": 200000,
+      "default": 200000
+    }
+  },
+  "extended_thinking_default": true,
+  "extended_thinking_auto_off_keywords": ["rename", "doc", "format", "typo"],
+  "extended_thinking_auto_on_keywords": ["refactor", "migration", "bugfix", "integration"],
+  "extended_thinking_auto_on_conditions": {
+    "min_files": 4,
+    "max_spec_quality": 0.80,
+    "min_retry_count": 1
+  }
+}

@@ -1,0 +1,6 @@
+# Persistent spec-critic findings registry — F-R7-450
+# Runtime data lives in reviews/spec_findings.yaml (atomic write, quarantine on corrupt).
+# This file is the canonical schema declaration for the registry format.
+schema_version: 2
+findings: {}
+run_history: []

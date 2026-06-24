@@ -1,0 +1,39 @@
+feature_id: test-feature-001
+stability_score: 0.2
+route: clarification
+consensus: false
+variants:
+- - id: AC-1
+    behavior: 'File exists: src/bob/foo.py'
+  - id: AC-2
+    behavior: 'pytest: tests/test_foo.py::test_foo'
+  - id: AC-3
+    behavior: 'Function defined: bob.foo.foo'
+- - id: AC-1
+    behavior: 'File exists: src/bob/foo.py [variant-1]'
+  - id: AC-2
+    behavior: 'pytest: tests/test_foo.py::test_foo'
+  - id: AC-3
+    behavior: 'Function defined: bob.foo.foo'
+- - id: AC-1
+    behavior: 'File exists: src/bob/foo.py'
+  - id: AC-2
+    behavior: 'pytest: tests/test_foo.py::test_foo'
+  - id: AC-3
+    behavior: 'Function defined: bob.foo.foo [variant-2]'
+disagreeing_slots:
+- id: AC-1
+  behavior: 'File exists: src/bob/foo.py'
+- id: AC-1
+  behavior: 'File exists: src/bob/foo.py [variant-1]'
+- id: AC-3
+  behavior: 'Function defined: bob.foo.foo'
+- id: AC-3
+  behavior: 'Function defined: bob.foo.foo [variant-2]'
+majority_vote:
+- id: AC-2
+  behavior: 'pytest: tests/test_foo.py::test_foo'
+- id: AC-1
+  behavior: 'File exists: src/bob/foo.py'
+- id: AC-3
+  behavior: 'Function defined: bob.foo.foo'

@@ -1,0 +1,10 @@
+feature_id: test-majority-vote
+stability_score: 1.0
+route: auto_accept
+consensus: true
+variants:
+- - id: AC-1
+    behavior: 'File exists: src/bob/mv.py'
+majority_vote:
+- id: AC-1
+  behavior: 'File exists: src/bob/mv.py'

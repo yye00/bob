@@ -1,0 +1,14 @@
+feature_id: orch-integration-test
+stability_score: 1.0
+route: auto_accept
+consensus: true
+variants:
+- - id: AC-1
+    behavior: 'File exists: src/bob/spec_quality/self_consistency.py'
+  - id: AC-2
+    behavior: 'Function defined: bob.spec_quality.self_consistency.run_n_samples'
+majority_vote:
+- id: AC-2
+  behavior: 'Function defined: bob.spec_quality.self_consistency.run_n_samples'
+- id: AC-1
+  behavior: 'File exists: src/bob/spec_quality/self_consistency.py'
