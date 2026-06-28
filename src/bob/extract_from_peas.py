@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 # Separate regexes for each metadata field — one complex regex with .*? fails to advance past |
 _TIER_RE = re.compile(r"Tier\s*:\s*([A-Za-z][A-Za-z0-9_\- ]*)", re.IGNORECASE)
 _PRIORITY_RE = re.compile(r"Priority\s*:\s*([A-Za-z][A-Za-z0-9_\- ]*)", re.IGNORECASE)
-_SLOT_RE = re.compile(r"Slot\s*:\s*(F-R\d+-\d+)", re.IGNORECASE)
+# Accept any semantic slot prefix: F-R7-/F-R8- (bob, rccl) as well as
+# application-spec prefixes like F-HP- (hippy/hipsci). Form: F-<PREFIX>-<NNN>.
+_SLOT_RE = re.compile(r"Slot\s*:\s*(F-[A-Za-z0-9]+-\d+)", re.IGNORECASE)
 _PFC_RE = re.compile(r"PermanentForwardCarry\s*:\s*(true|false)", re.IGNORECASE)
 
 # Pattern to detect the metadata line (contains at least Tier, Priority, or Slot)

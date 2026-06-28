@@ -3037,3 +3037,153 @@ than raising. Provide bob.model_escalation.parse_ladder,
 bob.model_escalation.resolve_model_for_tier, and
 bob.model_escalation.try_escalate as the canonical API, integrated
 into the orchestrator run loop's needs_human gate and builder dispatch.
+
+## Parity-test anti-cheat — single frozen-input tests are gameable; require randomized inputs + execution evidence
+Tier: Core | Priority: high | Slot: F-R7-634 | PermanentForwardCarry: true
+Discovered during the hippy/hipsci spec cross-review (a clean-room
+GPU numpy/scipy clone bob will build): a verification feature
+proposed proving each op correct by comparing the implementation's
+output to a SINGLE expected value frozen into the test. An
+independent reviewer showed this is gameable three ways an
+attempt-pressured builder can hit without doing the real work:
+(a) emit a kernel/function that returns the baked-in constant the
+test checks; (b) compute on the host (e.g. via numpy or pure
+Python) and disguise it behind a device-copy so it "looks" GPU;
+(c) special-case the one known input. bob's AST stub/mock detector
+catches NotImplementedError and obvious mocks, but NONE of these
+three are stubs — they are plausible code that passes a frozen
+single-input test. This is a general weakness of any bob feature
+whose acceptance is "output equals this fixed expected value,"
+not just GPU work — it applies to any numeric/transform/codec
+feature.
+
+Fix at extraction (spec-over-code-fix): when the spec_quality
+synthesizer emits a parity/equivalence-style acceptance criterion
+(the implementation's output is checked against a reference), it
+MUST prefer the RANDOMIZED-INPUT form over a single frozen input:
+inputs are drawn at test time from a per-test seed, and the
+expected values are precomputed by the reference over many seeds at
+test-GENERATION time and replayed (so the implementation can never
+see or call the reference at run time). Additionally, where the
+feature involves a separately-observable execution substrate (a
+kernel launch counter, a subprocess, an external library call), the
+synthesized AC SHOULD include an EXECUTION-EVIDENCE check that the
+real work path actually ran, so a constant-returning or wrong-
+substrate implementation fails even when its numbers match. The
+synthesizer MUST expose this as a recognized AC shape (e.g. a
+`property:`/`behavior:` AC asserting "output matches reference over
+N randomized seeds AND execution evidence advanced"). Behaviour:
+WHEN a feature's intent is output-equals-reference THEN the
+synthesized ACs MUST use randomized-seed inputs (not a lone frozen
+value) AND, where an execution substrate is observable, assert it
+advanced. Boundary: features with genuinely fixed, enumerable
+expected outputs (a constant table, a single canonical vector) may
+keep a frozen AC but MUST still carry at least one randomized or
+property AC alongside it; the change adds an AC shape and never
+weakens an existing structural AC.
+
+## Coverage gates MUST bound the skip/xfail ratio — a suite gate is gameable by mass-skipping the hard tests
+Tier: Core | Priority: high | Slot: F-R7-635 | PermanentForwardCarry: true
+Discovered during the hippy/hipsci spec cross-review: a feature
+proposed gating on "upstream test-suite pass count ratchets upward,
+no regressions on already-passing tests." A reviewer showed the
+ratchet is gameable — an attempt-pressured builder maximizes a
+pass-count/pass-rate gate by aggressively marking the HARD tests
+`skip`/`xfail` (a blanket `NOT_YET_IMPLEMENTED` reason is a perfect
+escape hatch): the pass COUNT never regresses, the gate stays green,
+and real coverage silently stalls or shrinks. This generalizes to
+ANY bob feature that gates on an external/vendored test suite, a
+coverage percentage, or a pass-rate — not just the GPU clone.
+
+Fix at extraction (spec-over-code-fix): whenever the synthesizer
+emits an acceptance criterion that gates on a TEST-SUITE pass count,
+pass rate, or coverage fraction, it MUST also emit a companion AC
+that BOUNDS the skip/xfail RATIO (skipped+xfailed over total
+collected): the ratio must stay at or below a stated threshold, and
+a batch of new skips/xfails that pushes it above the threshold is
+FLAGGED for human review rather than silently accepted. Every skip/
+xfail MUST carry a machine-readable reason from a fixed taxonomy
+(no untagged skips), and a coverage/pass-rate gate that is the SOLE
+signal MUST be marked non-gating unless paired with the skip-ratio
+bound. Behaviour: WHEN a synthesized AC gates on suite pass-count/
+pass-rate/coverage THEN a companion skip-ratio-bound AC MUST be
+emitted AND untagged skips MUST fail the gate. Boundary: a first
+run with no prior baseline initializes the ratio baseline cleanly
+(no false flag); deliberately-deferred OUT_OF_SCOPE tests counted
+under a distinct taxonomy reason do not count against the
+implementable-skip ratio.
+
+## Spec extractor MUST verify vendor/library capability claims against the real environment before emitting passthrough ACs
+Tier: Core | Priority: high | Slot: F-R7-636 | PermanentForwardCarry: true
+Discovered during the hippy/hipsci spec cross-review: several
+features assumed a vendor library exposed a capability it does NOT,
+which a feasibility reviewer caught only by probing the live
+environment. Concrete examples from that review (all verified on the
+target machine): hipFFT exposes no DCT/DST; hipSOLVER exposes no
+nonsymmetric eigensolver (geev/ggev absent); rocPRIM/rocThrust
+device-sort is not bound by the chosen Python binding; several
+"device math" functions (modified Bessel i0/i1, digamma) are not in
+the runtime compiler's headers; and the runtime JIT needed an
+include path (`-I.../include`) that the spec omitted, without which
+every complex/half kernel fails to compile. A feature whose prose
+says "X via vendor-lib Y" when Y lacks X is BORN infeasible: the
+builder either burns its whole attempt+escalation budget discovering
+the gap, or (worse) fakes a passthrough. bob already has an
+environment-capability preflight for DEPENDENCIES (F-R7-473); this
+extends the principle from "is the dependency importable" to "does
+the dependency actually expose the specific symbol/capability this
+feature's prose claims."
+
+Fix at extraction (spec-over-code-fix): when a feature's description
+asserts that a named capability is provided by a specific external
+library ("<op> via <lib>", "backed by <lib>", "passthrough to
+<lib.symbol>"), the extractor/preflight MUST probe the real
+environment for that specific symbol/capability (e.g. attribute
+presence on the imported module, a trial compile for a JIT/codegen
+claim) BEFORE the feature is promoted to ready. If the capability is
+ABSENT, the feature MUST be re-classified — either annotated as
+"hand-built (no vendor primitive), cite the algorithm" or routed to
+clarification/decomposition — rather than emitted as a vendor
+passthrough that cannot exist. Probe results (symbol found / absent /
+trial-compile log) MUST be recorded in the feature's evidence so the
+claim is grounded, not assumed. Behaviour: WHEN a feature claims a
+capability is provided by an external library THEN the extractor
+MUST verify that specific symbol/capability exists in the real
+environment before the feature reaches ready, and re-classify it
+when absent. Boundary: pure-Python/algorithmic features that name no
+external provider are unaffected; a capability that legitimately
+requires building from scratch is allowed through once it is marked
+hand-built-with-citation rather than vendor-passthrough.
+
+## Spec extractor MUST resolve "comprehensive/full" scope into an explicit in-scope enumeration with an out-of-scope block
+Tier: Core | Priority: medium | Slot: F-R7-637 | PermanentForwardCarry: true
+Discovered during the hippy/hipsci spec cross-review: the original
+spec stated a "comprehensive / full numpy+scipy parity" goal while
+the actual feature set covered a fraction, with individual features
+quietly narrowing to "common subset" / "where feasible" / "commonly
+used." A scope reviewer flagged that an open-ended "comprehensive"
+goal has no decidable "done": the autonomous builder either
+over-reaches (chasing an unbounded tail and never converging) or
+declares victory prematurely (a subset masquerading as the whole).
+This is a general spec-quality hazard for any large-surface clone or
+"port everything" brief, independent of the GPU domain. bob's
+ambiguity linter targets vague ACs; this targets a vague PROJECT/
+feature SCOPE statement, which the per-AC linter does not catch.
+
+Fix at extraction (spec-over-code-fix): when a feature (or the spec
+preamble) uses an unbounded scope word ("comprehensive", "full",
+"complete", "all of", "everything", "100% parity") for a large API
+surface, the extractor MUST require it to be backed by an EXPLICIT
+IN-SCOPE ENUMERATION (the concrete functions/modules that define
+"done" for this feature) AND, at the spec level, an OUT-OF-SCOPE
+block listing what is deliberately deferred. A feature whose
+acceptance cannot enumerate its in-scope surface MUST be flagged for
+decomposition or clarification rather than promoted with an
+unfalsifiable "comprehensive" target. Behaviour: WHEN a feature
+claims comprehensive/full coverage of a large surface THEN its
+acceptance MUST enumerate the specific in-scope items and the spec
+MUST carry an out-of-scope block, otherwise the feature is flagged
+not-ready. Boundary: small, naturally-complete features (a single
+function, a 3-method class) need no enumeration — the trigger is an
+unbounded scope word applied to a multi-item surface, not every use
+of the word "all".
