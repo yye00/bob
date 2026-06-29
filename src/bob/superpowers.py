@@ -1554,24 +1554,39 @@ def run_verification_checklist(
         _is_compute_feature = (not _is_harness) and any(
             m in _desc_blob for m in _compute_markers
         )
-        # Scope to THIS feature's own recently-modified python src files, NOT all
-        # of src/. Otherwise, once the HIP facade exists, every later feature
-        # passes trivially because the facade file references HIP — even when the
-        # feature's OWN new modules are pure-Python "simulated GPU" fakes.
-        import time as _t_mod
-        _win_start = feature_start_time if feature_start_time else (_t_mod.time() - 3600)
+        # Scope to THIS feature's OWN files. Preferred source of truth: the
+        # paths named in the feature's own "File exists: <path>" acceptance
+        # criteria — this is precise and avoids cross-contamination (an mtime
+        # window can sweep in ANOTHER feature's still-present simulated file and
+        # wrongly fail the current feature). Fall back to the recently-modified
+        # mtime window only when the ACs name no concrete src paths.
         _py_src = []
-        for f in src_files:
-            if f.suffix != ".py":
-                continue
-            try:
-                if f.stat().st_mtime > _win_start:
-                    _py_src.append(f)
-            except Exception:
-                pass
-        # Fallback: if mtime windowing found nothing (clock skew, re-run), scan all.
-        if not _py_src:
-            _py_src = [f for f in src_files if f.suffix == ".py"]
+        _owned = []
+        if acceptance_criteria:
+            for _line in str(acceptance_criteria).splitlines():
+                _ls = _line.strip()
+                # ACs arrive either as a JSON list string or newline text; match
+                # any "File exists: <...>.py" occurrence.
+                _m = re.search(r"File exists:\s*([^\"',\]]+\.py)", _ls)
+                if _m:
+                    _p = pathlib.Path(ws) / _m.group(1).strip()
+                    if _p.suffix == ".py":
+                        _owned.append(_p)
+        if _owned:
+            _py_src = [p for p in _owned if p.exists()]
+        else:
+            import time as _t_mod
+            _win_start = feature_start_time if feature_start_time else (_t_mod.time() - 3600)
+            for f in src_files:
+                if f.suffix != ".py":
+                    continue
+                try:
+                    if f.stat().st_mtime > _win_start:
+                        _py_src.append(f)
+                except Exception:
+                    pass
+            if not _py_src:
+                _py_src = [f for f in src_files if f.suffix == ".py"]
         # Tokens that betray a pure-Python simulation masquerading as GPU code.
         # Expanded after the "import-but-simulate" cheat: a feature imported a
         # vendor lib (to pass the old import-only check) and referenced it in
