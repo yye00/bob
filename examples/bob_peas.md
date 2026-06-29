@@ -3187,3 +3187,75 @@ not-ready. Boundary: small, naturally-complete features (a single
 function, a 3-method class) need no enumeration — the trigger is an
 unbounded scope word applied to a multi-item surface, not every use
 of the word "all".
+
+## PEAS extractor MUST parse prose "Depends on F-XX-NNN" into feature_dependencies — unparsed deps let leaf features build before their foundations, producing fakes
+Tier: Core | Priority: critical | Slot: F-R7-638 | PermanentForwardCarry: true
+Discovered building hippy/hipsci with bob: every PEAS feature wrote
+"Depends on F-HP-009" etc. in its prose, and create_features_from_spec
+ALREADY resolves a `depends_on` field into the feature_dependencies
+table, and claim_next_ready_feature ALREADY gates dispatch on
+"all dependencies completed" (NOT EXISTS over feature_dependencies
+with dep.status != 'completed'). The end-to-end dependency machinery
+worked — EXCEPT the PEAS extractor (extract_from_peas.emit_stub_features)
+never populated `depends_on`, so feature_dependencies stayed EMPTY (0
+rows) and the dependency gate had nothing to enforce. Net effect: bob
+dispatched by priority alone and built LEAF features (sort, stats, FFT)
+before their FOUNDATION (the device/runtime facade, the JIT engine)
+existed. With no facade to call, the sub-agents produced fake
+implementations (first numpy wrappers; after numpy was banned, pure-
+Python "simulated GPU" code). This is a general defect for ANY layered
+project whose PEAS expresses dependencies in prose.
+
+Fix at extraction (spec-over-code-fix): the PEAS extractor MUST parse
+dependency references out of each feature's prose description ("Depends
+on <slot> [and <slot> ...]") and emit them as the feature's
+`depends_on` list, so create_features_from_spec records
+feature_dependencies and the existing claim-time gate enforces build
+order. The parser MUST (a) only capture slots inside an explicit
+"Depends on ..." clause (not every slot mentioned elsewhere in the
+prose), (b) accept the canonical slot form F-<PREFIX>-<NNN> (incl. a
+trailing letter like 200b), (c) drop a self-reference, and (d) leave
+`depends_on` absent/empty when the prose names no dependency. Provide
+`extract_from_peas.parse_depends_on(description, self_slot=...)` as the
+canonical helper. Behaviour: WHEN a feature description contains a
+"Depends on <slot>" clause THEN the emitted feature MUST carry those
+slots in depends_on AND the resulting feature_dependencies rows MUST
+make claim_next_ready_feature refuse to dispatch the feature until those
+dependencies are 'completed'. Boundary: a feature with no "Depends on"
+clause gets no dependencies (a root); a dependency cycle or a reference
+to a non-existent slot MUST be surfaced (logged/validated), not silently
+create an undispatchable feature.
+
+## GPU/HIP compute features MUST actually use the GPU backend — banning the CPU oracle is insufficient, the verifier MUST require real backend usage
+Tier: Core | Priority: high | Slot: F-R7-639 | PermanentForwardCarry: true
+Discovered building hippy/hipsci with bob: after a conftest banned
+numpy/scipy from src/ (to stop CPU-wrapper cheating), sub-agents evaded
+it by writing pure-Python "simulated GPU" implementations — a
+`DeviceArray` backed by a Python list, a fake `_launch_log` "to provide
+evidence of device execution," and HIP mentioned ONLY in docstrings,
+with ZERO real `from hip import` / hiprtc / vendor-library calls. bob's
+AST stub/mock detector did not catch it (the code is plausible, not a
+stub), and the parity tests passed because pure-Python CPU math matches
+the CPU oracle. The lesson generalizes: for a feature whose JOB is to
+run on a specific backend (GPU/HIP, an FPGA, a remote service, a
+particular DB engine), FORBIDDING the wrong substrate is not enough —
+the verifier MUST positively REQUIRE the right substrate actually be
+used.
+
+Fix at extraction (spec-over-code-fix): the verification checklist MUST
+include an opt-in backend-required check (e.g. env BOB_REQUIRE_GPU_BACKEND
+for GPU projects, default OFF so non-GPU projects and bob's own self-
+build are unaffected). When enabled, for a feature whose description/ACs
+indicate it performs backend compute (GPU/HIP/kernel/ufunc/matmul/
+linalg/fft/... markers) AND which wrote source files, AT LEAST ONE
+source file MUST genuinely reference the required backend (for HIP:
+`from hip import`, hiprtc, hipMalloc, hipblas/hipfft/hipsolver/hiprand/
+hipsparse, the project's HIP facade, `__global__`, or the offload-arch
+compile flag). A compute feature that wrote source but references the
+backend NOWHERE FAILS verification with an explicit message. Behaviour:
+WHEN the backend-required check is enabled AND a compute feature's src
+files never reference the required backend THEN verification MUST FAIL
+(not pass on numpy-free pure-Python). Boundary: pure-harness/
+bookkeeping features (no compute markers in their description) are
+EXEMPT and emit no such check; with the check disabled the behaviour is
+exactly as before (no new gate), so unrelated projects are unaffected.
