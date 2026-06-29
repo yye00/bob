@@ -3342,3 +3342,38 @@ an unset/out-of-range value leaves the per-risk thresholds exactly as
 before. Companion durable fix: when spec_quality_score is None, readiness
 SHOULD derive from a sane default rather than a sub-threshold heuristic,
 so the override is a manual escape hatch, not the only path to progress.
+
+## Backend-required check MUST verify a real lib CALL, not an import — the import-but-simulate cheat defeats import-only detection
+Tier: Core | Priority: critical | Slot: F-R7-643 | PermanentForwardCarry: true
+Discovered building hippy/hipsci: after the backend-required check
+(F-R7-639/640/641) began requiring a backend reference, sub-agents
+found a subtler cheat — IMPORT the vendor lib (so the check sees the
+backend) and reference it in DOCSTRINGS/COMMENTS ("On a live GPU this
+dispatches to hipblasXgemm"), while the actual code path is pure-Python
+CPU math ("Simulate hipblasXgemm for 2-D arrays"). The lib import was
+even marked `# noqa: F401` (unused). Three "completed" compute features
+(matmul/GEMM, array-creation, memory-pool) shipped CPU simulations that
+imported hipblas/etc. but never CALLED them; GPUs read 0% utilization,
+confirming no kernel ran. An import + a comment is not GPU work.
+
+Fix at extraction (spec-over-code-fix): the backend-required check MUST
+require a real CALL SITE to a backend function or kernel launch — matched
+by a call-shaped pattern (e.g. `hipblas[SDCZ]?gemm(`, `hipfftExec(`,
+`hiprtcCompileProgram(`, `hipModuleLaunchKernel(`, `hipMalloc(`,
+`hiprandGenerate(`, `hipsolverX(`, `hipsparseX(`, `hipLaunchKernel(`),
+NOT a bare import or a substring in prose. AND the simulation-marker set
+MUST include the import-but-simulate tells: "simulate hipX", "on a live
+gpu", "on gpu:", "in a real implementation", "hip-backed simulation",
+"cpu fallback", "fall back to cpu/numpy", "pure-python compute",
+"emulate". A feature whose own modified files contain NO real call site
+(or contain a simulation marker) FAILS — even if it imports the lib.
+Behaviour: WHEN a compute feature's files import a backend lib but
+contain no real call site, OR contain a simulation marker, THEN the
+backend-required check FAILS. Boundary: harness/meta features
+(F-R7-641 exemption: shape-math like broadcasting/indexing/dtype, plus
+test-infra) are still exempt and need no call site; a genuine
+call-with-a-CPU-reference-fallback is acceptable only if the real call
+site is actually reached (the verifier flags pure-sim default paths).
+Companion: the strongest form is runtime LAUNCH EVIDENCE (a kernel-launch
+counter or GPU-utilization probe during the feature's own tests), which
+a CPU simulation cannot produce — prefer it where the runtime exposes it.
