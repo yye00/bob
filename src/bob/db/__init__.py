@@ -1434,6 +1434,16 @@ def create_features_from_spec(
         # Both the YAML key (if any) and the resolved name resolve to this UUID.
         if spec_key is not None:
             spec_id_to_uuid[spec_key] = feature.id
+        # List-of-dicts format (PEAS extractor output) carries the slot in the
+        # feature's own "key"/"id" field, not the YAML mapping key; map it too so
+        # depends_on references like "F-HP-009" resolve to a real UUID.
+        if isinstance(feat, dict):
+            for slot_field in ("key", "id"):
+                slot_val = feat.get(slot_field)
+                if slot_val:
+                    spec_id_to_uuid[str(slot_val)] = feature.id
+        if feat_spec_slot:
+            spec_id_to_uuid[str(feat_spec_slot)] = feature.id
         spec_id_to_uuid[feat_name] = feature.id
 
     # Second pass: create dependencies. Allow depends_on entries to
