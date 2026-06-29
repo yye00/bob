@@ -1534,6 +1534,11 @@ def run_verification_checklist(
             "coverage signal", "import guard", "pass-rate", "tolerance policy",
             "acknowledgement", "array api", "get_array_module",
             "dispatch", "protocol",
+            # Performance-gate features MEASURE other features' speed; they call
+            # the real ops (which contain the HIP calls) rather than issuing
+            # kernels themselves. Exempt them from the backend-call requirement.
+            "performance gate", "perf gate", "beats cpu", "speedup", "above threshold",
+            "end-to-end drop-in", "benchmark report",
         )
         # Tokens proving a src file actually uses the HIP backend.
         _hip_usage_markers = (
