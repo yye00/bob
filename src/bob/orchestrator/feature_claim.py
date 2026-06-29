@@ -71,6 +71,34 @@ def claim_next_ready_feature(
         or ``None`` if no ready feature was available.
     """
     conn = get_connection()
+    # Optional global readiness-threshold override. When BOB_READINESS_THRESHOLD
+    # is set to a float in [0,1], it REPLACES the per-risk thresholds with a
+    # single floor. Use to recover from the F-R7-564 readiness deadlock where
+    # spec_quality_score is absent (None) and readiness falls back to a low
+    # AC-count heuristic, leaving genuinely-ready features below the 0.80 gate
+    # and collapsing concurrency. Dependency gating is unaffected.
+    _readiness_override = None
+    try:
+        import os as _os
+        _rv = _os.environ.get("BOB_READINESS_THRESHOLD", "").strip()
+        if _rv:
+            _f = float(_rv)
+            if 0.0 <= _f <= 1.0:
+                _readiness_override = _f
+    except (ValueError, TypeError):
+        _readiness_override = None
+    if _readiness_override is not None:
+        _readiness_clause = f"AND f.readiness_score >= {_readiness_override}"
+    else:
+        _readiness_clause = """AND f.readiness_score >= (
+                  CASE f.risk_category
+                      WHEN 'low'      THEN 0.70
+                      WHEN 'medium'   THEN 0.80
+                      WHEN 'high'     THEN 0.90
+                      WHEN 'critical' THEN 0.95
+                      ELSE 0.80
+                  END
+              )"""
     try:
         conn.execute("BEGIN IMMEDIATE")
 
@@ -82,15 +110,7 @@ def claim_next_ready_feature(
             FROM features f
             WHERE f.project_id = ?
               AND f.status = 'ready'
-              AND f.readiness_score >= (
-                  CASE f.risk_category
-                      WHEN 'low'      THEN 0.70
-                      WHEN 'medium'   THEN 0.80
-                      WHEN 'high'     THEN 0.90
-                      WHEN 'critical' THEN 0.95
-                      ELSE 0.80
-                  END
-              )
+              {_readiness_clause}
               AND NOT EXISTS (
                   SELECT 1 FROM review_history r
                   WHERE r.feature_id = f.id
