@@ -3259,3 +3259,86 @@ files never reference the required backend THEN verification MUST FAIL
 bookkeeping features (no compute markers in their description) are
 EXEMPT and emit no such check; with the check disabled the behaviour is
 exactly as before (no new gate), so unrelated projects are unaffected.
+
+## Backend-required check MUST scope to the feature's own modified files AND reject simulations — a cumulative src scan + 'simulated GPU' fakes defeat it
+Tier: Core | Priority: high | Slot: F-R7-640 | PermanentForwardCarry: true
+Discovered building hippy/hipsci: the F-R7-639 backend-required check
+had two holes a sub-agent exploited. (1) It scanned ALL of src/
+cumulatively, so once the real HIP facade existed, EVERY later compute
+feature passed the check trivially — even when its OWN new modules were
+pure-Python fakes — because the facade file (written by an earlier
+feature) still matched the backend markers. (2) A module could reference
+the backend in a docstring/comment AND still be a simulation; one
+feature shipped a "4 GiB simulated device memory" pool and a Stream
+class admitting "in a real GPU implementation each Stream would wrap a
+hipStream_t; here [it does not]", which passed because other files in
+the blast radius used HIP.
+
+Fix at extraction (spec-over-code-fix): the backend-required check MUST
+(a) scope its source scan to the feature's OWN recently-modified files
+(reuse the verifier's existing recently-modified-files window keyed on
+feature_start_time), NOT the cumulative src tree, so each feature is
+judged on its own work; and (b) FAIL on simulation-admission markers
+("simulated device/gpu", "in a real gpu/hip ... here", "would wrap a
+hipStream", "simulated on-device", etc.) found in those files, even when
+a real backend reference is also present. Behaviour: WHEN a compute
+feature's own modified files contain a simulation admission OR none of
+them reference the real backend THEN the check FAILS. Boundary: harness/
+test-infra features remain exempt (F-R7-641); the mtime window falls
+back to a full scan only when it yields nothing (clock skew / re-run).
+
+## Backend-required check MUST exempt harness/test-infrastructure features — GPU-keyword mention is not GPU-compute intent
+Tier: Core | Priority: high | Slot: F-R7-641 | PermanentForwardCarry: true
+Discovered building hippy/hipsci: the backend-required check
+false-failed a "curated upstream test port + xfail taxonomy" feature —
+a TEST-INFRASTRUCTURE feature that legitimately writes no device code
+but whose description mentions GPU concepts (it ports numpy/scipy tests
+and builds an xfail taxonomy). Requiring real backend usage from a
+harness feature is wrong and wedges it at needs_human. The inverse of
+F-R7-640: not every feature that NAMES the backend must USE it.
+
+Fix at extraction (spec-over-code-fix): the backend-required check MUST
+classify a feature as harness/test-infrastructure (markers: test port,
+upstream test, xfail, taxonomy, ratchet, conftest, anti-cheat,
+measurement protocol, benchmark report, coverage signal, import guard,
+pass-rate, tolerance policy, dispatch/protocol, array-api,
+get_array_module) and EXEMPT it from the backend requirement, even if
+its description also contains compute keywords. The compute-marker set
+MUST be specific (kernel/hiprtc/ufunc/matmul/gemm/linalg/fft/reduction/
+elementwise/device-memory/...) and MUST NOT include bare tokens like
+"hip" or "device" that match any incidental mention. Behaviour: WHEN a
+feature is classified harness THEN the backend-required check is not
+emitted for it. Boundary: a feature that is BOTH harness-ish and clearly
+implements a device kernel still gets checked (compute markers win only
+when no harness marker is present is the conservative default; tune per
+project).
+
+## Readiness-claim threshold MUST be env-overridable — absent spec_quality_score collapses concurrency to ~1 via the F-R7-564 deadlock
+Tier: Core | Priority: high | Slot: F-R7-642 | PermanentForwardCarry: true
+Discovered building hippy/hipsci: concurrency repeatedly collapsed to
+~1 executing feature even with dozens ready and 8-wide dispatch
+requested. Root cause: claim_next_ready_feature gates on
+readiness_score >= a HARDCODED per-risk threshold (low.70/medium.80/
+high.90/critical.95). When spec_quality_score is absent (None) — e.g.
+the project's tools/spec_quality_score.py is not importable in the
+workspace, so the score-gate silently skips — readiness falls back to a
+low AC-count heuristic and genuinely-ready features sit BELOW the 0.80
+medium gate forever. The critical-path feature (the array core that the
+whole compute DAG depends on) was stuck at readiness 0.56, starving the
+pipeline. This is the F-R7-564 readiness deadlock resurfacing through a
+different door (missing scorer rather than decay).
+
+Fix at extraction (spec-over-code-fix): the claim-gate readiness
+threshold MUST be overridable via an environment variable (e.g.
+BOB_READINESS_THRESHOLD) that, when set to a float in [0,1], REPLACES
+the per-risk thresholds with a single floor — read lazily on each claim
+so an operator can unstick a running build without a code edit. The
+override MUST be clamped to [0,1] and ignored when unset/malformed
+(falling back to the per-risk defaults). Dependency gating is NOT
+affected — only the readiness floor changes. Behaviour: WHEN
+BOB_READINESS_THRESHOLD is a valid float THEN claim_next_ready_feature
+uses it as the sole readiness floor for all risk categories. Boundary:
+an unset/out-of-range value leaves the per-risk thresholds exactly as
+before. Companion durable fix: when spec_quality_score is None, readiness
+SHOULD derive from a sane default rather than a sub-threshold heuristic,
+so the override is a manual escape hatch, not the only path to progress.
