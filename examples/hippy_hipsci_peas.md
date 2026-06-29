@@ -183,13 +183,27 @@
 # FFT, single SpMV) — the threshold search is allowed to conclude "no win" for
 # those without failing, and such cases are scoped to batched/large-N variants.
 #
-# ANTI-CHEAT (non-negotiable, applies to EVERY feature): (1) no numpy/scipy import
-# on any hippy/hipsci runtime path (F-HP-004); (2) no hardcoded expected-output
-# arrays in library code; (3) results must come from actual device execution with
-# launch evidence (oracle b.2), not host numpy. bob's AST stub/mock detectors plus
-# F-HP-004 and the launch-evidence assertion enforce these. A feature whose
-# "implementation" delegates to numpy, returns precomputed constants, or stubs the
-# kernel MUST fail verification.
+# ANTI-CHEAT (non-negotiable, applies to EVERY feature — a prior build of this
+# spec cheated by wrapping numpy, so this is now enforced by a MECHANISM that does
+# not depend on build order or on what ACs a feature gets synthesized):
+#   (0) A ROOT conftest.py (F-HP-000, built FIRST) fails EVERY pytest session if any
+#       file under src/ contains `import numpy`/`from numpy`/`import scipy`/`from
+#       scipy`. numpy/scipy may appear ONLY under tests/. Because bob runs pytest to
+#       verify every feature, this makes a numpy-wrapper implementation fail
+#       automatically, no matter which feature it is or what order it builds in.
+#   (1) THEREFORE every feature's implementation MUST be real HIP/GPU code: it calls
+#       the L0 facade `hippy._hip` (driver / HIPRTC / vendor libs), or builds on
+#       lower hippy layers that do — it MUST NOT `import numpy`/`import scipy` in src/.
+#   (2) no hardcoded expected-output arrays in library code.
+#   (3) results must come from actual device execution with launch evidence
+#       (oracle b.2), not host numpy.
+# bob's AST stub/mock detectors, the root conftest, and the launch-evidence
+# assertion enforce these. A feature whose "implementation" imports numpy/scipy in
+# src/, delegates to them, returns precomputed constants, or stubs the kernel MUST
+# fail verification. RESTATE-IN-EVERY-FEATURE: each feature description below
+# carries (or implies via "real HIP") this same ban so that even when bob
+# re-synthesizes a feature's acceptance criteria from its prose, the no-numpy /
+# must-use-HIP requirement is present in the prose the synthesizer reads.
 #
 # RATCHET ANTI-GAMING (review fix): the curated-suite pass-rate ratchet (F-HP-006)
 # is non-gating, and the xfail/skip RATIO is itself tracked and bounded — a batch
@@ -274,6 +288,41 @@ presence in this spec.
 # PHASE 1 — harness: environment, L0 facade, oracles, measurement, anti-cheat
 # These have no dependency on the array library and must land first.
 # ============================================================================
+
+## Global anti-cheat conftest — ban numpy/scipy in src and require HIP, enforced for every test session
+Tier: Core | Priority: critical | Slot: F-HP-000
+THE most important feature: it makes the whole project honest and it
+MUST exist before any other src code is trusted. A prior build of this
+spec CHEATED — every feature was implemented as a thin numpy/scipy
+wrapper (`import numpy as np`, `import scipy.special`) with ZERO HIP
+code, and the per-feature tests passed because a numpy wrapper trivially
+matches the numpy oracle. This feature makes that impossible by a
+mechanism that does not depend on build order or on what acceptance
+criteria later features happen to get: a ROOT `conftest.py` at the
+workspace root, which pytest auto-loads for EVERY test session (every
+feature bob builds runs pytest, so every feature is subject to it).
+
+The root `conftest.py` MUST, at collection time, fail the ENTIRE test
+session (call pytest.exit / raise UsageError) if ANY of these hold:
+(1) any file under `src/` contains a forbidden CPU-backend import —
+`import numpy`, `from numpy`, `import scipy`, or `from scipy` (scan the
+source text of every `src/**/*.py`; the ONLY allowed numpy/scipy imports
+in the entire repo are under `tests/`); (2) once the facade exists,
+`hippy` or `hipsci` cannot be imported. It MUST also install an import
+hook for the test process that raises if `numpy`/`scipy` is imported as
+a side effect of importing `hippy`/`hipsci` themselves (runtime path
+must be numpy-free). Provide `tests/conftest.py` too if needed, but the
+ROOT conftest is the load-bearing one. Acceptance: with a planted
+`import numpy` in any `src/` file, a bare `pytest` exits non-zero with a
+message naming the offending file; with clean src, collection proceeds.
+Error/boundary: the scan MUST ignore the substring inside comments/
+docstrings only if it is not an actual import statement (match import
+statements, not the word "numpy" in prose); a `src/` tree with no files
+yet does not crash the scan. This feature creates ONLY the conftest and
+its self-test; it has no dependencies and must be buildable first.
+Because it forbids numpy/scipy in src GLOBALLY, every subsequent feature
+is forced to implement real HIP/GPU code (via `hippy._hip`, HIPRTC
+kernels, or the vendor libraries) rather than wrapping numpy.
 
 ## Reproducible environment and two-package project skeleton
 Tier: Core | Priority: critical | Slot: F-HP-002
