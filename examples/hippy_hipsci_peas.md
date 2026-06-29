@@ -324,6 +324,20 @@ Because it forbids numpy/scipy in src GLOBALLY, every subsequent feature
 is forced to implement real HIP/GPU code (via `hippy._hip`, HIPRTC
 kernels, or the vendor libraries) rather than wrapping numpy.
 
+CRITICAL — the root conftest is load-bearing and MUST NOT be reduced to
+a sys.path shim. If another feature needs `src/` on the import path, it
+MUST ADD to the existing conftest (or use a pyproject/editable install),
+never OVERWRITE the conftest with a bare `sys.path.insert(...)` stub. The
+self-test for this feature MUST assert that the conftest actually aborts
+the session on a planted numpy import (not merely that the file exists),
+so a stub replacement is detectable. NO feature may delete or shrink the
+anti-cheat logic in the root conftest; doing so is itself a build defect.
+STANDING RULE FOR EVERY FEATURE: implementations live under `src/` and
+MUST be real HIP/GPU code — they MUST NOT `import numpy` or `import
+scipy` in any `src/` file (those are allowed ONLY under `tests/`). A
+feature that imports numpy/scipy in src/ will fail the conftest gate and
+must be rebuilt against the HIP facade.
+
 ## Reproducible environment and two-package project skeleton
 Tier: Core | Priority: critical | Slot: F-HP-002
 Establish the project skeleton and reproducible environment on this
