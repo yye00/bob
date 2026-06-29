@@ -1568,32 +1568,53 @@ def run_verification_checklist(
         if not _py_src:
             _py_src = [f for f in src_files if f.suffix == ".py"]
         # Tokens that betray a pure-Python simulation masquerading as GPU code.
+        # Expanded after the "import-but-simulate" cheat: a feature imported a
+        # vendor lib (to pass the old import-only check) and referenced it in
+        # comments ("On a live GPU this dispatches to hipblasXgemm") while the
+        # actual code path was CPU element-by-element math ("Simulate hipblasXgemm").
         _sim_markers = (
             "simulated device", "simulated gpu", "simulated on-device",
             "simulation of", "simulated device memory", "in a real gpu",
-            "in a real hip", "would wrap a hipstream", "fake gpu", "mock gpu",
-            "pretend", "not actually on the gpu", "no real device",
+            "in a real hip", "in a real implementation", "would wrap a hipstream",
+            "fake gpu", "mock gpu", "pretend", "not actually on the gpu",
+            "no real device", "simulate hipblas", "simulate hipfft",
+            "simulate hiprand", "simulate hip", "on a live gpu", "on gpu:",
+            "hip-backed simulation", "cpu fallback", "fall back to cpu",
+            "fallback to numpy", "pure-python compute", "pure python compute",
+            "emulate", "emulation",
+        )
+        # A genuine GPU implementation CALLS a hip lib function or launches a
+        # kernel — importing the lib and mentioning it in a docstring is NOT
+        # enough. This regex matches actual call sites.
+        import re as _re_mod
+        _real_call_re = _re_mod.compile(
+            r"hipblas[A-Za-z]*[Gg]emm\s*\(|hipblasCreate\s*\(|"
+            r"hipblas[SDCZ][A-Za-z]+\s*\(|"
+            r"hipfftExec\w*\s*\(|hipfft(Make)?Plan\w*\s*\(|"
+            r"hiprtcCompileProgram\s*\(|hiprtcCreateProgram\s*\(|"
+            r"hipModuleLaunchKernel\s*\(|hipModuleLoadData\s*\(|"
+            r"hipMalloc\s*\(|hipMemcpy\w*\s*\(|hipMemset\w*\s*\(|"
+            r"hiprandGenerate\w*\s*\(|hiprandCreateGenerator\w*\s*\(|"
+            r"hipsolver[A-Za-z]+\s*\(|hipsparse[A-Za-z]+\s*\(|"
+            r"hipLaunchKernel\w*\s*\(|hip\.hip[A-Z]\w+\s*\("
         )
         if _is_compute_feature and _py_src:
-            _hip_seen = False
+            _hip_seen = False        # real CALL present (not just import)
             _sim_hit = None
             _scanned = 0
             for sf in _py_src:
-                try:
-                    _t = sf.read_text().lower()
-                    if _sim_hit is None:
-                        for _sm in _sim_markers:
-                            if _sm in _t:
-                                _sim_hit = f"{sf.name}: '{_sm}'"
-                                break
-                except Exception:
-                    pass
                 try:
                     txt = sf.read_text()
                 except Exception:
                     continue
                 _scanned += 1
-                if any(mk in txt for mk in _hip_usage_markers):
+                tlow = txt.lower()
+                if _sim_hit is None:
+                    for _sm in _sim_markers:
+                        if _sm in tlow:
+                            _sim_hit = f"{sf.name}: '{_sm}'"
+                            break
+                if _real_call_re.search(txt):
                     _hip_seen = True
             _passed = _hip_seen and (_sim_hit is None)
             if _sim_hit is not None:
@@ -1603,14 +1624,16 @@ def run_verification_checklist(
                     "implement real HIP/GPU code via the facade or JIT engine."
                 )
             elif _hip_seen:
-                _detail = "HIP backend usage detected in this feature's src files"
+                _detail = "Real HIP backend CALL detected in this feature's src files"
             else:
                 _detail = (
                     f"GPU/compute feature wrote {_scanned} src file(s) but NONE "
-                    "reference the HIP backend (from hip import / hiprtc / "
-                    "hipblas / hippy._hip / __global__). A pure-Python "
-                    "implementation is not acceptable — implement real HIP/GPU "
-                    "code via the facade or JIT engine."
+                    "contain a real HIP backend CALL (hipblasXgemm(), hipfftExec(), "
+                    "hiprtcCompileProgram(), hipModuleLaunchKernel(), hipMalloc(), "
+                    "hiprandGenerate(), etc.). Importing a vendor lib and mentioning "
+                    "it in a docstring is NOT enough — a CPU 'simulation' that imports "
+                    "hipblas but computes on the host is a fake. Implement a real "
+                    "device call via the facade or JIT engine."
                 )
             checks.append({
                 "name": "hip_backend_required",
