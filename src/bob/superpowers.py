@@ -1532,12 +1532,45 @@ def run_verification_checklist(
             x for x in (feature_description or "", acceptance_criteria or "") if x
         ).lower()
         _is_compute_feature = any(m in _desc_blob for m in _compute_markers)
-        # Re-read python src (sources may not be in scope on the non-Python path).
-        _py_src = [f for f in src_files if f.suffix == ".py"]
+        # Scope to THIS feature's own recently-modified python src files, NOT all
+        # of src/. Otherwise, once the HIP facade exists, every later feature
+        # passes trivially because the facade file references HIP — even when the
+        # feature's OWN new modules are pure-Python "simulated GPU" fakes.
+        import time as _t_mod
+        _win_start = feature_start_time if feature_start_time else (_t_mod.time() - 3600)
+        _py_src = []
+        for f in src_files:
+            if f.suffix != ".py":
+                continue
+            try:
+                if f.stat().st_mtime > _win_start:
+                    _py_src.append(f)
+            except Exception:
+                pass
+        # Fallback: if mtime windowing found nothing (clock skew, re-run), scan all.
+        if not _py_src:
+            _py_src = [f for f in src_files if f.suffix == ".py"]
+        # Tokens that betray a pure-Python simulation masquerading as GPU code.
+        _sim_markers = (
+            "simulated device", "simulated gpu", "simulated on-device",
+            "simulation of", "simulated device memory", "in a real gpu",
+            "in a real hip", "would wrap a hipstream", "fake gpu", "mock gpu",
+            "pretend", "not actually on the gpu", "no real device",
+        )
         if _is_compute_feature and _py_src:
             _hip_seen = False
+            _sim_hit = None
             _scanned = 0
             for sf in _py_src:
+                try:
+                    _t = sf.read_text().lower()
+                    if _sim_hit is None:
+                        for _sm in _sim_markers:
+                            if _sm in _t:
+                                _sim_hit = f"{sf.name}: '{_sm}'"
+                                break
+                except Exception:
+                    pass
                 try:
                     txt = sf.read_text()
                 except Exception:
@@ -1545,21 +1578,27 @@ def run_verification_checklist(
                 _scanned += 1
                 if any(mk in txt for mk in _hip_usage_markers):
                     _hip_seen = True
-                    break
+            _passed = _hip_seen and (_sim_hit is None)
+            if _sim_hit is not None:
+                _detail = (
+                    f"GPU/compute feature contains a pure-Python SIMULATION "
+                    f"({_sim_hit}). Simulated/fake device code is not acceptable — "
+                    "implement real HIP/GPU code via the facade or JIT engine."
+                )
+            elif _hip_seen:
+                _detail = "HIP backend usage detected in this feature's src files"
+            else:
+                _detail = (
+                    f"GPU/compute feature wrote {_scanned} src file(s) but NONE "
+                    "reference the HIP backend (from hip import / hiprtc / "
+                    "hipblas / hippy._hip / __global__). A pure-Python "
+                    "implementation is not acceptable — implement real HIP/GPU "
+                    "code via the facade or JIT engine."
+                )
             checks.append({
                 "name": "hip_backend_required",
-                "passed": _hip_seen,
-                "details": (
-                    "HIP backend usage detected in src"
-                    if _hip_seen
-                    else (
-                        f"GPU/compute feature wrote {_scanned} src file(s) but NONE "
-                        "reference the HIP backend (from hip import / hiprtc / "
-                        "hipblas / hippy._hip / __global__). A pure-Python "
-                        "'simulated GPU' implementation is not acceptable — "
-                        "implement real HIP/GPU code via the facade or JIT engine."
-                    )
-                ),
+                "passed": _passed,
+                "details": _detail,
             })
 
     # Check 4b: Run the test suite. This is the always-on default that
