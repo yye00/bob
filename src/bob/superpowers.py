@@ -1516,10 +1516,24 @@ def run_verification_checklist(
     ).strip().lower() in ("1", "true", "yes", "on")
     if _gpu_backend_required and is_python_project:
         # Tokens that indicate the feature is meant to do real GPU/HIP compute.
+        # Deliberately specific — avoid bare "hip"/"device" which match any mention
+        # (e.g. a test-harness feature that merely references hippy).
         _compute_markers = (
-            "hip", "gpu", "kernel", "hiprtc", "ufunc", "matmul", "gemm",
-            "linalg", "fft", "reduction", "elementwise", "device", "rocm",
-            "hipblas", "hipfft", "hipsolver", "hiprand", "hipsparse", "jit",
+            "kernel", "hiprtc", "ufunc", "matmul", "gemm", "linalg", "fft",
+            "reduction", "elementwise", "rocm", "hipblas", "hipfft", "hipsolver",
+            "hiprand", "hipsparse", "device memory", "memory pool", "gpu compute",
+            "hip graph", "device array", "ndarray", "dtype kernel", "scatter",
+            "gather", "sort kernel", "convolution",
+        )
+        # Harness / test-infrastructure / bookkeeping features legitimately write
+        # NO device code even though they mention GPU concepts; exempt them so the
+        # backend-required gate does not false-fail them.
+        _harness_markers = (
+            "test port", "upstream test", "xfail", "taxonomy", "ratchet",
+            "conftest", "anti-cheat", "measurement protocol", "benchmark report",
+            "coverage signal", "import guard", "pass-rate", "tolerance policy",
+            "acknowledgement", "array api", "get_array_module",
+            "dispatch", "protocol",
         )
         # Tokens proving a src file actually uses the HIP backend.
         _hip_usage_markers = (
@@ -1531,7 +1545,10 @@ def run_verification_checklist(
         _desc_blob = " ".join(
             x for x in (feature_description or "", acceptance_criteria or "") if x
         ).lower()
-        _is_compute_feature = any(m in _desc_blob for m in _compute_markers)
+        _is_harness = any(m in _desc_blob for m in _harness_markers)
+        _is_compute_feature = (not _is_harness) and any(
+            m in _desc_blob for m in _compute_markers
+        )
         # Scope to THIS feature's own recently-modified python src files, NOT all
         # of src/. Otherwise, once the HIP facade exists, every later feature
         # passes trivially because the facade file references HIP — even when the
