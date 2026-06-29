@@ -1598,10 +1598,11 @@ def run_verification_checklist(
             r"hipsolver[A-Za-z]+\s*\(|hipsparse[A-Za-z]+\s*\(|"
             r"hipLaunchKernel\w*\s*\(|hip\.hip[A-Z]\w+\s*\("
         )
-        if _is_compute_feature and _py_src:
-            _hip_seen = False        # real CALL present (not just import)
-            _sim_hit = None
-            _scanned = 0
+        # Scan the feature's own files ONCE for both sim-markers and real calls.
+        _hip_seen = False        # real CALL present (not just import)
+        _sim_hit = None
+        _scanned = 0
+        if not _is_harness and _py_src:
             for sf in _py_src:
                 try:
                     txt = sf.read_text()
@@ -1616,6 +1617,25 @@ def run_verification_checklist(
                             break
                 if _real_call_re.search(txt):
                     _hip_seen = True
+
+        # Check A — no_simulation: applies to ANY non-harness feature (even ones
+        # the compute-marker heuristic misses, e.g. "array creation"/"transfer").
+        # A simulation admission is a fake regardless of feature classification.
+        if not _is_harness and _py_src:
+            checks.append({
+                "name": "no_simulation_in_source",
+                "passed": _sim_hit is None,
+                "details": (
+                    f"Pure-Python SIMULATION detected ({_sim_hit}). A CPU 'simulation' "
+                    "that fakes device work is not acceptable — implement real HIP/GPU "
+                    "code (real call site) via the facade or JIT engine."
+                    if _sim_hit is not None
+                    else "No simulation markers in this feature's source files"
+                ),
+            })
+
+        # Check B — hip_backend_required: compute features must have a real call.
+        if _is_compute_feature and _py_src:
             _passed = _hip_seen and (_sim_hit is None)
             if _sim_hit is not None:
                 _detail = (
