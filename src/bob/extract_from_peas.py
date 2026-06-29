@@ -119,6 +119,34 @@ def _next_slot(existing_slots: set[str]) -> str:
     return f"F-R7-{candidate:03d}"
 
 
+# Matches a slot reference like F-HP-200, F-R7-553, F-HP-200b in prose.
+_SLOT_REF_RE = re.compile(r"\bF-[A-Za-z0-9]+-\d+[a-z]?\b")
+# Matches a "Depends on ..." clause and captures the trailing text up to the
+# sentence end so we only pull slot refs that are actually dependencies, not
+# every slot mentioned in the prose (e.g. "see F-HP-577").
+_DEPENDS_CLAUSE_RE = re.compile(
+    r"Depends\s+on\b(.*?)(?:\.\s|\.$|$)", re.IGNORECASE | re.DOTALL
+)
+
+
+def parse_depends_on(description: str, *, self_slot: str | None = None) -> list[str]:
+    """Extract dependency slot references from a feature's prose description.
+
+    Looks for ``Depends on F-XX-NNN [and F-YY-MMM ...]`` clauses and returns
+    the referenced slot IDs in first-seen order. A feature never depends on
+    itself (``self_slot`` is filtered out). Returns an empty list when the
+    description names no dependencies.
+    """
+    if not description:
+        return []
+    found: list[str] = []
+    for clause in _DEPENDS_CLAUSE_RE.findall(description):
+        for ref in _SLOT_REF_RE.findall(clause):
+            if ref != self_slot and ref not in found:
+                found.append(ref)
+    return found
+
+
 def emit_stub_features(
     parsed_features: list[dict[str, Any]],
     existing_slots: set[str] | None = None,
@@ -126,8 +154,10 @@ def emit_stub_features(
     """Convert parsed feature dicts into YAML-ready stub feature dicts.
 
     Each stub has: ``key``, ``title``, ``tier``, ``priority``, ``description``,
-    and ``acceptance_criteria`` set to the TBD placeholder so the synthesizer
-    will fill it in.
+    ``acceptance_criteria`` set to the TBD placeholder so the synthesizer
+    will fill it in, and ``depends_on`` parsed from any "Depends on F-XX-NNN"
+    clauses in the prose (so the run loop's dependency gate can enforce build
+    order — foundational features before the leaves that need them).
 
     When a feature has no slot, one is auto-minted by walking past any slots
     already in *existing_slots* (or those already emitted in this call).
@@ -149,6 +179,9 @@ def emit_stub_features(
             "description": feat["description"],
             "acceptance_criteria": [TBD_PLACEHOLDER],
         }
+        deps = parse_depends_on(feat.get("description", ""), self_slot=slot)
+        if deps:
+            stub["depends_on"] = deps
         if feat.get("permanent_forward_carry"):
             stub["permanent_forward_carry"] = True
         stubs.append(stub)

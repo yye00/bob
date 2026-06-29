@@ -1502,6 +1502,66 @@ def run_verification_checklist(
             "details": "Mock detection skipped (non-Python project)",
         })
 
+    # Check 4a2: GPU-backend-required (opt-in via BOB_REQUIRE_GPU_BACKEND).
+    # Closes the "pure-Python simulated-GPU fake" cheat: a feature that claims
+    # to do GPU/HIP compute but whose src files never actually call the GPU
+    # binding. Banning numpy alone is insufficient — a sub-agent can write a
+    # pure-Python CPU implementation dressed up with GPU-sounding names and a
+    # fake "_launch_log". This check requires that when a feature's description
+    # describes GPU/HIP compute AND it wrote Python src files, at least one of
+    # those src files genuinely references the HIP backend. Opt-in so it only
+    # applies to GPU projects (e.g. hippy/hipsci), never bob's own self-build.
+    _gpu_backend_required = os.environ.get(
+        "BOB_REQUIRE_GPU_BACKEND", ""
+    ).strip().lower() in ("1", "true", "yes", "on")
+    if _gpu_backend_required and is_python_project:
+        # Tokens that indicate the feature is meant to do real GPU/HIP compute.
+        _compute_markers = (
+            "hip", "gpu", "kernel", "hiprtc", "ufunc", "matmul", "gemm",
+            "linalg", "fft", "reduction", "elementwise", "device", "rocm",
+            "hipblas", "hipfft", "hipsolver", "hiprand", "hipsparse", "jit",
+        )
+        # Tokens proving a src file actually uses the HIP backend.
+        _hip_usage_markers = (
+            "from hip import", "import hip\n", "from hippy._hip", "hippy._hip",
+            "hiprtc", "hipMalloc", "hipblas", "hipfft", "hipsolver", "hiprand",
+            "hipsparse", "offload-arch", "__global__", "hipModuleLaunchKernel",
+            "hip_check",
+        )
+        _desc_blob = " ".join(
+            x for x in (feature_description or "", acceptance_criteria or "") if x
+        ).lower()
+        _is_compute_feature = any(m in _desc_blob for m in _compute_markers)
+        # Re-read python src (sources may not be in scope on the non-Python path).
+        _py_src = [f for f in src_files if f.suffix == ".py"]
+        if _is_compute_feature and _py_src:
+            _hip_seen = False
+            _scanned = 0
+            for sf in _py_src:
+                try:
+                    txt = sf.read_text()
+                except Exception:
+                    continue
+                _scanned += 1
+                if any(mk in txt for mk in _hip_usage_markers):
+                    _hip_seen = True
+                    break
+            checks.append({
+                "name": "hip_backend_required",
+                "passed": _hip_seen,
+                "details": (
+                    "HIP backend usage detected in src"
+                    if _hip_seen
+                    else (
+                        f"GPU/compute feature wrote {_scanned} src file(s) but NONE "
+                        "reference the HIP backend (from hip import / hiprtc / "
+                        "hipblas / hippy._hip / __global__). A pure-Python "
+                        "'simulated GPU' implementation is not acceptable — "
+                        "implement real HIP/GPU code via the facade or JIT engine."
+                    )
+                ),
+            })
+
     # Check 4b: Run the test suite. This is the always-on default that
     # actually executes pytest in the workspace, so a sub-agent that only
     # writes always-passing tests still gets caught when the suite reports
