@@ -1502,6 +1502,38 @@ def run_verification_checklist(
             "details": "Mock detection skipped (non-Python project)",
         })
 
+    # Check 4a1: namespace-collision (always on when GPU backend required).
+    # A generated src/<name> package that matches an imported third-party
+    # distribution (hip, hiprtc, hipblas, ... for hippy) SHADOWS the real
+    # package so `from hip import ...` breaks workspace-wide, silently forcing
+    # every feature into host-backed fakes. This recurred repeatedly because a
+    # feature's synthesized ACs literally mandated `src/hip/graph_capture.py`.
+    # Fail loudly so it can never silently poison the build.
+    _gpu_backend_required = os.environ.get(
+        "BOB_REQUIRE_GPU_BACKEND", ""
+    ).strip().lower() in ("1", "true", "yes", "on")
+    if _gpu_backend_required and is_python_project:
+        _collide_names = {"hip", "hiprtc", "hipblas", "hipfft", "hiprand",
+                          "hipsolver", "hipsparse", "numpy", "scipy"}
+        _collisions = []
+        try:
+            for _ch in (ws / src_dir).iterdir():
+                _nm = _ch.name[:-3] if _ch.is_file() and _ch.suffix == ".py" else _ch.name
+                if _nm in _collide_names and (_ch.is_dir() or _ch.suffix == ".py"):
+                    _collisions.append(_ch.name)
+        except Exception:
+            pass
+        checks.append({
+            "name": "no_namespace_collision",
+            "passed": not _collisions,
+            "details": (
+                f"src/ contains module(s) shadowing real dependencies: {sorted(_collisions)}. "
+                "A src/hip (etc.) package hides hip-python so `from hip import ...` "
+                "breaks workspace-wide. Put code under src/hippy/ or src/hipsci/."
+                if _collisions else "No dependency-shadowing modules in src/"
+            ),
+        })
+
     # Check 4a2: GPU-backend-required (opt-in via BOB_REQUIRE_GPU_BACKEND).
     # Closes the "pure-Python simulated-GPU fake" cheat: a feature that claims
     # to do GPU/HIP compute but whose src files never actually call the GPU
@@ -1511,9 +1543,6 @@ def run_verification_checklist(
     # describes GPU/HIP compute AND it wrote Python src files, at least one of
     # those src files genuinely references the HIP backend. Opt-in so it only
     # applies to GPU projects (e.g. hippy/hipsci), never bob's own self-build.
-    _gpu_backend_required = os.environ.get(
-        "BOB_REQUIRE_GPU_BACKEND", ""
-    ).strip().lower() in ("1", "true", "yes", "on")
     if _gpu_backend_required and is_python_project:
         # Tokens that indicate the feature is meant to do real GPU/HIP compute.
         # Deliberately specific — avoid bare "hip"/"device" which match any mention
