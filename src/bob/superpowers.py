@@ -1731,6 +1731,53 @@ def run_verification_checklist(
                 "details": _detail,
             })
 
+        # Check C — gpu_execution_proven: the feature's TESTS must assert real
+        # device execution, not just output values (a CPU impl passes value-only
+        # tests identically). Look in the feature's own test files for a GPU
+        # execution signal: a launch-counter assertion, a spied/monkeypatched hip
+        # call, device residency, or an observed rocm-smi / utilization probe.
+        if _is_compute_feature and _py_src:
+            _gpu_test_markers = (
+                "launch_count", "get_gemm_launch_count", "get_fill_launch_count",
+                "record_launch", "device_id", "device_ptr", ".device",
+                "rocm-smi", "rocm_smi", "gpu_use", "gpu_util", "utilization",
+                "hipmalloc", "hip.hip", "monkeypatch", "launches", "kernel_launched",
+            )
+            _test_paths = []
+            if acceptance_criteria:
+                for _line in str(acceptance_criteria).splitlines():
+                    _tm = re.search(r"pytest:\s*([^\"',\]]+\.py)", _line.strip())
+                    if _tm:
+                        _tp = pathlib.Path(ws) / _tm.group(1).strip()
+                        if _tp.exists():
+                            _test_paths.append(_tp)
+            _gpu_test_seen = False
+            for _tp in _test_paths:
+                try:
+                    _ttxt = _tp.read_text().lower()
+                except Exception:
+                    continue
+                if any(mk in _ttxt for mk in _gpu_test_markers):
+                    _gpu_test_seen = True
+                    break
+            # Only enforce when we could actually find the feature's test files;
+            # if none resolved, leave it to other checks (avoid false fail).
+            if _test_paths:
+                checks.append({
+                    "name": "gpu_execution_proven",
+                    "passed": _gpu_test_seen,
+                    "details": (
+                        "Feature tests assert real GPU execution "
+                        "(launch counter / device residency / spied hip call)"
+                        if _gpu_test_seen else
+                        "Feature tests check VALUES ONLY — a CPU implementation would "
+                        "pass identically. Add at least one assertion that proves the "
+                        "op ran on the GPU: a launch-counter increment, a "
+                        "monkeypatched/spied hip call, device-residency (.device_id), "
+                        "or an observed rocm-smi GPU-utilization probe."
+                    ),
+                })
+
     # Check 4b: Run the test suite. This is the always-on default that
     # actually executes pytest in the workspace, so a sub-agent that only
     # writes always-passing tests still gets caught when the suite reports
