@@ -1547,13 +1547,29 @@ def run_verification_checklist(
             "hipsparse", "offload-arch", "__global__", "hipModuleLaunchKernel",
             "hip_check",
         )
+        # Classify primarily on the feature TITLE (first line / unambiguous),
+        # not the whole description+ACs (where incidental words like "anti-cheat"
+        # or "protocol" appear in core features and wrongly exempt them).
+        _title = (feature_description or "").split("\n", 1)[0].lower()
         _desc_blob = " ".join(
             x for x in (feature_description or "", acceptance_criteria or "") if x
         ).lower()
-        _is_harness = any(m in _desc_blob for m in _harness_markers)
+        # A feature is harness ONLY if its TITLE indicates infra/test/perf-gate.
+        # Perf-gate/benchmark titles win (they measure, not compute) even though
+        # their bodies mention fft/gemm/etc. Otherwise, compute classification
+        # uses the title too, so an incidental compute word in another feature's
+        # body does not mislabel it.
+        _is_harness = any(m in _title for m in _harness_markers)
         _is_compute_feature = (not _is_harness) and any(
-            m in _desc_blob for m in _compute_markers
+            m in _title for m in _compute_markers
         )
+        # Fallback: if the title gave no signal, consult the fuller blob so we
+        # don't UNDER-gate a compute feature whose title is terse.
+        if not _is_harness and not _is_compute_feature:
+            _is_harness = any(m in _desc_blob for m in _harness_markers)
+            _is_compute_feature = (not _is_harness) and any(
+                m in _desc_blob for m in _compute_markers
+            )
         # Scope to THIS feature's OWN files. Preferred source of truth: the
         # paths named in the feature's own "File exists: <path>" acceptance
         # criteria — this is precise and avoids cross-contamination (an mtime

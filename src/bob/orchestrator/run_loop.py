@@ -4460,7 +4460,14 @@ class OrchestrationLoop:
                 verification_result = run_verification_checklist(
                     workspace=self.workspace,
                     acceptance_criteria=feature.acceptance_criteria,
-                    feature_description=feature.description,
+                    # Prepend the feature NAME so the GPU/harness classifier sees
+                    # the clean, unambiguous title (the description prose contains
+                    # incidental words like "anti-cheat" that misclassify it).
+                    feature_description=(
+                        f"{feature.name}\n{feature.description}"
+                        if getattr(feature, "name", None)
+                        else feature.description
+                    ),
                     pre_snapshot=before_snapshot,
                 )
                 verification_passed = bool(verification_result.get("passed", True))
