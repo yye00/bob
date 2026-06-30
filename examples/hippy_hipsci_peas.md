@@ -692,11 +692,17 @@ Tier: Core | Priority: medium | Slot: F-HP-205
 Expose HIP graph capture/replay so a repeated launch sequence (e.g. an
 iterative solver loop) is captured once and replayed with lower
 per-iteration overhead. Provide a context-manager capture API and a
-replay handle. Acceptance: a captured graph reproduces the eager result
-exactly; under F-HP-010 replay reduces per-iteration overhead for a
-many-small-launch loop. Error/boundary: capturing an operation that
-allocates from the pool mid-capture is either supported or raises a
-clear error (no silent corruption). Depends on F-HP-009 and F-HP-200.
+replay handle. The implementation MUST live under `src/hippy/` (e.g.
+`hippy/graph.py`) — it MUST NOT create a top-level `src/hip/` package or
+any module named `hip`/`hiprtc`/`hipblas`/`hipfft`/`hiprand`/`hipsolver`/
+`hipsparse`, because such a name SHADOWS the real hip-python distribution
+and silently breaks `from hip import hip` for the ENTIRE workspace,
+forcing every feature into host-backed fallbacks. Acceptance: a captured
+graph reproduces the eager result exactly; under F-HP-010 replay reduces
+per-iteration overhead for a many-small-launch loop; no `src/hip/`
+package exists. Error/boundary: capturing an operation that allocates
+from the pool mid-capture is either supported or raises a clear error
+(no silent corruption). Depends on F-HP-009 and F-HP-200.
 
 # ============================================================================
 # PHASE 4 — linear algebra, FFT, random (vendor-library backed where possible)

@@ -3377,3 +3377,39 @@ site is actually reached (the verifier flags pure-sim default paths).
 Companion: the strongest form is runtime LAUNCH EVIDENCE (a kernel-launch
 counter or GPU-utilization probe during the feature's own tests), which
 a CPU simulation cannot produce — prefer it where the runtime exposes it.
+
+## Generated modules MUST NOT shadow a real dependency package — a src/<dep> namespace collision silently breaks the whole build
+Tier: Core | Priority: critical | Slot: F-R7-644 | PermanentForwardCarry: true
+Discovered building hippy/hipsci — and it was the deepest, most
+destructive defect of the entire build, invisible for many generations.
+One feature (HIP graph capture) created `src/hip/__init__.py` +
+`src/hip/graph_capture.py` to hold its code. But the project depends on
+the PyPI distribution `hip-python`, imported as `from hip import hip,
+hiprtc, hipblas, ...`. With `src/` on sys.path, the workspace's
+`src/hip/` package SHADOWED the real `hip` package, so EVERY
+`from hip import ...` across the whole workspace raised ImportError.
+The effect was catastrophic and silent: the L0 facade was unreachable,
+so every sub-agent that tried to write real device code hit an
+ImportError and fell back to host-backed/simulated implementations —
+which is why the build kept producing CPU fakes no matter how many
+times the anti-cheat gate was hardened. The root cause was not the
+agents cheating; it was that the real backend was un-importable because
+a generated module had stolen its top-level name.
+
+Fix at extraction (spec-over-code-fix): (1) the verification checklist
+MUST include a namespace-collision check that FAILS any feature when
+`src/` contains a top-level package or module whose name matches a
+real third-party dependency the project imports (for hippy: hip,
+hiprtc, hipblas, hipfft, hiprand, hipsolver, hipsparse; generally: any
+distribution listed as a dependency, plus numpy/scipy). (2) The spec
+synthesizer MUST steer feature file paths into the project's own
+namespace (src/<project>/...) and MUST NOT emit File-exists ACs at a
+top-level src/<dep> path that collides with an imported distribution.
+(3) The project's root conftest SHOULD assert no such collision at
+collection time so it fails loudly the moment it appears. Behaviour:
+WHEN src/ contains a module/package named identically to an imported
+third-party distribution THEN verification (and the conftest) MUST fail
+with a clear "namespace collision shadows <dist>" message. Boundary:
+the project's OWN top-level package name is allowed; only names matching
+external imported distributions are forbidden. This single check would
+have saved the entire hippy build from silently faking GPU work.
