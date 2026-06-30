@@ -1602,6 +1602,11 @@ def run_verification_checklist(
             "hip-backed simulation", "cpu fallback", "fall back to cpu",
             "fallback to numpy", "pure-python compute", "pure python compute",
             "emulate", "emulation",
+            # Host-backed-array cheat: storing array data in a Python bytearray/
+            # list "simulating device memory" instead of a real hipMalloc block.
+            "simulating device memory", "simulates device memory",
+            "bytearray buffer", "host bytearray", "simulating device",
+            "in-memory device", "device memory simulation",
         )
         # A genuine GPU implementation CALLS a hip lib function or launches a
         # kernel — importing the lib and mentioning it in a docstring is NOT
