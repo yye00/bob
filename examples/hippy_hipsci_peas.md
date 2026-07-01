@@ -42,20 +42,20 @@
 # whole modules ruled OUT for v1 are enumerated in the OUT-OF-SCOPE block.
 #
 # Hardware (the machine bob builds and validates on): a single node with 8x AMD
-# Instinct MI300X (gfx942), ROCm 7.2.1, 224 Intel Xeon Platinum 8480C CPU cores.
+# Instinct MI355X (gfx950), ROCm 7.0.1, 256 AMD EPYC 9575F CPU cores.
 # Commands and numbers in this spec are concrete for THIS machine, not portable
-# guesses. The GPU architecture string is `gfx942:sramecc+:xnack-`; the HIP
-# offload arch for runtime compilation is `gfx942` (verified live: 8 devices
-# visible, HIPRTC compiles for gfx942, a hipBLAS SGEMM matched numpy to ~2e-4).
+# guesses. The GPU architecture string is `gfx950:sramecc+:xnack-`; the HIP
+# offload arch for runtime compilation is `gfx950` (verified live: 8 devices
+# visible, HIPRTC compiles for gfx950, a hipBLAS SGEMM matched numpy to ~2e-4).
 #
 # ARCHITECTURE (decided — layered hybrid, validated live before authoring):
 #   L0  Driver binding. Use AMD's official `hip-python` package as the low-level
 #       binding to the HIP driver API, the HIPRTC runtime compiler, and the math
 #       libraries (hipBLAS, hipFFT, hipRAND, hipSOLVER, hipSPARSE) and RCCL. The
-#       installed ROCm is 7.2.1; the matching wheel is hip-python 7.2.1.* . This
+#       installed ROCm is 7.0.1; the matching wheel is hip-python 7.0.1.* . This
 #       layer is consumed ONLY through a thin internal facade module (see
 #       F-HP-002) so the rest of hippy never imports `hip.*` directly. (verified:
-#       hip-python 7.2.1.* is a real 64 MB compiled binding exposing ~769 driver
+#       hip-python 7.0.1.* is a real 64 MB compiled binding exposing ~769 driver
 #       callables, ~1204 hipBLAS, ~547 hipSOLVER, ~614 hipSPARSE symbols.)
 #   L1  Runtime core. Device/context management, a caching memory pool (to avoid
 #       per-op hipMalloc), multi-stream scheduling, events, and HIP graph
@@ -65,7 +65,7 @@
 #       device transfer.
 #   L3  HIPRTC JIT engine. Python emits HIP C++ kernel source as strings
 #       (templated on dtype/shape/op), compiles them with HIPRTC at runtime for
-#       gfx942, and caches the compiled code objects. This is the engine for
+#       gfx950, and caches the compiled code objects. This is the engine for
 #       elementwise ufuncs, reductions, and kernel fusion.
 #   L4  Vendor-library ops. matmul/GEMM via hipBLAS (and hipBLASLt where it
 #       helps), dense linalg via hipSOLVER/rocSOLVER, FFT via hipFFT, RNG via
@@ -98,7 +98,7 @@
 # for the algorithm used.
 #
 # HIPRTC COMPILE FLAGS (blocker fix from review): runtime kernel compilation MUST
-# pass BOTH `--offload-arch=gfx942` AND `-I/opt/rocm-7.2.1/include`. (verified:
+# pass BOTH `--offload-arch=gfx950` AND `-I/opt/rocm-7.0.1/include`. (verified:
 # with only the offload arch, `#include <hip/hip_complex.h>`, `hip_fp16.h`, and
 # `hip_bf16.h` all fail "file not found", which would break EVERY complex/fp16/
 # bf16 kernel; adding the include path fixes all four.) The include path is
@@ -174,7 +174,7 @@
 # float64; documented looser bounds for float32/float16/bfloat16 and complex;
 # reductions over large N get a bound that grows with N (accumulation order).
 #
-# PERFORMANCE BAR: a measured win over numpy/scipy on THIS node's 224 CPU cores
+# PERFORMANCE BAR: a measured win over numpy/scipy on THIS node's 256 CPU cores
 # under F-HP-010's protocol, ABOVE a per-op size threshold that MUST be justified
 # and bounded (the win must hold at the largest problem that fits in one GPU's
 # HBM; the threshold may not be set arbitrarily high to dodge the gate). Below
@@ -244,8 +244,8 @@
 #
 # DEPENDENCY / ENVIRONMENT NOTES:
 #   - Python 3.12; numpy 2.4.x and scipy (current) installed FOR TESTS ONLY.
-#   - hip-python pinned to 7.2.1.* (matches ROCm 7.2.1); facade F-HP-002 localizes it.
-#   - HIPRTC flags: `--offload-arch=gfx942 -I/opt/rocm-7.2.1/include`.
+#   - hip-python pinned to 7.0.1.* (matches ROCm 7.0.1); facade F-HP-002 localizes it.
+#   - HIPRTC flags: `--offload-arch=gfx950 -I/opt/rocm-7.0.1/include`.
 #   - Workspace: fresh dir (default ~/hippy), one repo, two installable packages
 #     `hippy` and `hipsci` (hipsci depends on hippy).
 #   - numpy 2.x promotion: type promotion MUST follow NEP 50 (value-independent;
@@ -346,12 +346,12 @@ machine. Create one repository exposing two installable packages,
 for both and a single dev-install path. Create the thin internal L0
 facade module `hippy._hip` that is the ONLY place importing hip-python
 (`from hip import hip, hiprtc, hipblas, hipfft, hiprand, hipsolver,
-hipsparse`); it centralizes the version pin (hip-python 7.2.1.*) and
-the HIPRTC compile flags (`--offload-arch=gfx942 -I/opt/rocm-7.2.1/
+hipsparse`); it centralizes the version pin (hip-python 7.0.1.*) and
+the HIPRTC compile flags (`--offload-arch=gfx950 -I/opt/rocm-7.0.1/
 include`). The facade exposes device count, device properties, and a
 `hip_check` error wrapper. Acceptance: both packages import; the
 facade reports exactly 8 devices and a device name containing
-"gfx942" on this machine; the facade exposes the compile-flag list
+"gfx950" on this machine; the facade exposes the compile-flag list
 including the rocm include path. Error/boundary: importing the facade
 on a machine with no HIP runtime MUST raise a clear, actionable error
 naming the missing component, not an opaque ImportError; a grep of the
@@ -364,7 +364,7 @@ hip-python's (status, *values) return tuples, raises a typed
 HippyHIPError carrying the HIP status name on a non-zero status, and
 returns the unpacked values on success. Add a self-contained canary
 test that, using ONLY the facade, allocates device memory, copies a
-host buffer up, runs a trivial HIPRTC kernel compiled for gfx942 that
+host buffer up, runs a trivial HIPRTC kernel compiled for gfx950 that
 writes a known pattern, copies back, and asserts the pattern.
 Acceptance: the canary passes on this machine; HippyHIPError exposes
 the status name. Error/boundary: a deliberately-malformed kernel
@@ -586,7 +586,7 @@ Tier: Core | Priority: critical | Slot: F-HP-200
 Implement the minimal core of L3: take a kernel recipe (op body +
 participating dtypes), EMIT HIP C++ source as a Python string for the
 CONTIGUOUS 1-D case, compile with HIPRTC using the F-HP-002 flags
-(`--offload-arch=gfx942 -I/opt/rocm-7.2.1/include`), load the code
+(`--offload-arch=gfx950 -I/opt/rocm-7.0.1/include`), load the code
 object, and cache the callable keyed by (recipe, dtypes). Handle launch
 config (block/grid from element count) and argument packing, and
 increment the F-HP-009 launch counter. Downstream Phase-3 features gate
@@ -889,7 +889,7 @@ from dense, and `toarray`. Use exact/allclose comparators. Acceptance:
 parity vs scipy.sparse for the implemented ops. Error/boundary:
 dimension-mismatched sparse ops raise; an empty sparse matrix is
 handled. No sparse PERF gate (SpMV is bandwidth-bound and may not beat
-224 CPU cores — parity-only). Depends on F-HP-300 and the hipSPARSE
+256 CPU cores — parity-only). Depends on F-HP-300 and the hipSPARSE
 handle.
 
 ## hipsci.special (JIT elementwise, hand-built where no device math)
@@ -938,7 +938,7 @@ raises. Depends on F-HP-305.
 
 # ============================================================================
 # PHASE 7 — performance gates
-# Each uses F-HP-010, compares vs numpy/scipy on 224 CPU cores, above a JUSTIFIED
+# Each uses F-HP-010, compares vs numpy/scipy on 256 CPU cores, above a JUSTIFIED
 # and BOUNDED per-op size threshold (the win must hold at the largest size in one
 # GPU's HBM; thresholds may not be inflated to dodge the gate). Below threshold =
 # parity-only. A domain may conclude "no win for the simple single-call case"
@@ -949,7 +949,7 @@ raises. Depends on F-HP-305.
 Tier: Core | Priority: high | Slot: F-HP-600
 Using F-HP-010, demonstrate that representative elementwise ufuncs
 (F-HP-201) and reductions (F-HP-203) on large arrays (>= a declared,
-justified threshold) beat numpy on 224 CPU cores by more than the
+justified threshold) beat numpy on 256 CPU cores by more than the
 combined noise band, and that the fused path (F-HP-204) beats the
 unfused path on a multi-op expression. Acceptance: GPU median beats CPU
 median beyond the noise band at the declared size; the threshold is
@@ -962,7 +962,7 @@ HBM) fails the justification check. Depends on F-HP-204.
 Tier: Core | Priority: high | Slot: F-HP-601
 Using F-HP-010, demonstrate matmul (F-HP-300) and the major
 hippy.linalg decompositions (F-HP-301) on large matrices beat
-numpy/scipy on 224 CPU cores beyond the noise band. Report GEMM
+numpy/scipy on 256 CPU cores beyond the noise band. Report GEMM
 GFLOP/s as CITED context but gate on the RELATIVE win, never an absolute.
 Acceptance: GPU beats CPU beyond the band at the declared matrix size.
 Error/boundary: small-matrix sizes where CPU wins are reported as
@@ -971,9 +971,9 @@ parity-only, not failures. Depends on F-HP-301.
 ## Performance gate — batched/large FFT beats CPU above threshold
 Tier: Core | Priority: medium | Slot: F-HP-602
 Using F-HP-010, demonstrate that hippy.fft (F-HP-302) beats numpy.fft /
-scipy.fft on 224 CPU cores beyond the noise band for BATCHED or large
+scipy.fft on 256 CPU cores beyond the noise band for BATCHED or large
 N-D transforms (review note: single small 1-D transforms may never win
-against FFTW-on-224-cores and are explicitly excluded from this gate).
+against FFTW-on-256-cores and are explicitly excluded from this gate).
 Acceptance: GPU beats CPU beyond the band for the declared batched/
 large-N-D case. Error/boundary: the single-small-transform case is
 documented as parity-only/no-win, not a failure. Depends on F-HP-302.
