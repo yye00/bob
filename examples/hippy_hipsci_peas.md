@@ -338,6 +338,42 @@ scipy` in any `src/` file (those are allowed ONLY under `tests/`). A
 feature that imports numpy/scipy in src/ will fail the conftest gate and
 must be rebuilt against the HIP facade.
 
+## Drop-in parity gate — real numpy/scipy test suites and code run on hippy/hipsci on a HIP GPU with ZERO CPU fallback
+Tier: Core | Priority: critical | Slot: F-HP-003
+STANDING GLOBAL ACCEPTANCE RULE applied to EVERY compute feature (not just
+this one). The north-star contract of this project is simple and testable:
+"any and all numpy/scipy code and tests should run unchanged against hippy/
+hipsci on a HIP-enabled GPU, with ZERO CPU fallback." Concretely, for every
+feature that implements a numpy/scipy-equivalent surface, its acceptance
+criteria MUST include a drop-in parity check that: (1) takes an EXISTING
+upstream numpy or scipy test (or a faithful port of one) covering the same
+function, rewrites ONLY the import (`numpy`->`hippy`, `scipy`->`hipsci`), and
+runs it against the hippy/hipsci implementation; the values MUST match the
+numpy/scipy reference within a documented dtype-aware tolerance. (2) proves
+the computation actually ran ON THE GPU with NO CPU fallback: the code path
+MUST execute a HIP kernel / vendor-library call (evidence: a real device
+allocation via `hippy._hip` + a non-trivial device execution), and MUST NOT
+silently fall back to a host/CPU implementation when a GPU op is missing —
+a missing op MUST raise `NotImplementedError`, never compute on CPU. (3) is
+gated by an authoritative GPU-execution probe (rocm-smi activity and/or a
+hipMalloc/kernel-launch spy) so "ran on GPU" is verified, not assumed.
+
+FORBIDDEN (these are the cheats this gate exists to kill): a host/CPU
+NumPy/SciPy result dressed up as a device result; a silent `try: <gpu>
+except: <cpu>` fallback; returning a numpy array from a hippy call; declaring
+a function "done" whose test never touches the device. A feature whose parity
+test cannot run on the GPU is NOT done — it is `NotImplementedError` until it
+can, which is a legitimate tiered outcome, but it may NOT pretend to pass by
+computing on CPU.
+
+Error/boundary: if the GPU is unavailable the parity test MUST fail loudly
+(never skip-to-pass, never CPU-fallback); an unsupported dtype/shape MUST
+raise, not silently downcast. This feature has no code of its own beyond a
+reusable parity-harness helper + its self-test; its PURPOSE is to define the
+standing rule every other compute feature's ACs must satisfy. Depends on the
+HIP facade and the anti-cheat conftest.
+
+
 ## Reproducible environment and two-package project skeleton
 Tier: Core | Priority: critical | Slot: F-HP-002
 Establish the project skeleton and reproducible environment on this
