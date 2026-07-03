@@ -687,8 +687,54 @@ async def stream_query(
 
     Yields each Message exactly as returned by the SDK's async iterator.
     """
-    async for msg in query(prompt=prompt, options=options):
-        yield msg
+    # F-R7-645 (completability-cliff fix): retry a TRANSPORT-TRANSIENT stream
+    # failure IN-PROCESS so a large feature whose build spans multiple transport
+    # crashes still finishes — its partial WIP on disk is preserved and the
+    # re-issued query keeps building on it, instead of the crash bubbling up,
+    # draining the run, and restarting the feature from scratch every ~3 min.
+    # Only transport-transient signatures (exit-1 message-reader / connection
+    # reset / broken pipe / self-signed-cert) are retried; a genuine error
+    # propagates to normal refinement. Bounded; NEVER lowers any threshold.
+    import os as _os
+    try:
+        _max = int(_os.environ.get("BOB_SDK_TRANSPORT_RETRIES", "6"))
+    except (TypeError, ValueError):
+        _max = 6
+    try:
+        from bob.startup_crash_exempt import (
+            exit_signature_matches_transport_transient as _is_tt,
+        )
+    except Exception:
+        def _is_tt(sig: str) -> bool:  # type: ignore
+            return any(k in sig for k in (
+                "exit code 1", "connection reset", "broken pipe",
+                "self-signed certificate", "self signed certificate",
+                "read timeout", "readtimeout", "message reader",
+            ))
+    _attempt = 0
+    while True:
+        try:
+            async for msg in query(prompt=prompt, options=options):
+                yield msg
+            return
+        except (GeneratorExit, KeyboardInterrupt):
+            raise
+        except BaseException as _exc:
+            import asyncio as _asyncio
+            if isinstance(_exc, _asyncio.CancelledError):
+                raise
+            _sig = str(_exc).lower()
+            if _is_tt(_sig) and _attempt < _max:
+                _attempt += 1
+                logger.warning(
+                    "F-R7-645 stream_query transport-transient failure "
+                    "(retry %d/%d) — re-issuing query in-process, workspace "
+                    "WIP preserved. sig=%r",
+                    _attempt, _max, _sig[:120],
+                )
+                await __import__("asyncio").sleep(min(2 * _attempt, 15))
+                continue
+            raise
 
 
 # ---------------------------------------------------------------------------
