@@ -3413,3 +3413,74 @@ with a clear "namespace collision shadows <dist>" message. Boundary:
 the project's OWN top-level package name is allowed; only names matching
 external imported distributions are forbidden. This single check would
 have saved the entire hippy build from silently faking GPU work.
+
+
+## Sub-agent transport crashes MUST be retried at the SDK layer, not surfaced as feature failures — the completability cliff
+Tier: Core | Priority: critical | Slot: F-R7-645 | PermanentForwardCarry: true
+Discovered building hippy/hipsci (bob95). The claude-code-sdk streamable-HTTP
+transport intermittently dies mid-request with `Fatal error in message reader:
+Command failed with exit code 1` (self-signed-cert / connection-reset / broken-
+pipe during MCP or model I/O). bob correctly classifies this as a transport-
+transient mid_work_crash and does not charge a retry, BUT it surfaces the crash
+up to the feature level: the sub-agent process ends, the feature is reset, and a
+FRESH sub-agent restarts the feature. For SMALL features this is fine. For LARGE
+features (e.g. hipsci.fft with DCT/DST, hipsci.sparse SpMV/SpMM/SpGEMM, a broad
+Statistics/manipulation/polynomial module) whose single-attempt build time
+EXCEEDS the mean-time-between-transport-crashes, the feature can NEVER finish in
+one uninterrupted attempt — it crashes mid-work every time and restarts. This is
+a hard completability cliff, not a slow grind: under a nonzero per-request crash
+probability, P(finish) → 0 as feature build-time grows. Empirically this stalled
+the final ~8 features of the hippy build at 36/48 for hours, burning ~$4/attempt
+with zero completions.
+
+Fix (bob CODE, never lowering any threshold): the SDK query wrapper MUST retry a
+transport-transient failure IN-PROCESS — reconnect/re-issue the request within
+the SAME sub-agent session so the agent's in-memory context and the on-disk
+workspace are preserved and it RESUMES rather than restarts. Only after N
+in-process transport retries fail should it bubble up as a mid_work_crash.
+Behaviour: WHEN a query raises a transport-transient signature THEN the wrapper
+reconnects and continues the same turn (bounded retries with backoff), and the
+feature's partial WIP on disk is never discarded. This converts the cliff into a
+slow-but-finishing grind. Boundary: a NON-transport error (real exception,
+verification failure) is NOT retried at the SDK layer — it flows to normal
+refinement. Acceptance: a feature whose build spans multiple transport crashes
+still completes; the crash count is logged but does not reset the agent.
+
+## bob run MUST auto-resume after QUEUE_DRAINED instead of exiting — unattended-build supervisor loop
+Tier: Core | Priority: high | Slot: F-R7-646 | PermanentForwardCarry: true
+Discovered building hippy/hipsci (bob95). `bob run --all` exits (code 2,
+QUEUE_DRAINED/ALL_BLOCKED) when a scheduling pass finds no immediately-claimable
+feature — even when pending features exist that ARE runnable or become runnable
+once transient-failed siblings reset. For an unattended dark factory this halts
+the whole build until a human re-runs, and repeated manual re-runs were needed
+every few minutes. Fix (bob CODE): `bob run --all` MUST implement an internal
+supervisor/auto-resume loop — on a would-be QUEUE_DRAINED exit, if any pending
+feature has all deps completed (or is blocked only by transient/failed non-
+needs_human siblings), reset those transient failures to pending and continue;
+only truly terminate when pending==0 OR every remaining pending is transitively
+blocked by a needs_human feature. Preserve partial WIP: NEVER reset a live
+`executing` feature. Behaviour: WHEN the queue drains but runnable/recoverable
+pending remain THEN bob resumes automatically without human action. Boundary:
+respects shutdown/budget signals; does not loop forever when only needs_human
+remains.
+
+## Oversized features MUST be split at extraction so each fits inside the crash-free window
+Tier: Core | Priority: high | Slot: F-R7-647 | PermanentForwardCarry: true
+Discovered building hippy/hipsci (bob95). Features bundling many independent
+sub-capabilities into one (Statistics = percentile + concatenate + polyfit;
+hipsci.sparse = SpMV + SpMM + SpGEMM + construction; hipsci.fft = FFT + DCT +
+DST) have long single-attempt build times that (a) exceed the transport-crash
+MTBF (F-R7-645 cliff) and (b) get low spec-stability scores because the AC
+synthesizer produces divergent file-path/function sets across samples. Fix
+(spec-over-code): the extractor/critic SHOULD flag a feature whose AC set spans
+multiple independent modules/functions and RECOMMEND splitting it into per-
+capability features with explicit dependencies, so each is small enough to build
+inside one crash-free window and to synthesize deterministically. Behaviour:
+WHEN a feature's acceptance criteria enumerate N independent public entry points
+across M>1 target modules THEN surface a split recommendation. This does NOT
+lower any threshold — it makes large features completable by right-sizing scope.
+NOTE: package-name pinning — the extractor MUST also pin the canonical top-level
+package (e.g. hippy/hipsci) in every feature's File-exists/Function-defined ACs
+so synthesis never invents a src/<workspace-dir-name> package (observed:
+src/dark_factory/ leaked from the workspace directory name), which degrades spec
+stability and misplaces code.
