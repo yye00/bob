@@ -151,8 +151,15 @@ def _check_function_body(body: list[ast.stmt]) -> str | None:
         return "Body is only 'pass' (stub)"
     if _is_ellipsis(stmt):
         return "Body is only Ellipsis '...' (stub)"
-    if _is_raise_not_implemented(stmt):
-        return "Body only raises NotImplementedError (stub)"
+    # NOTE (bob96 learning): a body that ONLY raises NotImplementedError is NOT an
+    # error-severity stub. The hippy/hipsci PEAS (and the tiered long-tail policy)
+    # MANDATE `raise NotImplementedError` for out-of-scope/long-tail functions, and
+    # F-HP-003 requires it as the correct behavior for a missing GPU op (never a CPU
+    # fallback). Required functions are still enforced by the acceptance_criteria_met
+    # gate (explicit `Function defined:` + `pytest:` ACs), so demoting NIE here does
+    # NOT lower any threshold — it stops a spec-mandated pattern from being flagged as
+    # a cheat and failing every unrelated feature via the whole-tree src scan.
+    # NIE is surfaced at warning severity instead (see _check_function_body_warning).
 
     return None
 
@@ -308,6 +315,14 @@ def _check_function_body_warning(
     body = func.body
     if not body:
         return None
+
+    # bob96 learning: NotImplementedError-only bodies are demoted from error to
+    # WARNING severity (spec-mandated for tiered/long-tail + missing-GPU-op per
+    # F-HP-003). Still surfaced so reviewers can see the long-tail coverage, but
+    # non-gating — required functions remain enforced by acceptance_criteria_met.
+    effective = body[1:] if (body and _is_docstring(body[0])) else body
+    if len(effective) == 1 and _is_raise_not_implemented(effective[0]):
+        return "Body only raises NotImplementedError (tiered/long-tail; non-gating)"
 
     literal_node = _single_return_literal(body)
     if literal_node is not None:
