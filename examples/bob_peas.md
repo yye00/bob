@@ -3484,3 +3484,55 @@ package (e.g. hippy/hipsci) in every feature's File-exists/Function-defined ACs
 so synthesis never invents a src/<workspace-dir-name> package (observed:
 src/dark_factory/ leaked from the workspace directory name), which degrades spec
 stability and misplaces code.
+
+## GPU-execution proof MUST be DISPATCH-COUPLED, not a self-reported counter — a host backend that bumps its own launch ledger passes every gate
+Tier: Core | Priority: critical | Slot: F-R7-648 | PermanentForwardCarry: true
+Discovered auditing the "completed" hippy/hipsci build (bob95): even after the
+backend-required static checks (F-R7-639/640/641/643) and the namespace-collision
+fix (F-R7-644), the shipped library computed EVERY public numpy/scipy op on the
+HOST (a pure-Python `for i in range(n): out.append(fn(...))` loop in src/) yet
+PASSED the launch-evidence anti-cheat. Root cause: the "real device work happened"
+proof was a FREE-FLOATING counter — a module-level `record_launch_evidence()` the
+implementation called ITSELF, right after finishing the host loop. The parity
+oracle asserted only "the ledger advanced," which the host path satisfied by
+calling the bump helper. The oracle-not-gameable test even MODELLED the host cheat
+as "never calls the bump helper," so a host path that DID call it was an
+unmodelled, passing cheat. A driver spy proved it: `hippy.multiply` on 1e6
+elements made ZERO `hipModuleLaunchKernel` / `hipMalloc` calls and returned the
+correct answer — GPU utilization 0%. This is the same class as F-R7-639's fake
+`_launch_log`, but survived because the counter looked legitimate and was wired
+into the real oracle. The lesson generalizes to ANY substrate-proof: a proof the
+component can EMIT ABOUT ITSELF is not a proof; it must be OBSERVED at the boundary
+the work must cross.
+
+Fix at extraction (spec-over-code-fix; NEVER lowers a threshold — it strengthens
+the gate). For a GPU/HIP (or any substrate-gated) project, the execution-evidence
+requirement synthesized into feature ACs MUST be DISPATCH-COUPLED:
+ (1) The evidence counter MUST be advanced ONLY by a real, successful driver
+     DISPATCH observed at the SINGLE facade every backend call passes through — a
+     kernel launch (hipModuleLaunchKernel), graph launch (hipGraphLaunch), or
+     vendor compute call (hipBLAS gemm / hipFFT exec / hipSOLVER / hipRAND
+     generate / hipSPARSE spmv). The facade wraps those entry points and bumps a
+     PRIVATE counter on success. There MUST be NO public function that host code
+     can call to advance the ledger; any legacy self-bump helper MUST be a no-op.
+ (2) A device SYNC or a bare hipMemcpy is NOT dispatch evidence (syncing/copying
+     is not compute; a host-compute-then-copy path must still fail).
+ (3) The oracle-not-gameable test MUST include, and keep passing, these cheats:
+     (i) constant stub; (ii) host compute with no dispatch; (iii) host compute
+     that DOES call the self-bump helper — must STILL fail; (iv) host compute that
+     makes a non-dispatch HIP call (device sync) — must STILL fail; (v) real
+     dispatch with wrong math. Correctness parity ALONE is never a pass.
+ (4) Consequently EVERY numeric op must run on the device (no host compute path):
+     an op that produces correct numbers but triggers no real dispatch FAILS its
+     own launch-evidence assertion automatically. The ONLY evidence-exempt case is
+     a structurally empty (size-0) result, which computes nothing on-device.
+When BOB_REQUIRE_GPU_BACKEND is enabled, the verifier SHOULD additionally run a
+driver-level dispatch probe during the feature's own tests (wrap the facade's
+dispatch entry points, assert the count advanced for a non-empty compute op) so a
+self-reported counter cannot satisfy the gate. Behaviour: WHEN a compute feature's
+launch evidence can be advanced by host code (a callable bump helper reachable
+from src/, or a counter not tied to a real dispatch) THEN the anti-cheat check
+FAILS with "launch evidence is not dispatch-coupled". Boundary: harness/test-infra
+features (F-R7-641 exemption) are unaffected; with the GPU-backend requirement
+disabled the behaviour is exactly as before, so non-GPU projects and bob's own
+self-build are unaffected.

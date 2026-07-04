@@ -142,10 +142,14 @@
 #   copy, would pass). So parity tests use RANDOMIZED inputs drawn at test time
 #   from a per-test seed, and assert two things: (1) the hippy/hipsci result
 #   matches a reference COMPUTED INSIDE THE TEST by an INDEPENDENT path, and
-#   (2) execution evidence proves real device work happened (a HIPRTC module was
-#   launched or a vendor-library call was made — observable via the runtime's
-#   launch counter / HIP event timeline), so a host-only or constant
-#   implementation fails even if its numbers happen to match.
+#   (2) DISPATCH-COUPLED execution evidence proves real device work happened: the
+#   facade `dispatch_count()` (advanced ONLY by a real kernel/graph/vendor
+#   dispatch — see anti-cheat clause 3) increased across the op call. Correctness
+#   parity ALONE is NOT a pass — a host-only or constant implementation, even one
+#   that computes the right numbers and/or calls a self-bump helper or a bare
+#   device sync/memcpy, MUST fail because it triggers no real dispatch. (A
+#   structurally EMPTY result — size-0 operands — is the only evidence-exempt case,
+#   since it computes nothing on-device.)
 #   The INDEPENDENT reference is obtained WITHOUT importing numpy at runtime by:
 #   computing the reference at test-GENERATION time over many randomized seeds and
 #   storing (seed -> expected) pairs the test replays; the implementation never
@@ -195,15 +199,55 @@
 #       the L0 facade `hippy._hip` (driver / HIPRTC / vendor libs), or builds on
 #       lower hippy layers that do — it MUST NOT `import numpy`/`import scipy` in src/.
 #   (2) no hardcoded expected-output arrays in library code.
-#   (3) results must come from actual device execution with launch evidence
-#       (oracle b.2), not host numpy.
-# bob's AST stub/mock detectors, the root conftest, and the launch-evidence
-# assertion enforce these. A feature whose "implementation" imports numpy/scipy in
-# src/, delegates to them, returns precomputed constants, or stubs the kernel MUST
-# fail verification. RESTATE-IN-EVERY-FEATURE: each feature description below
-# carries (or implies via "real HIP") this same ban so that even when bob
-# re-synthesizes a feature's acceptance criteria from its prose, the no-numpy /
-# must-use-HIP requirement is present in the prose the synthesizer reads.
+#   (3) LAUNCH EVIDENCE MUST BE DISPATCH-COUPLED (HARDENED — a prior build faked GPU
+#       execution here; this is THE lesson that forced a re-build). The "real device
+#       work happened" ledger MUST be advanced ONLY by a real, successful driver
+#       DISPATCH — a kernel launch (`hipModuleLaunchKernel`), a graph launch
+#       (`hipGraphLaunch`), or a vendor-library COMPUTE call (hipBLAS gemm, hipFFT
+#       exec, hipSOLVER, hipRAND generate, hipSPARSE spmv, …) — observed at the SINGLE
+#       L0 facade (`hippy._hip`) that every HIP call must pass through. The facade
+#       wraps those dispatch entry points and increments a PRIVATE counter on success;
+#       `launch_evidence_count()` returns that counter. There MUST NOT be any public
+#       "bump the ledger" function that host Python can call to manufacture evidence.
+#       (The old `record_launch_evidence()` self-bump — which a pure-HOST numeric
+#       backend called after computing on the CPU, thereby passing this very gate
+#       without touching the GPU — is FORBIDDEN. If a compat shim keeps the name it
+#       MUST be a no-op that cannot advance the ledger.) A device SYNC or a bare
+#       `hipMemcpy` is NOT dispatch evidence: syncing/copying is not compute, and a
+#       host-compute-then-copy path must still fail. The oracle-not-gameable test MUST
+#       include, and keep passing, these cheats: (i) constant stub, (ii) host compute
+#       with NO dispatch, (iii) host compute that DOES call the self-bump helper — must
+#       STILL fail, (iv) host compute that makes a non-dispatch HIP call (device sync)
+#       — must STILL fail, (v) a real-dispatch kernel with wrong math.
+#   (4) EVERY NUMERIC OP EXECUTES ON THE GPU — no host (CPU) compute path for any
+#       library result. Elementwise ufuncs and reductions run HIPRTC-compiled kernels;
+#       device fills (zeros/ones/full/empty init), asarray host→device staging,
+#       strided/contiguity copies (ascontiguousarray/asfortranarray) run a real COPY
+#       or FILL KERNEL (not a Python loop of per-element hipMemcpy); GEMM/solve/inv/
+#       decompositions call hipBLAS/hipSOLVER; FFT/DCT/DST call hipFFT (or a real JIT
+#       kernel); RNG calls hipRAND; sparse spmv/spmm/spgemm call hipSPARSE; sort runs a
+#       real device sort kernel. A pure-Python `for i in range(n): out.append(fn(...))`
+#       numeric loop in src/ is a STUB, not an implementation, and MUST fail. Because
+#       (3) is dispatch-coupled, any op that computes on the host now fails its
+#       launch-evidence assertion automatically — correctness parity ALONE is not a
+#       pass. (The ONLY evidence-exempt case is a structurally empty result: size-0
+#       operands compute nothing on-device and legitimately launch no kernel.)
+#   (5) ONE canonical package per namespace: the ONLY src packages are `hippy` and
+#       `hipsci` (hipsci depends on hippy). Do NOT create parallel/alternate packages
+#       (e.g. `dark_factory`, `hippy_upstream_port`, a top-level `hiprtc_engine`, or
+#       any workspace-directory-derived name). All ufuncs/reductions/indexing/linalg/
+#       fft/etc. live under `hippy`/`hipsci` and share the ONE L0 facade and the ONE
+#       dispatch-coupled ledger — package fragmentation splits the evidence ledger and
+#       is itself a cheat surface. Tests import ONLY `hippy`/`hipsci`.
+# bob's AST stub/mock detectors, the root conftest, and the DISPATCH-COUPLED launch-
+# evidence assertion enforce these. A feature whose "implementation" imports
+# numpy/scipy in src/, delegates to them, returns precomputed constants, computes the
+# result on the host, self-bumps the evidence ledger, or stubs the kernel MUST fail
+# verification. RESTATE-IN-EVERY-FEATURE: each feature description below carries (or
+# implies via "real HIP") this same ban so that even when bob re-synthesizes a
+# feature's acceptance criteria from its prose, the no-numpy / must-use-HIP /
+# dispatch-coupled-evidence / on-GPU requirement is present in the prose the
+# synthesizer reads.
 #
 # RATCHET ANTI-GAMING (review fix): the curated-suite pass-rate ratchet (F-HP-006)
 # is non-gating, and the xfail/skip RATIO is itself tracked and bounded — a batch
@@ -385,13 +429,27 @@ facade module `hippy._hip` that is the ONLY place importing hip-python
 hipsparse`); it centralizes the version pin (hip-python 7.0.1.*) and
 the HIPRTC compile flags (`--offload-arch=gfx950 -I/opt/rocm-7.0.1/
 include`). The facade exposes device count, device properties, and a
-`hip_check` error wrapper. Acceptance: both packages import; the
-facade reports exactly 8 devices and a device name containing
-"gfx950" on this machine; the facade exposes the compile-flag list
-including the rocm include path. Error/boundary: importing the facade
-on a machine with no HIP runtime MUST raise a clear, actionable error
-naming the missing component, not an opaque ImportError; a grep of the
-source tree finds NO `import hip` / `from hip` outside `hippy._hip`.
+`hip_check` error wrapper. The facade ALSO owns the DISPATCH-COUPLED
+evidence ledger (anti-cheat clause 3): at import it wraps the real
+driver DISPATCH entry points — `hipModuleLaunchKernel`, `hipGraphLaunch`,
+and the vendor compute calls (hipBLAS gemm, hipFFT exec, hipSOLVER,
+hipRAND generate, hipSPARSE spmv) — with counting shims that increment a
+PRIVATE module counter ONLY when the underlying call returns success, and
+exposes `dispatch_count()` returning it. This counter is the single
+source of truth for "real device work happened"; nothing outside these
+wrapped dispatch calls may advance it, and there is NO public bump
+function. A device sync or a bare `hipMemcpy` MUST NOT advance it.
+Acceptance: both packages import; the facade reports exactly 8 devices
+and a device name containing "gfx950" on this machine; the facade
+exposes the compile-flag list including the rocm include path;
+`dispatch_count()` starts at 0, is unchanged by a `hipDeviceSynchronize`
+or a `hipMemcpy`, and increments by exactly 1 after a single successful
+`hipModuleLaunchKernel`. Error/boundary: importing the facade on a
+machine with no HIP runtime MUST raise a clear, actionable error naming
+the missing component, not an opaque ImportError; a grep of the source
+tree finds NO `import hip` / `from hip` outside `hippy._hip`. There is
+exactly ONE such facade in the whole workspace (anti-cheat clause 5 — no
+parallel package may create its own hip import site or its own ledger).
 
 ## HIP error-checking primitive and end-to-end toolchain canary
 Tier: Core | Priority: critical | Slot: F-HP-003
@@ -425,13 +483,21 @@ guard cannot silently pass by being a no-op.
 Tier: Core | Priority: critical | Slot: F-HP-009
 Implement L1: a device/runtime context on the facade; a CACHING
 MEMORY POOL that reuses freed device blocks (size-bucketed, exposes a
-high-water + reuse-count statistic and a launch counter used by the
-anti-cheat evidence in oracle b.2); and a stream abstraction with a
+high-water + reuse-count statistic); and a stream abstraction with a
 default per-thread stream plus explicit named streams, synchronization,
-and events. Acceptance: allocating/freeing many arrays does not grow
-process device memory unboundedly (pool reuse observable via the
-statistic); work on two streams overlaps; events order cross-stream
-deps; the launch counter increments on a real kernel launch. Error/
+and events. The anti-cheat launch-evidence counter is NOT owned here and
+is NOT a self-bump: it is the DISPATCH-COUPLED `dispatch_count()` on the
+L0 facade (F-HP-002), advanced only by real driver dispatches. A
+`launch_evidence` helper module may re-export `dispatch_count()` as
+`launch_evidence_count()` and provide a `capture()` context manager that
+records the counter delta across a block; it MUST NOT provide any way for
+host code to increment the ledger (anti-cheat clause 3). Acceptance:
+allocating/freeing many arrays does not grow process device memory
+unboundedly (pool reuse observable via the statistic); work on two
+streams overlaps; events order cross-stream deps; `launch_evidence_count()`
+increments on a real kernel launch and is NOT advanced by any host-only
+code path (a negative control that computes on the host and calls no
+dispatch leaves the counter unchanged). Error/
 boundary: an allocation request larger than free device memory raises
 a typed out-of-memory error (NOT a silent host allocation, NOT a
 crash) reporting requested vs available bytes; the pool releases blocks
@@ -493,19 +559,27 @@ to an INDEPENDENT reference via the op's comparator from a PER-OP
 COMPARATOR REGISTRY — allclose (default), reconstruction (factorizations),
 sign/phase-canonical (SVD/QR/eig vectors), sorted/multiset (eigenvalues,
 unique, tied sorts), statistical (RNG), or exact (int/bool/shape/dtype);
-(3) assert LAUNCH EVIDENCE that real device work occurred (the F-HP-009
-launch counter advanced or a vendor-lib call was made), so a host-only
-or constant implementation fails even if numbers match. The independent
-reference is produced at test-GENERATION time over many seeds (numpy/
-scipy run by the generator, never by the test at run time) and stored as
-(seed -> expected) entries the test replays; the implementation never
-imports numpy (F-HP-004) and cannot see the generator. Acceptance: a
-generated test for `add` passes on a correct kernel; the SAME test FAILS
-on (i) a constant-returning stub, (ii) a host-numpy implementation
-(no launch evidence), and (iii) a wrong-math kernel — proving the oracle
-is not gameable. Error/boundary: an op with no registered comparator
-MUST fail generation with a clear error (no silent allclose default for
-ops known to be non-unique). Depends on F-HP-009.
+(3) assert DISPATCH-COUPLED LAUNCH EVIDENCE that real device work
+occurred — the facade `dispatch_count()` (F-HP-002) advanced across the
+op call, which happens ONLY on a real kernel/graph/vendor dispatch — so a
+host-only or constant implementation fails even if the numbers match, and
+even if it calls a self-bump helper or a bare device sync/memcpy
+(evidence is exempt ONLY for a structurally empty size-0 result). The
+independent reference is produced at test-GENERATION time over many seeds
+(numpy/scipy run by the generator, never by the test at run time) and
+stored as (seed -> expected) entries the test replays; the implementation
+never imports numpy (F-HP-004) and cannot see the generator. Acceptance:
+a generated test for `add` passes on a correct kernel; the SAME test
+FAILS on every cheat in the oracle-not-gameable set: (i) a
+constant-returning stub, (ii) a host implementation that never dispatches,
+(iii) a host implementation that DOES call the old self-bump helper —
+must STILL fail, (iv) a host implementation that makes a non-dispatch HIP
+call (device sync) to look busy — must STILL fail, (v) a real-dispatch
+kernel with wrong math — proving the oracle is not gameable and cannot be
+regressed to a self-reported counter. Error/boundary: an op with no
+registered comparator MUST fail generation with a clear error (no silent
+allclose default for ops known to be non-unique). Depends on F-HP-009,
+F-HP-002.
 
 ## Dtype-aware tolerance policy
 Tier: Core | Priority: high | Slot: F-HP-008
