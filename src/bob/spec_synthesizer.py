@@ -836,6 +836,44 @@ def _apply_llm_postprocessing(
     # like `integration: bob72.orchestrator`). A final pass strips them after all
     # additions are done.
     out = _sanitize_bad_acs(out)
+    # FINAL: enforce the canonical-package pin on integration targets. When
+    # BOB_CANONICAL_PACKAGES is set (e.g. hippy,hipsci), the reachability-repair
+    # pass above snaps invented targets to the WORKSPACE it runs in — which for a
+    # cross-repo build is bob's OWN tree — leaking `integration: bob.orchestrator
+    # .run_loop`, `bob.src.bob.memory_mcp`, etc. into hippy features. Those are
+    # unreachable in the target project and zero the reachability sub-score,
+    # permanently gate-blocking the feature. Drop any integration target not under
+    # a canonical package. (Env-gated: unset = unchanged behavior.)
+    out = _enforce_canonical_integration(out)
+    return out
+
+
+def _enforce_canonical_integration(criteria: list[str]) -> list[str]:
+    """Drop ``integration:`` ACs whose target is not under a canonical package.
+
+    Reads ``BOB_CANONICAL_PACKAGES`` (same list as :func:`_canonical_package_pin`).
+    Only ``integration:`` criteria are filtered — File-exists/Function-defined are
+    already pinned by the synthesizer prompt. When the env var is unset this is a
+    no-op, so non-GPU projects and bob's own self-build are unaffected.
+    """
+    import os as _os_e
+
+    raw = _os_e.environ.get("BOB_CANONICAL_PACKAGES", "").strip()
+    if not raw:
+        return criteria
+    pkgs = tuple(p.strip() for p in raw.replace(",", " ").split() if p.strip())
+    if not pkgs:
+        return criteria
+    out: list[str] = []
+    for ac in criteria:
+        s = str(ac)
+        if s.startswith("integration:"):
+            target = s.split(":", 1)[1].strip()
+            top = target.split(".", 1)[0]
+            if top not in pkgs:
+                # non-canonical integration target -> unreachable in this project
+                continue
+        out.append(ac)
     return out
 
 
