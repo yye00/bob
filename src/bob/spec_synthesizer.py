@@ -291,6 +291,36 @@ def detect_integration_targets(description: str) -> list[str]:
     return targets
 
 
+def _canonical_package_pin() -> str:
+    """Return the canonical-package pin block for the synthesizer prompt.
+
+    Reads ``BOB_CANONICAL_PACKAGES`` (comma/space-separated top-level package
+    names, e.g. ``hippy,hipsci``). When set, emits an explicit instruction naming
+    the ONLY packages the synthesizer may use — this stops the LLM inventing a
+    parallel top-level package from the workspace directory name (the
+    ``dark_factory`` fragmentation defect, bob learning #5 / F-R7-647). When
+    unset the pin is empty and behaviour is unchanged (non-GPU projects and
+    bob's own self-build are unaffected).
+    """
+    import os as _os
+
+    raw = _os.environ.get("BOB_CANONICAL_PACKAGES", "").strip()
+    if not raw:
+        return ""
+    pkgs = [p.strip() for p in raw.replace(",", " ").split() if p.strip()]
+    if not pkgs:
+        return ""
+    listed = ", ".join(f"`{p}`" for p in pkgs)
+    return (
+        "\nCANONICAL PACKAGES (the ONLY allowed top-level package names for this "
+        f"project): {listed}. Every `File exists:` path MUST be under "
+        f"`src/<one-of-those>/` and every `Function defined:` / `integration:` "
+        f"module MUST begin with one of them. Do NOT invent any other top-level "
+        f"package (in particular do NOT use a name derived from the workspace "
+        f"directory).\n"
+    )
+
+
 SYNTHESIZER_PROMPT = """\
 You are a spec-synthesis sub-agent. Convert one feature's
 natural-language description into 2-5 concrete, machine-verifiable
@@ -301,7 +331,7 @@ Feature description:
 {description}
 
 Project context: {project_context}
-
+{package_pin}
 Each criterion MUST be exactly one of these machine-checkable forms:
   - "File exists: <relative_path>"       (a required source/test/asset file)
   - "Function defined: <module>.<name>"  (an importable symbol)
@@ -316,6 +346,16 @@ Rules:
   - If the description names a module path, use it directly.
   - Prefer paths that already match the project's layout (Python projects
     use `src/<package>/` and `tests/`).
+  - CANONICAL PACKAGE (anti-fragmentation, MANDATORY when a package list is
+    given above): every `File exists:` path MUST live under `src/<canonical>/`
+    and every `Function defined:` / `integration:` module MUST start with one of
+    the canonical top-level packages listed above. NEVER invent a new top-level
+    package name and NEVER derive one from the workspace directory name (e.g. do
+    NOT use `dark_factory`, `dark-factory`, `<workspace-dir>`, or any name not in
+    the canonical list). If the description names a submodule (e.g. "the ufunc
+    engine"), place it UNDER the canonical package (`hippy.<submodule>`), not in a
+    parallel package. Splitting one namespace across multiple top-level packages
+    is a defect.
   - IMPORTANT: If the description contains words like "integrate", "wire into",
     "hook into", "register with", or "plug into", you MUST add an
     `"integration: <module>"` criterion naming the target module the feature
@@ -498,6 +538,7 @@ async def synthesize_for_feature(
         title=title,
         description=description.strip() or "(no description)",
         project_context=project_context or "(none)",
+        package_pin=_canonical_package_pin(),
     )
     if retry_feedback:
         prompt = (
