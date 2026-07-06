@@ -80,7 +80,6 @@ _TRANSPORT_TRANSIENT_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"broken pipe",
         r"EHOSTUNREACH",
         r"network.*unreachable",
-        r"Command failed with exit code 1",
         r"Connection failed",
     ]
 )
@@ -219,6 +218,14 @@ def exit_signature_matches_transport_transient(
     """
     if not exit_signature:
         return False
+    # A clean "exit code 1" with no accompanying network/transport
+    # signature is NOT infra-transient — it is almost always a
+    # max_turns exhaustion (SDK surfaces turn-limit as exit 1) or a
+    # genuine implementation error. Both must bubble to normal
+    # refinement (WIP-preserving) rather than silent full-turn retry.
+    # Real transport crashes always carry a connection/cert/timeout
+    # marker matched by the patterns below, so no special-case needed
+    # here beyond NOT matching bare exit-1.
     for pattern in _TRANSPORT_TRANSIENT_PATTERNS:
         if pattern.search(exit_signature):
             return True

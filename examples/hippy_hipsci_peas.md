@@ -417,6 +417,44 @@ reusable parity-harness helper + its self-test; its PURPOSE is to define the
 standing rule every other compute feature's ACs must satisfy. Depends on the
 HIP facade and the anti-cheat conftest.
 
+## Universal dispatch-coupled GPU-execution audit — EVERY public compute op must launch a real device dispatch
+Tier: Core | Priority: critical | Slot: F-HP-003C
+HARD ENFORCEMENT of the F-HP-003 standing rule. The prior build shipped
+linalg (solve/inv/det/qr/svd/eigh/lstsq/pinv), sparse (spmv/spmm/spgemm),
+hipsci.linalg, hipsci.signal, hipsci.ndimage, and hipsci.interpolate as
+HOST-Python reference backends that copy device->host, compute in pure
+Python at the boundary, and copy back — passing their parity tests because
+those tests asserted NUMBERS ONLY and never asserted GPU dispatch. This
+feature closes that hole with a SINGLE non-gameable choke point.
+
+Build an executable OP-INVENTORY AUDIT test (`tests/test_gpu_execution_audit.py`)
+that: (1) enumerates EVERY public compute op across `hippy` and `hipsci`
+(ufuncs, reductions, statistics, sorting, indexing that computes, matmul,
+ALL of `hippy.linalg`, `hippy.fft`, `hippy.random`, `hippy.polynomial`,
+`hipsci.linalg`, `hipsci.fft`, `hipsci.sparse`, `hipsci.signal`,
+`hipsci.ndimage`, `hipsci.interpolate`, `hipsci.special`, `hipsci.stats`)
+from a MAINTAINED registry that the test asserts is COMPLETE (it cross-checks
+the registry against each module's public `__all__`/callables and FAILS if a
+public compute op is missing from the registry — so a new op cannot silently
+skip the audit); (2) for each op, builds a minimal NON-EMPTY valid input,
+calls the op inside `hippy.launch_evidence.capture()`, and asserts
+`hippy._hip.dispatch_count()` STRICTLY INCREASED across the call — i.e. a
+real kernel/graph launch or a real vendor dispatch (hipBLAS/hipSOLVER/
+hipSPARSE/hipFFT/hipRAND) fired; (3) treats dispatch_count==0 on a non-empty
+result as a HARD FAILURE naming the offending op ("op X computed on HOST — no
+device dispatch"). The ONLY exemptions are: structurally-empty (size-0)
+results, and ops legitimately raising `NotImplementedError` (a tiered
+outcome, never a silent CPU path). This test is GATING for this feature and,
+via F-HP-003, for every compute feature. It reuses the same
+`hippy._hip.dispatch_count` ledger as anti-cheat clause 3 — no independent
+counter. Acceptance: the audit enumerates >= the full public compute surface,
+every enumerated non-empty op shows dispatch_count delta > 0, and the
+registry-completeness self-check passes (removing an op from the registry
+while it still exists public MUST fail the test). Error/boundary: an op that
+computes on host MUST make this test RED; a size-0 op is exempt; a
+NotImplementedError op is recorded as tiered-not-failed. Depends on the HIP
+facade, the anti-cheat conftest, and F-HP-003.
+
 
 ## Reproducible environment and two-package project skeleton
 Tier: Core | Priority: critical | Slot: F-HP-002

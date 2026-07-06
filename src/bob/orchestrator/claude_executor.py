@@ -88,7 +88,11 @@ MODEL_ALIASES: dict[str, str] = {
 VALID_MODEL_IDS: frozenset[str] = frozenset(MODEL_ALIASES.values()) | _CANONICAL_ANTHROPIC_IDS
 
 DEFAULT_SUB_AGENT_MODEL = "sonnet"
-DEFAULT_SUB_AGENT_MAX_TURNS = 25
+import os as _os_maxturns
+try:
+    DEFAULT_SUB_AGENT_MAX_TURNS = int(_os_maxturns.environ.get("BOB_SUB_AGENT_MAX_TURNS", "25"))
+except (TypeError, ValueError):
+    DEFAULT_SUB_AGENT_MAX_TURNS = 25
 DEFAULT_SUB_AGENT_PERMISSION_MODE = "bypassPermissions"
 
 # ---------------------------------------------------------------------------
@@ -706,10 +710,15 @@ async def stream_query(
         )
     except Exception:
         def _is_tt(sig: str) -> bool:  # type: ignore
+            # NOTE: bare "exit code 1" and "message reader" are intentionally
+            # NOT here — a clean exit-1 is almost always max_turns exhaustion
+            # or a real impl error, which must bubble to refinement, not
+            # silent-retry. Only genuine network/transport markers qualify.
             return any(k in sig for k in (
-                "exit code 1", "connection reset", "broken pipe",
+                "connection reset", "broken pipe",
                 "self-signed certificate", "self signed certificate",
-                "read timeout", "readtimeout", "message reader",
+                "read timeout", "readtimeout", "econnreset", "econnrefused",
+                "etimedout", "socket hang up", "connection timed out",
             ))
     _attempt = 0
     while True:
