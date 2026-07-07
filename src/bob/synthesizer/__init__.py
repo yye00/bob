@@ -60,6 +60,11 @@ from bob.synthesizer_boundary_error_ac_injector import (
     extract_criterion_text_from_object_format,
     inject_boundary_and_error_acs as _inject_boundary_and_error_acs_new,
 )
+from bob.skip_ratio_gate import (
+    classify_skip_reason,
+    emit_skip_ratio_bound,
+    gates_on_suite_metric,
+)
 
 import logging as _logging
 
@@ -120,6 +125,9 @@ __all__ = [
     "ScoreGateReport",
     "_ensure_boundary_and_error_coverage",
     "build_retry_feedback_prompt",
+    "classify_skip_reason",
+    "emit_skip_ratio_bound",
+    "gates_on_suite_metric",
     "deterministic_fallback",
     "deterministic_fallback_spec",
     "detect_integration_targets",

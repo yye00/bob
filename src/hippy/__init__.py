@@ -25,3 +25,8 @@ from hippy.spec_synthesis import (  # noqa: F401 — integration: hippy.spec_syn
     _ensure_boundary_and_error_coverage,
     inject_boundary_and_error_acs,
 )
+
+from hippy.verifier import (  # noqa: F401 — integration: hippy.verifier
+    backend_required_check,
+    has_simulation_admission,
+)
