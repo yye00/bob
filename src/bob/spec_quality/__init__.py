@@ -33,3 +33,10 @@ from bob.spec_quality.score import (  # noqa: F401  # ffa5de39 spec quality scor
 from bob.deterministic_fallback import (  # noqa: F401  # b6c53aa9 boundary+error coverage
     ensure_boundary_and_error_coverage,
 )
+from bob.spec_quality.synthesizer import (  # noqa: F401  # 8ff7325a parity anti-cheat
+    apply_parity_anti_cheat,
+)
+from bob.spec_quality.parity_test_anti_cheat import (  # noqa: F401  # 8ff7325a
+    synthesize_parity_ac,
+    ensure_randomized_parity_coverage,
+)

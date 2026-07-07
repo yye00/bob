@@ -1049,14 +1049,7 @@ def run(feature, run_all, max_cost, fresh, no_mcp, force_unlock, ablation_mode, 
                     )
 
         from bob.orchestrator.run_loop import LoopTermination
-
-        termination = _run_orchestration_loop(
-            project_id,
-            max_cost=max_cost,
-            fresh=fresh,
-            force_unlock=force_unlock,
-            max_concurrent_features=max_concurrent_features,
-        )
+        from bob.supervisor_loop import supervise_run
 
         _TERMINATION_MESSAGES = {
             LoopTermination.ALL_COMPLETED: "[green]All features completed![/green]",
@@ -1064,6 +1057,41 @@ def run(feature, run_all, max_cost, fresh, no_mcp, force_unlock, ablation_mode, 
             LoopTermination.BUDGET_EXCEEDED: "[red]Budget limit exceeded.[/red]",
             LoopTermination.SHUTDOWN_REQUESTED: "[yellow]Shutdown requested.[/yellow]",
         }
+
+        # Feature 27e4c777 — unattended-build supervisor loop. When the
+        # orchestration loop drains the queue (ALL_BLOCKED / QUEUE_DRAINED) but
+        # runnable-or-recoverable pending features remain, reset the recoverable
+        # transient-failed siblings and re-enter the loop instead of exiting for
+        # a human to re-run. Budget/shutdown terminations are never auto-resumed.
+        while True:
+            termination = _run_orchestration_loop(
+                project_id,
+                max_cost=max_cost,
+                fresh=fresh,
+                force_unlock=force_unlock,
+                max_concurrent_features=max_concurrent_features,
+            )
+
+            if termination is LoopTermination.ALL_BLOCKED:
+                decision = supervise_run(project_id)
+                if decision.should_resume:
+                    if decision.reset_feature_ids:
+                        console.print(
+                            f"[cyan]Supervisor: reset "
+                            f"{len(decision.reset_feature_ids)} recoverable "
+                            f"feature(s); resuming build.[/cyan]"
+                        )
+                    else:
+                        console.print(
+                            "[cyan]Supervisor: runnable pending work remains; "
+                            "resuming build.[/cyan]"
+                        )
+                    # Subsequent passes must not re-wipe partial WIP.
+                    fresh = False
+                    force_unlock = False
+                    continue
+            break
+
         console.print(_TERMINATION_MESSAGES.get(termination, str(termination)))
         # Map termination reason to a non-zero exit code so CI pipelines
         # (e.g. ``bob run --all && deploy.sh``) do not treat a
