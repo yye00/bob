@@ -74,7 +74,10 @@ def parse_criteria_response(response_text: str) -> list[str] | None:
     fenced = re.search(r"```json\s*\n?(.*?)\n?\s*```", response_text, re.DOTALL)
     json_str: str | None = fenced.group(1) if fenced else None
     if json_str is None:
-        m = re.search(r"\[\s*\"[^\"]+?\".*?\]", response_text, re.DOTALL)
+        # Match a bare inline JSON array whose first element is a string OR an
+        # object — the LLM commonly returns object-format arrays such as
+        # [{"criterion": "..."}] without a ```json fence.
+        m = re.search(r"\[\s*[\"{].*?\]", response_text, re.DOTALL)
         json_str = m.group(0) if m else None
     if json_str is None:
         return None
