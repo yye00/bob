@@ -625,3 +625,56 @@ def test_all_eight_sub_metrics_weighted():
             f"Changing {metric_name} from 0.9 to 0.1 must lower the score; "
             f"base={result_base['score']:.4f}, modified={result_modified['score']:.4f}"
         )
+
+
+# ---------------------------------------------------------------------------
+# AC: Function defined: bob.spec_quality_score.compute_spec_quality_score
+# AC: Function defined: bob.spec_quality_score.gate_spec_quality
+# ---------------------------------------------------------------------------
+
+
+def test_bob_module_exposes_compute_and_gate():
+    """The bob.spec_quality_score module exports the two AC-named functions."""
+    import bob.spec_quality_score as m
+
+    assert callable(m.compute_spec_quality_score)
+    assert callable(m.gate_spec_quality)
+
+
+def test_gate_spec_quality_thresholds():
+    """gate_spec_quality maps a score to refuse/warn/green at 0.65/0.80."""
+    from bob.spec_quality_score import gate_spec_quality
+
+    assert gate_spec_quality(0.0) == "refuse"
+    assert gate_spec_quality(0.64) == "refuse"
+    assert gate_spec_quality(0.65) == "warn"
+    assert gate_spec_quality(0.79) == "warn"
+    assert gate_spec_quality(0.80) == "green"
+    assert gate_spec_quality(1.0) == "green"
+
+
+def test_gate_spec_quality_accepts_metrics_dict():
+    """gate_spec_quality also accepts the 8-metric dict and gates on its score."""
+    from bob.spec_quality_score import gate_spec_quality
+
+    metrics = {
+        "smell_density": 0.9,
+        "predicate_coverage": 0.9,
+        "contract_completeness": 0.9,
+        "boundary_coverage": 0.9,
+        "error_path_coverage": 0.9,
+        "traceability": 0.9,
+        "spec_executability": 0.9,
+        "ac_atomicity": 0.9,
+    }
+    assert gate_spec_quality(metrics) == "green"
+
+
+def test_gate_spec_quality_rejects_bad_input():
+    """Non-numeric, non-dict input raises ValueError (no silent success)."""
+    from bob.spec_quality_score import gate_spec_quality
+
+    with pytest.raises(ValueError):
+        gate_spec_quality("nonsense")
+    with pytest.raises(ValueError):
+        gate_spec_quality(None)

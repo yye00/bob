@@ -522,9 +522,58 @@ def evaluate_quality_gate(
     return compute_composite_score(metrics)
 
 
+def gate_spec_quality(score_or_metrics: Union[float, int, Dict[str, float]]) -> str:
+    """Return the gate label for a composite spec quality score.
+
+    Accepts either a precomputed score in [0, 1] or the full 8-sub-metric
+    dict (in which case the weighted geometric mean is computed first via
+    :func:`compute_composite_score`).
+
+    Gate semantics (the 0.65/0.80 gate that replaces F-R7-413):
+      score < 0.65        → 'refuse'  (plan --create is blocked)
+      0.65 <= score < 0.80 → 'warn'
+      score >= 0.80       → 'green'
+
+    Function defined: bob.spec_quality_score.gate_spec_quality
+
+    Parameters
+    ----------
+    score_or_metrics:
+        Either a numeric score in [0, 1], or a dict of the 8 sub-metrics.
+
+    Returns
+    -------
+    str
+        One of ``'refuse'``, ``'warn'``, or ``'green'``.
+
+    Raises
+    ------
+    ValueError
+        When the argument is neither a numeric score nor a metrics dict, or
+        when a metrics dict is missing a required sub-metric.
+    """
+    if isinstance(score_or_metrics, dict):
+        result = compute_composite_score(score_or_metrics)
+        return str(result["gate"])
+    if isinstance(score_or_metrics, bool) or not isinstance(
+        score_or_metrics, (int, float)
+    ):
+        raise ValueError(
+            "gate_spec_quality expects a numeric score in [0, 1] or a dict "
+            f"of the 8 sub-metrics, got {type(score_or_metrics).__name__!r}."
+        )
+    score = float(score_or_metrics)
+    if score >= 0.80:
+        return "green"
+    if score >= 0.65:
+        return "warn"
+    return "refuse"
+
+
 __all__ = [
     "compute",
     "compute_score",
+    "gate_spec_quality",
     "SUB_METRIC_WEIGHTS",
     "compute_quality_score",
     "compute_spec_quality_score",
