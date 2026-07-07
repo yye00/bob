@@ -1,6 +1,6 @@
 composite: 0.964193
-gate_block: 0.0
-gate_warn: 0.0
+gate_block: 0.65
+gate_warn: 0.8
 sub_metrics:
   ac_atomicity: 1.0
   boundary_coverage: 0.8333333333333333
