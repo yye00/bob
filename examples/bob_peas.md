@@ -3636,3 +3636,30 @@ feature MUST create an (empty) tests/__init__.py (and a src package
 __init__ where the layout is package-style) so shared test helpers
 are importable. Behaviour: WHEN a test does `from tests.X import Y`
 THEN collection succeeds because tests/ is a package.
+
+## tests_pass MUST be scoped to the feature's own tests, never the whole tree
+Tier: Core | Priority: high | Slot: F-R7-654
+The verifier's tests_pass checklist step ran `pytest tests/` across the
+ENTIRE shared workspace suite. In a multi-feature build (and any
+generation seeded from a parent with a large tests/ tree) this causes
+cross-feature contamination: a sibling feature's in-flight test module
+that imports a not-yet-built module raises an ImportError during
+collection, and any pre-existing flake or partial-feature failure trips
+--maxfail — so EVERY feature's tests_pass fails regardless of its own
+correctness, mass-marking unrelated features needs_human at attempt 5.
+Observed on the bob96 build: 223 tests_pass failures, all
+"ImportError while importing test module" / "N failed, 0 passed" from
+sibling modules, while each feature's OWN acceptance_criteria_met passed.
+bob already contains bob.verification.per_feature_test_scope
+(scope_pytest_to_feature) built for exactly this, but _check_tests_pass
+never called it and the checklist never passed feature_id/acs down. Fix
+(bob CODE, STRENGTHENS attribution, lowers no threshold): the tests_pass
+step MUST resolve the feature's own test paths (its `pytest:` ACs plus
+tests/<feature_id>/) via scope_pytest_to_feature and run pytest ONLY on
+those; fall back to the whole tree solely when no scoped paths exist. The
+per-feature `pytest:` acceptance criteria remain the correctness gate.
+Also: a generation seeded from a parent MUST install the parent's
+test-only deps (e.g. hypothesis) or those collection errors reappear.
+Behaviour: WHEN a feature declares a `pytest:` acceptance criterion THEN
+tests_pass runs only that feature's own test paths and a sibling module's
+collection error cannot fail it.

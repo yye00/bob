@@ -338,6 +338,25 @@ def _check_tests_pass(
     timeout_s = _test_run_timeout(target_dir)
     target_rel = target_dir.relative_to(workspace).as_posix()
 
+    # Scope the tests_pass run to THIS feature's own tests when we can resolve
+    # them. Running the whole tests/ tree in a multi-feature workspace causes
+    # cross-feature contamination: a sibling feature's in-flight test module
+    # (importing a not-yet-built module) or any pre-existing flake trips
+    # --maxfail and fails EVERY feature's tests_pass regardless of its own
+    # correctness. bob.verification.per_feature_test_scope was built for exactly
+    # this. Fall back to the whole tree only when no scoped paths exist.
+    _pytest_targets = [target_rel]
+    if feature_id and feature_acs:
+        try:
+            from bob.verification.per_feature_test_scope import (
+                scope_pytest_to_feature as _scope,
+            )
+            _scoped = _scope(feature_id, feature_acs, str(workspace))
+            if _scoped:
+                _pytest_targets = list(_scoped)
+        except Exception:
+            logger.debug("tests_pass scoping skipped; using full tree", exc_info=True)
+
     # Probe whether pytest-xdist is available in this interpreter. If not,
     # fall back to sequential execution with a warning rather than failing.
     _xdist_flags: list[str] = []
@@ -354,7 +373,7 @@ def _check_tests_pass(
         sys.executable,
         "-m",
         "pytest",
-        target_rel,
+        *_pytest_targets,
         "--tb=line",
         "-q",
         "--maxfail=20",
@@ -1805,10 +1824,16 @@ def run_verification_checklist(
         except Exception:
             pass
 
+    _feature_acs_list = (
+        [ln.strip() for ln in str(acceptance_criteria).splitlines() if ln.strip()]
+        if acceptance_criteria else None
+    )
     tests_pass_check = _check_tests_pass(
         ws, src_dir, test_dir,
         pre_snapshot=pre_snapshot,
         recently_modified_files=_recent_files or None,
+        feature_id=feature_id,
+        feature_acs=_feature_acs_list,
     )
     checks.append(tests_pass_check)
 
