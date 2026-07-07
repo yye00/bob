@@ -49,18 +49,40 @@ def _load_compute():
     import sys as _sys
     import pathlib as _pl
     gen_root = _pl.Path(__file__).resolve().parents[2]  # <gen>/src/bob → <gen>
+    gen_root_str = str(gen_root)
 
-    try:
-        from tools.spec_quality_score import compute  # type: ignore
-        return compute
-    except ModuleNotFoundError:
-        pass
+    # IMPLEMENTATION REQUIREMENT (feature 6b405bd9): ensure the gen root is on
+    # sys.path FIRST — BEFORE the first import attempt — never only in an
+    # ImportError fallback. In a nested-generation build a SIBLING generation's
+    # `tools` package can already be importable, so a try-first pattern succeeds
+    # against the wrong `tools` and never restores THIS gen root, violating the
+    # post-condition `gen_root in sys.path`. Insert idempotently, then import.
+    if gen_root_str not in _sys.path:
+        _sys.path.insert(0, gen_root_str)
 
-    # First attempt failed: add gen root to sys.path and retry.
-    if str(gen_root) not in _sys.path:
-        _sys.path.insert(0, str(gen_root))
+    # Evict any cached `tools` package that does NOT resolve under this gen root
+    # (a sibling generation's shadowing module) so our gen root's `tools` wins.
+    cached = _sys.modules.get("tools")
+    if cached is not None:
+        search = list(getattr(cached, "__path__", None) or [])
+        cached_file = getattr(cached, "__file__", None)
+        if cached_file:
+            search.append(cached_file)
+        resolves_here = False
+        for _p in search:
+            try:
+                if _pl.Path(_p).resolve().is_relative_to(gen_root):
+                    resolves_here = True
+                    break
+            except (ValueError, OSError):
+                continue
+        if not resolves_here:
+            for _k in [m for m in _sys.modules if m == "tools" or m.startswith("tools.")]:
+                del _sys.modules[_k]
 
-    # Second attempt — raises ModuleNotFoundError loudly if still not found.
+    # Import — raises ModuleNotFoundError loudly if the scorer genuinely cannot
+    # be found even with the gen root on sys.path. Infrastructure errors MUST NOT
+    # be swallowed into a silent per-feature deterministic fallback.
     from tools.spec_quality_score import compute  # type: ignore
     return compute
 
