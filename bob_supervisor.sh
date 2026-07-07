@@ -3,14 +3,14 @@
 # - resets FAILED/orphaned -> pending each pass (preserves live 'executing'/'ready' work)
 # - UN-PARKS needs_human features with >=1 dependent so the tail can progress
 # - NEVER lowers any threshold. Runs until no runnable pending remain (while-not-done).
-cd /home/yelkhamr/dark-factory/bob96
+cd /home/yelkhamr/dark-factory/bob97
 source ~/dark-factory/bob/bob_build.env
 export BOB_REGRESSION_DETECTION_ENABLED=0
 export BOB_SUB_AGENT_MAX_TURNS=100
 export BOB_MAX_CONCURRENT_FEATURES=32
 unset BOB_CI_MODE
-PY=~/dark-factory/bob/.venv/bin/python
-BOB=~/dark-factory/bob/.venv/bin/bob
+PY=~/dark-factory/bob96/.venv/bin/python
+BOB=~/dark-factory/bob96/.venv/bin/bob
 i=0
 while true; do
   i=$((i+1))
@@ -45,7 +45,7 @@ for f,dp in deps: dd[f].append(dp)
 print(sum(1 for i,s in rows if s in ('pending','ready') and all(st.get(x)=='completed' for x in dd.get(i,[]))))")
   echo "[supervisor] iter=$i completed=$completed runnable=$RUN $(date +%T)"
   if [ "$RUN" = "0" ]; then echo "[supervisor] STOP: no runnable pending"; break; fi
-  $BOB run --all --max-concurrent-features 32 < /dev/null >> /home/yelkhamr/dark-factory/bob96/build.log 2>&1
+  $BOB run --all --max-concurrent-features 32 < /dev/null >> /home/yelkhamr/dark-factory/bob97/build.log 2>&1
   echo "[supervisor] bob exited=$? completed_after=$($PY -c "import sqlite3;print(sqlite3.connect('bob.db').cursor().execute('SELECT COUNT(*) FROM features WHERE status=\"completed\"').fetchone()[0])") $(date +%T)"
   sleep 5
 done

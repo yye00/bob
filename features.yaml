@@ -1,4 +1,4 @@
-name: bob96
+name: bob97
 features:
 - key: F-R7-400
   title: Convergence detector compares features by spec_slot, not UUID
@@ -21,11 +21,11 @@ features:
 
     spec yaml and matching by name.'
   acceptance_criteria:
-  - 'File exists: src/bob/convergence_detector.py'
-  - 'Function defined: bob.convergence_detector.check_convergence'
-  - 'Function defined: bob.convergence_detector.backfill_spec_slot'
-  - 'pytest: tests/test_convergence_detector.py'
-  - 'integration: bob.convergence_detector'
+  - 'File exists: src/bob/spec_slot.py'
+  - 'Function defined: bob.spec_slot.backfill_spec_slot'
+  - 'Function defined: bob.spec_slot.check_convergence'
+  - 'pytest: tests/test_spec_slot_convergence.py'
+  - 'integration: bob.db'
   - 'pytest: tests/test_convergence_detector_compares_features_by_spec_slo_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_convergence_detector_compares_features_by_spec_slo_error.py — invalid input raises
@@ -66,7 +66,7 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/spec_ambiguity_linter.py'
   - 'Function defined: bob.spec_ambiguity_linter.lint_acceptance_criteria'
-  - 'Function defined: bob.spec_ambiguity_linter.is_ambiguous_criterion'
+  - 'Function defined: bob.spec_ambiguity_linter.is_ambiguous_ac'
   - 'pytest: tests/test_spec_ambiguity_linter.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_spec_ambiguity_linter_boundary.py — empty, zero, or minimum input returns a well-defined
@@ -85,11 +85,11 @@ features:
 
     feature in the spec being planned. Reject unreachable targets.'
   acceptance_criteria:
-  - 'File exists: src/hippy/spec/reachability.py'
-  - 'Function defined: hippy.spec.reachability.check_integration_reachability'
-  - 'Function defined: hippy.spec.reachability.resolve_target_module'
-  - 'pytest: tests/test_reachability.py'
-  - 'integration: hippy.spec.loader'
+  - 'File exists: src/bob/integration_target_reachability.py'
+  - 'Function defined: bob.integration_target_reachability.check_integration_reachability'
+  - 'Function defined: bob.integration_target_reachability.resolve_target'
+  - 'pytest: tests/test_integration_target_reachability.py'
+  - 'integration: bob.spec_loader'
   - 'pytest: tests/test_integration_target_reachability_check_at_spec_load_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_integration_target_reachability_check_at_spec_load_error.py — invalid input raises
@@ -106,11 +106,11 @@ features:
 
     freeform prose.'
   acceptance_criteria:
-  - 'File exists: src/ac_grammar/behavior_ears.py'
-  - 'Function defined: ac_grammar.behavior_ears.parse_behavior_criterion'
-  - 'Function defined: ac_grammar.behavior_ears.check_behavior'
-  - 'pytest: tests/test_behavior_ac_grammar.py'
-  - 'integration: ac_verifier'
+  - 'File exists: src/bob/behavior_ac.py'
+  - 'Function defined: bob.behavior_ac.parse_behavior_ac'
+  - 'Function defined: bob.behavior_ac.check_behavior_ac'
+  - 'pytest: tests/test_behavior_ac.py'
+  - 'integration: bob.evaluator'
   - 'pytest: tests/test_structured_ears_style_behavior_acceptance_criteria_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_structured_ears_style_behavior_acceptance_criteria_error.py — invalid input raises
@@ -127,11 +127,11 @@ features:
 
     report.'
   acceptance_criteria:
-  - 'File exists: src/spec_quality/quality_score_gate.py'
-  - 'Function defined: spec_quality.quality_score_gate.compute_spec_quality_score'
-  - 'Function defined: spec_quality.quality_score_gate.gate_feature_readiness'
-  - 'pytest: tests/test_spec_quality_score_gate.py'
-  - 'integration: spec_quality.composite_score'
+  - 'File exists: src/bob/spec_quality_score.py'
+  - 'Function defined: bob.spec_quality_score.compute_spec_quality_score'
+  - 'Function defined: bob.spec_quality_score.build_remediation_report'
+  - 'pytest: tests/test_spec_quality_score.py'
+  - 'integration: bob.orchestrator'
   - 'pytest: tests/test_spec_quality_score_gate_boundary.py — empty, zero, or minimum input returns a
     well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_spec_quality_score_gate_error.py — invalid input raises ValueError and the function
@@ -151,9 +151,10 @@ features:
     actually rewrites one of the AC-named source files.'
   acceptance_criteria:
   - 'File exists: src/bob/sticky_completed_gate.py'
-  - 'Function defined: bob.sticky_completed_gate.apply_sticky_gate'
+  - 'Function defined: bob.sticky_completed_gate.apply_sticky_completed_gate'
+  - 'Function defined: bob.sticky_completed_gate.reset_stamp_on_ac_file_rewrite'
   - 'pytest: tests/test_sticky_completed_gate.py'
-  - 'integration: bob.evaluator'
+  - 'integration: bob.supervisor_loop'
   - 'pytest: tests/test_sticky_completed_gate_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
   - 'pytest: tests/test_sticky_completed_gate_error.py — invalid input raises ValueError and the function
@@ -172,10 +173,11 @@ features:
 
     their pre-verification status.'
   acceptance_criteria:
-  - 'File exists: src/bob/blame_cause_cascade.py'
-  - 'Function defined: bob.blame_cause_cascade.charge_breaking_feature'
-  - 'pytest: tests/test_blame_cause_cascade.py'
-  - 'integration: bob.orchestrator'
+  - 'File exists: src/bob/blame_the_cause.py'
+  - 'Function defined: bob.blame_the_cause.charge_breaking_feature'
+  - 'Function defined: bob.blame_the_cause.owner_of_failing_test'
+  - 'pytest: tests/test_blame_the_cause.py'
+  - 'integration: bob.supervisor_loop'
   - 'pytest: tests/test_blame_the_cause_regression_cascade_boundary.py — empty, zero, or minimum input
     returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_blame_the_cause_regression_cascade_error.py — invalid input raises ValueError
@@ -194,9 +196,10 @@ features:
 
     parent_evidence_hash.'
   acceptance_criteria:
-  - 'File exists: src/bob/parent_gen_inheritance.py'
-  - 'Function defined: bob.parent_gen_inheritance.inherit_parent_status'
-  - 'pytest: tests/test_parent_gen_inheritance.py'
+  - 'File exists: src/bob/parent_gen_db_inheritance.py'
+  - 'Function defined: bob.parent_gen_db_inheritance.inherit_parent_status'
+  - 'Function defined: bob.parent_gen_db_inheritance.match_by_spec_slot'
+  - 'pytest: tests/test_parent_gen_db_inheritance.py'
   - 'integration: bob.spawn_next_generation'
   - 'pytest: tests/test_parent_gen_db_inheritance_at_seed_time_boundary.py — empty, zero, or minimum input
     returns a well-defined result rather than raising (boundary case)'
@@ -214,10 +217,11 @@ features:
 
     execute pass that bypasses the readiness gate.'
   acceptance_criteria:
-  - 'File exists: src/hippy/bootstrap_readiness_override.py'
-  - 'Function defined: hippy.bootstrap_readiness_override.should_bootstrap_bypass'
+  - 'File exists: src/bob/bootstrap_readiness_override.py'
+  - 'Function defined: bob.bootstrap_readiness_override.should_bypass_readiness_gate'
+  - 'Function defined: bob.bootstrap_readiness_override.increment_bootstrap_attempts'
   - 'pytest: tests/test_bootstrap_readiness_override.py'
-  - 'integration: hippy.orchestrator'
+  - 'integration: bob.orchestrator'
   - 'pytest: tests/test_bootstrap_readiness_override_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_bootstrap_readiness_override_error.py — invalid input raises ValueError and the
@@ -237,10 +241,10 @@ features:
     looks recoverable.'
   acceptance_criteria:
   - 'File exists: src/bob/orchestrator/stale_bytecode_guard.py'
-  - 'Function defined: bob.orchestrator.stale_bytecode_guard.orchestrator_sources_changed_since'
-  - 'Function defined: bob.orchestrator.stale_bytecode_guard.guard_relaunch_on_stale_bytecode'
+  - 'Function defined: bob.orchestrator.stale_bytecode_guard.check_stale_bytecode'
+  - 'Function defined: bob.orchestrator.stale_bytecode_guard.guard_at_relaunch'
   - 'pytest: tests/test_stale_bytecode_guard.py'
-  - 'integration: bob.orchestrator_reaper'
+  - 'integration: bob.orchestrator'
   - 'pytest: tests/test_stale_bytecode_guard_at_relaunch_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_stale_bytecode_guard_at_relaunch_error.py — invalid input raises ValueError and
@@ -259,7 +263,7 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/spec_critic.py'
   - 'Function defined: bob.spec_critic.critique_spec'
-  - 'File exists: spec_constitution.md'
+  - 'Function defined: bob.spec_critic.load_spec_constitution'
   - 'pytest: tests/test_spec_critic.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_adversarial_spec_critic_sub_agent_boundary.py — empty, zero, or minimum input
@@ -280,11 +284,12 @@ features:
 
     be >=90% of load-bearing tokens.'
   acceptance_criteria:
-  - 'File exists: src/bob/spec/provenance.py'
-  - 'Function defined: bob.spec.provenance.trace_ac_provenance'
+  - 'File exists: src/bob/spec_provenance.py'
+  - 'Function defined: bob.spec_provenance.trace_ac_provenance'
+  - 'Function defined: bob.spec_provenance.source_coverage_ratio'
   - 'CLI command: bob spec trace'
   - 'pytest: tests/test_spec_provenance.py'
-  - 'integration: bob.spec'
+  - 'integration: bob.spec_synthesizer'
   - 'pytest: tests/test_sub_translation_provenance_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_sub_translation_provenance_error.py — invalid input raises ValueError and the
@@ -305,11 +310,11 @@ features:
 
     implementer.'
   acceptance_criteria:
-  - 'File exists: src/bob/design_contract_sub_grammar.py'
-  - 'Function defined: bob.design_contract_sub_grammar.parse_behavior_contract'
-  - 'Function defined: bob.design_contract_sub_grammar.emit_icontract_decorators'
-  - 'pytest: tests/test_design_contract_sub_grammar.py'
-  - 'integration: bob.behavior_ac_verifier'
+  - 'File exists: src/hippy/behavior_contract.py'
+  - 'Function defined: hippy.behavior_contract.emit_contract_decorators'
+  - 'Function defined: hippy.behavior_contract.verify_contracts'
+  - 'pytest: tests/test_behavior_contract.py'
+  - 'integration: bob.behavior_ac'
   - 'pytest: tests/test_design_by_contract_sub_grammar_on_behavior_boundary.py — empty, zero, or minimum
     input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_design_by_contract_sub_grammar_on_behavior_error.py — invalid input raises ValueError
@@ -330,11 +335,12 @@ features:
 
     AC involving data transformation or numeric range.'
   acceptance_criteria:
-  - 'File exists: src/ac_grammar/property_based.py'
-  - 'Function defined: ac_grammar.property_based.parse_property_ac'
-  - 'Function defined: ac_grammar.property_based.emit_hypothesis_test'
-  - 'Function defined: ac_grammar.property_based.emit_key_example_test'
+  - 'File exists: src/bob/property_based_ac.py'
+  - 'Function defined: bob.property_based_ac.parse_property_ac'
+  - 'Function defined: bob.property_based_ac.emit_hypothesis_test'
+  - 'Function defined: bob.property_based_ac.emit_key_example_test'
   - 'pytest: tests/test_property_based_ac.py'
+  - 'integration: bob.spec_synthesizer'
   - 'pytest: tests/test_key_examples_property_based_ac_variant_boundary.py — empty, zero, or minimum input
     returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_key_examples_property_based_ac_variant_error.py — invalid input raises ValueError
@@ -358,7 +364,7 @@ features:
   - 'File exists: src/bob/test_writer.py'
   - 'Function defined: bob.test_writer.generate_failing_tests'
   - 'Function defined: bob.test_writer.build_pass_coverage_filter'
-  - 'pytest: tests/test_writer/test_test_writer.py'
+  - 'pytest: tests/test_test_writer.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_test_writer_sub_agent_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
@@ -376,10 +382,11 @@ features:
 
     a new dependency used by 7 of the 22 detectors.'
   acceptance_criteria:
-  - 'File exists: src/bob/linter/smell_detectors.py'
-  - 'Function defined: bob.linter.smell_detectors.detect_smells'
-  - 'pytest: tests/test_smell_detectors.py'
-  - 'integration: bob.linter'
+  - 'File exists: src/bob/smell_linter.py'
+  - 'Function defined: bob.smell_linter.run_smell_linter'
+  - 'Function defined: bob.smell_linter.SMELL_DETECTORS'
+  - 'pytest: tests/test_smell_linter.py'
+  - 'integration: bob.plan'
   - 'pytest: tests/test_full_22_smell_linter_extension_to_f_r7_410_boundary.py — empty, zero, or minimum
     input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_full_22_smell_linter_extension_to_f_r7_410_error.py — invalid input raises ValueError
@@ -400,11 +407,11 @@ features:
 
     SPEC_NEEDS_HUMAN rather than confabulate.'
   acceptance_criteria:
-  - 'File exists: src/bob/structured_uncertainty_clarification.py'
-  - 'Function defined: bob.structured_uncertainty_clarification.generate_candidate_stubs'
-  - 'Function defined: bob.structured_uncertainty_clarification.detect_ambiguous_slots'
-  - 'Function defined: bob.structured_uncertainty_clarification.run_clarification_loop'
-  - 'pytest: tests/test_structured_uncertainty_clarification.py'
+  - 'File exists: src/bob/uncertainty_clarification_loop.py'
+  - 'Function defined: bob.uncertainty_clarification_loop.generate_candidate_stubs'
+  - 'Function defined: bob.uncertainty_clarification_loop.mark_ambiguous_slots'
+  - 'Function defined: bob.uncertainty_clarification_loop.build_clarification_questions'
+  - 'pytest: tests/test_uncertainty_clarification_loop.py'
   - 'pytest: tests/test_structured_uncertainty_clarification_loop_with_ask_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_structured_uncertainty_clarification_loop_with_ask_error.py — invalid input raises
@@ -424,10 +431,10 @@ features:
     every PRD slot the critic grades.'
   acceptance_criteria:
   - 'File exists: src/bob/schema_constrained_spec_emission.py'
-  - 'File exists: schemas/spec.v1.json'
-  - 'Function defined: bob.schema_constrained_spec_emission.emit_spec'
+  - 'Function defined: bob.schema_constrained_spec_emission.emit_constrained_spec'
+  - 'Function defined: bob.schema_constrained_spec_emission.reject_invalid_spec'
   - 'pytest: tests/test_schema_constrained_spec_emission.py'
-  - 'integration: bob.synthesizer'
+  - 'File exists: schemas/spec.v1.json'
   - 'pytest: tests/test_schema_constrained_spec_emission_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_schema_constrained_spec_emission_error.py — invalid input raises ValueError and
@@ -446,8 +453,9 @@ features:
 
     MUST require evidence that the feature''s own tests newly fail.'
   acceptance_criteria:
-  - 'Function defined: db.detect_regression'
-  - 'Function defined: db.get_test_ownership_map'
+  - 'File exists: src/bob/regression_attribution.py'
+  - 'Function defined: bob.regression_attribution.build_test_ownership_map'
+  - 'Function defined: bob.regression_attribution.attribute_regression'
   - 'pytest: tests/test_regression_attribution.py'
   - 'integration: bob.db'
   - 'pytest: tests/test_regression_attribution_requires_test_ownership_map_boundary.py — empty, zero,
@@ -468,11 +476,11 @@ features:
 
     collects cleanly.'
   acceptance_criteria:
-  - 'File exists: src/baseline_gate.py'
-  - 'Function defined: baseline_gate.assert_baseline_collects_cleanly'
-  - 'Function defined: baseline_gate.baseline_collection_ok'
+  - 'File exists: src/hippy/baseline_gate.py'
+  - 'Function defined: hippy.baseline_gate.capture_baseline'
+  - 'Function defined: hippy.baseline_gate.collects_cleanly'
   - 'pytest: tests/test_baseline_gate.py'
-  - 'integration: baseline_verifier'
+  - 'integration: hippy.verifier'
   - 'pytest: tests/test_stable_baseline_gate_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
   - 'pytest: tests/test_stable_baseline_gate_error.py — invalid input raises ValueError and the function
@@ -489,10 +497,11 @@ features:
 
     --maxfail=0 MUST be enforced at the snapshot boundary.'
   acceptance_criteria:
-  - 'File exists: src/bob/snapshot.py'
-  - 'Function defined: bob.snapshot.run_pytest_snapshot'
-  - 'Function defined: bob.snapshot.enforce_maxfail_zero'
-  - 'pytest: tests/test_snapshot_maxfail.py'
+  - 'File exists: src/bob/deterministic_pytest_snapshots.py'
+  - 'Function defined: bob.deterministic_pytest_snapshots.build_snapshot_pytest_args'
+  - 'Function defined: bob.deterministic_pytest_snapshots.enforce_maxfail_zero'
+  - 'pytest: tests/test_deterministic_pytest_snapshots.py'
+  - 'integration: bob.snapshot'
   - 'pytest: tests/test_deterministic_pytest_snapshots_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_deterministic_pytest_snapshots_error.py — invalid input raises ValueError and
@@ -511,9 +520,11 @@ features:
 
     projects.name matches workspace dir basename.'
   acceptance_criteria:
-  - 'Function defined: bob.run_loop.verify_project_metadata'
+  - 'File exists: src/bob/spawn_metadata_check.py'
+  - 'Function defined: bob.spawn_metadata_check.verify_project_name_matches_workspace'
+  - 'Function defined: bob.spawn_metadata_check.reinit_stale_project_metadata'
+  - 'pytest: tests/test_spawn_metadata_check.py'
   - 'integration: bob.run_loop'
-  - 'pytest: tests/test_project_metadata_check.py'
   - 'pytest: tests/test_bob_init_re_run_after_spawn_fixes_stale_project_me_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_bob_init_re_run_after_spawn_fixes_stale_project_me_error.py — invalid input raises
@@ -534,7 +545,7 @@ features:
   - 'Function defined: bob.plan_gate.write_plan_yaml'
   - 'Function defined: bob.plan_gate.is_plan_approved'
   - 'pytest: tests/test_plan_gate.py'
-  - 'integration: bob.spec_critic'
+  - 'integration: bob.orchestrator'
   - 'pytest: tests/test_devin_style_editable_plan_yaml_gate_before_any_imp_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_devin_style_editable_plan_yaml_gate_before_any_imp_error.py — invalid input raises
@@ -552,7 +563,7 @@ features:
     severity. Halt-gate fires if critic_repeat_rate > 0.30 over 3 runs.'
   acceptance_criteria:
   - 'File exists: src/bob/spec_findings_registry.py'
-  - 'Function defined: bob.spec_findings_registry.record_findings'
+  - 'Function defined: bob.spec_findings_registry.record_finding'
   - 'Function defined: bob.spec_findings_registry.detect_regression'
   - 'pytest: tests/test_spec_findings_registry.py'
   - 'integration: bob.spec_critic'
@@ -576,11 +587,11 @@ features:
 
     refuses plan --create; 0.65-0.80 warns; >= 0.80 green.'
   acceptance_criteria:
-  - 'File exists: src/bob/composite_spec_quality_score.py'
-  - 'Function defined: bob.composite_spec_quality_score.spec_quality_score'
-  - 'Function defined: bob.composite_spec_quality_score.spec_quality_gate'
-  - 'pytest: tests/test_composite_spec_quality_score.py'
-  - 'integration: bob.spec_quality_gate'
+  - 'File exists: src/bob/spec_quality_score.py'
+  - 'Function defined: bob.spec_quality_score.compute_spec_quality_score'
+  - 'Function defined: bob.spec_quality_score.gate_spec_quality'
+  - 'pytest: tests/test_spec_quality_score.py'
+  - 'integration: bob.spec_quality_score'
   - 'pytest: tests/test_composite_spec_quality_score_8_sub_metrics_geometr_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_composite_spec_quality_score_8_sub_metrics_geometr_error.py — invalid input raises
@@ -600,10 +611,10 @@ features:
     untraced_implementation.'
   acceptance_criteria:
   - 'File exists: tools/spec_coverage.py'
-  - 'Function defined: tools.spec_coverage.generate_rtm'
+  - 'Function defined: tools.spec_coverage.emit_rtm'
   - 'Function defined: tools.spec_coverage.flag_untraced_implementation'
-  - 'CLI command: spec_coverage'
   - 'pytest: tests/test_spec_coverage_rtm.py'
+  - 'CLI command: spec-coverage'
   - 'pytest: tests/test_bidirectional_requirements_traceability_matrix_rtm_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_bidirectional_requirements_traceability_matrix_rtm_error.py — invalid input raises
@@ -624,9 +635,8 @@ features:
   acceptance_criteria:
   - 'File exists: src/hippy/spec_self_consistency.py'
   - 'Function defined: hippy.spec_self_consistency.compute_stability_score'
-  - 'Function defined: hippy.spec_self_consistency.run_self_consistency_check'
+  - 'Function defined: hippy.spec_self_consistency.check_spec_consistency'
   - 'pytest: tests/test_spec_self_consistency.py'
-  - 'integration: hippy.spec_extractor'
   - 'pytest: tests/test_spec_self_consistency_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
   - 'pytest: tests/test_spec_self_consistency_error.py — invalid input raises ValueError and the function
@@ -645,11 +655,11 @@ features:
 
     auto-apply. Per-feature opt-out via auto_repair:false.'
   acceptance_criteria:
-  - 'File exists: src/bob/auto_repair_smelly_acs_semantic_equivalence_verification.py'
-  - 'Function defined: bob.auto_repair_smelly_acs_semantic_equivalence_verification.verify_semantic_equivalence'
-  - 'Function defined: bob.auto_repair_smelly_acs_semantic_equivalence_verification.auto_apply_repairs'
-  - 'pytest: tests/test_auto_repair_smelly_acs_semantic_equivalence_verification.py'
-  - 'integration: bob.linter.auto_repair'
+  - 'File exists: src/hippy/auto_repair.py'
+  - 'Function defined: hippy.auto_repair.verify_semantic_equivalence'
+  - 'Function defined: hippy.auto_repair.auto_apply_rewrites'
+  - 'pytest: tests/test_auto_repair.py'
+  - 'integration: hippy.linter'
   - 'pytest: tests/test_auto_repair_of_smelly_acs_with_semantic_equivalenc_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_auto_repair_of_smelly_acs_with_semantic_equivalenc_error.py — invalid input raises
@@ -680,9 +690,9 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/codet_triangulation.py'
   - 'Function defined: bob.codet_triangulation.build_agreement_matrix'
-  - 'Function defined: bob.codet_triangulation.select_best_impl'
+  - 'Function defined: bob.codet_triangulation.score_candidates'
   - 'pytest: tests/test_codet_triangulation.py'
-  - 'integration: bob.synthesizer'
+  - 'integration: bob.orchestrator'
   - 'pytest: tests/test_codet_mutual_agreement_triangulation_kxk_code_test_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_codet_mutual_agreement_triangulation_kxk_code_test_error.py — invalid input raises
@@ -704,7 +714,7 @@ features:
   - 'Function defined: bob.self_discover_meta_agent.select_spec_sections'
   - 'Function defined: bob.self_discover_meta_agent.run_focused_extractor'
   - 'pytest: tests/test_self_discover_meta_agent.py'
-  - 'integration: bob.synthesizer'
+  - 'integration: bob.self_discover_meta_agent'
   - 'pytest: tests/test_self_discover_meta_agent_for_per_feature_spec_sect_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_self_discover_meta_agent_for_per_feature_spec_sect_error.py — invalid input raises
@@ -725,6 +735,7 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/convergence_checker.py'
   - 'Function defined: bob.convergence_checker.check_convergence'
+  - 'Function defined: bob.convergence_checker.query_features'
   - 'pytest: tests/test_convergence_checker.py'
   - 'integration: bob.weekend_watchdog'
   - 'pytest: tests/test_python_based_convergence_checker_with_non_empty_na_boundary.py — empty, zero,
@@ -747,7 +758,7 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/stuck_readiness_decomposition.py'
   - 'Function defined: bob.stuck_readiness_decomposition.should_decompose'
-  - 'Function defined: bob.stuck_readiness_decomposition.mark_pending_decomposition'
+  - 'Function defined: bob.stuck_readiness_decomposition.trigger_decomposition'
   - 'pytest: tests/test_stuck_readiness_decomposition.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_stuck_readiness_decomposition_trigger_boundary.py — empty, zero, or minimum input
@@ -770,10 +781,10 @@ features:
 
     exit code.'
   acceptance_criteria:
-  - 'File exists: src/bob/ac_artifact_verifier.py'
-  - 'Function defined: bob.ac_artifact_verifier.verify_artifacts_exist'
-  - 'pytest: tests/test_ac_artifact_verifier.py'
-  - 'integration: bob.acceptance'
+  - 'File exists: src/bob/artifact_existence_verifier.py'
+  - 'Function defined: bob.artifact_existence_verifier.verify_ac_artifacts'
+  - 'pytest: tests/test_artifact_existence_verifier.py'
+  - 'integration: bob.score_gate_loop'
   - 'pytest: tests/test_ac_artifact_existence_verifier_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_ac_artifact_existence_verifier_error.py — invalid input raises ValueError and
@@ -792,10 +803,10 @@ features:
 
     operator-actionable error otherwise.'
   acceptance_criteria:
-  - 'File exists: src/bob/env_capability_preflight.py'
-  - 'Function defined: bob.env_capability_preflight.probe_dependencies'
-  - 'Function defined: bob.env_capability_preflight.discover_workaround'
-  - 'pytest: tests/test_env_capability_preflight.py'
+  - 'File exists: src/bob/environment_preflight.py'
+  - 'Function defined: bob.environment_preflight.probe_dependencies'
+  - 'Function defined: bob.environment_preflight.discover_workaround'
+  - 'pytest: tests/test_environment_preflight.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_environment_capability_preflight_with_research_dri_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -816,10 +827,10 @@ features:
     implementer retries with NEW information.'
   acceptance_criteria:
   - 'File exists: src/bob/research_augmented_retry.py'
-  - 'Function defined: bob.research_augmented_retry.research_alternative_strategies'
-  - 'Function defined: bob.research_augmented_retry.inject_strategies_into_prompt'
+  - 'Function defined: bob.research_augmented_retry.classify_failure'
+  - 'Function defined: bob.research_augmented_retry.spawn_research_agent'
+  - 'Function defined: bob.research_augmented_retry.inject_strategies'
   - 'pytest: tests/test_research_augmented_retry.py'
-  - 'integration: bob.orchestrator'
   - 'pytest: tests/test_research_augmented_retry_boundary.py — empty, zero, or minimum input returns a
     well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_research_augmented_retry_error.py — invalid input raises ValueError and the function
@@ -840,11 +851,11 @@ features:
 
     broken variants; strengthen assertions."'
   acceptance_criteria:
-  - 'File exists: src/mutation_testing/mutmut_gate.py'
-  - 'Function defined: mutation_testing.mutmut_gate.run_mutation_gate'
-  - 'Function defined: mutation_testing.mutmut_gate.persist_surviving_mutants'
-  - 'pytest: tests/test_mutmut_gate.py'
-  - 'integration: verifier'
+  - 'File exists: src/bob/mutation_testing_gate.py'
+  - 'Function defined: bob.mutation_testing_gate.run_mutation_gate'
+  - 'Function defined: bob.mutation_testing_gate.persist_surviving_mutants'
+  - 'pytest: tests/test_mutation_testing_gate.py'
+  - 'integration: bob.verifier'
   - 'pytest: tests/test_mutation_testing_post_impl_quality_gate_mutmut_boundary.py — empty, zero, or minimum
     input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_mutation_testing_post_impl_quality_gate_mutmut_error.py — invalid input raises
@@ -873,11 +884,11 @@ features:
 
     Source: OpenAI Triton (Tillet et al. 2019); triton.autotune docs.'
   acceptance_criteria:
-  - 'File exists: src/hippy/gpu_kernel_synth.py'
-  - 'Function defined: hippy.gpu_kernel_synth.synthesize_triton_kernel'
-  - 'Function defined: hippy.gpu_kernel_synth.autotune_and_verify'
-  - 'pytest: tests/test_gpu_kernel_synth.py'
-  - 'integration: hippy.implementer'
+  - 'File exists: src/bob/triton_kernel_synth.py'
+  - 'Function defined: bob.triton_kernel_synth.synthesize_triton_kernel'
+  - 'Function defined: bob.triton_kernel_synth.autotune_and_gate'
+  - 'pytest: tests/test_triton_kernel_synth.py'
+  - 'integration: bob.orchestrator'
   - 'pytest: tests/test_gpu_triton_kernel_synthesis_autotune_sub_agent_boundary.py — empty, zero, or minimum
     input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_gpu_triton_kernel_synthesis_autotune_sub_agent_error.py — invalid input raises
@@ -947,11 +958,11 @@ features:
 
     transient infra errors.'
   acceptance_criteria:
-  - 'File exists: src/bob/orchestrator/spawn_retry.py'
-  - 'Function defined: bob.orchestrator.spawn_retry.classify_exit'
-  - 'Function defined: bob.orchestrator.spawn_retry.spawn_with_retry'
-  - 'pytest: tests/test_spawn_retry_transient.py'
-  - 'integration: bob.spawn_layer'
+  - 'File exists: src/bob/spawn_with_retry.py'
+  - 'Function defined: bob.spawn_with_retry.spawn_with_retry'
+  - 'Function defined: bob.spawn_with_retry.classify_exit'
+  - 'pytest: tests/test_spawn_with_retry.py'
+  - 'integration: bob.spawn_with_retry'
   - 'pytest: tests/test_infra_error_transient_classifier_unlimited_spawn_l_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_infra_error_transient_classifier_unlimited_spawn_l_error.py — invalid input raises
@@ -984,9 +995,10 @@ features:
 
     retry it, do not count it as needs human.'
   acceptance_criteria:
-  - 'File exists: src/bob/rca_layer_infra_error_recovery_second_line_defense_against_false_nh.py'
-  - 'Function defined: bob.rca_layer_infra_error_recovery_second_line_defense_against_false_nh.rca_infra_only_recovery'
-  - 'pytest: tests/test_rca_layer_infra_error_recovery_second_line_defense_against_false_nh.py'
+  - 'File exists: src/bob/rca_infra_error_recovery.py'
+  - 'Function defined: bob.rca_infra_error_recovery.classify_attempts_infra_only'
+  - 'Function defined: bob.rca_infra_error_recovery.recover_infra_only_feature'
+  - 'pytest: tests/test_rca_infra_error_recovery.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_rca_layer_infra_error_recovery_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
@@ -1016,8 +1028,8 @@ features:
     event is filed instead.'
   acceptance_criteria:
   - 'File exists: src/bob/ownership_evidenced_regression.py'
-  - 'Function defined: bob.ownership_evidenced_regression.has_ownership_evidence'
-  - 'Function defined: bob.ownership_evidenced_regression.detect_regression_with_evidence'
+  - 'Function defined: bob.ownership_evidenced_regression.detect_regression'
+  - 'Function defined: bob.ownership_evidenced_regression.file_regression_unattributed'
   - 'pytest: tests/test_ownership_evidenced_regression.py'
   - 'integration: bob.detect_regression'
   - 'pytest: tests/test_ownership_evidenced_regression_detection_no_scapeg_boundary.py — empty, zero,
@@ -1068,9 +1080,9 @@ features:
 
     thresholds + manually relaunch (the documented unstick path).'
   acceptance_criteria:
-  - 'File exists: src/bob/stall_escalation.py'
-  - 'Function defined: bob.stall_escalation.escalate_stall_to_attention'
-  - 'pytest: tests/test_stall_escalation.py'
+  - 'File exists: src/bob/watchdog_stall_escalation.py'
+  - 'Function defined: bob.watchdog_stall_escalation.escalate_stall_observation'
+  - 'pytest: tests/test_watchdog_stall_escalation.py'
   - 'integration: bob.watchdog'
   - 'pytest: tests/test_watchdog_must_escalate_repeated_spec_gate_stall_ob_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -1094,9 +1106,10 @@ features:
     \ check. The check\nretains its security value for genuinely-fictitious imports\nwhile no longer blocking\
     \ the legitimate local-module pattern."
   acceptance_criteria:
+  - 'File exists: src/bob/security_scan.py'
   - 'Function defined: bob.security_scan.is_local_module'
   - 'Function defined: bob.security_scan.slopsquatting_check'
-  - 'pytest: tests/test_security_scan_slopsquatting_local_modules.py'
+  - 'pytest: tests/test_security_scan_slopsquatting_local_whitelist.py'
   - 'integration: bob.security_scan'
   - 'pytest: tests/test_security_scan_slopsquatting_check_must_whitelist_l_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -1278,11 +1291,11 @@ features:
 
     empty findings is recoverable; boot-loop crash is not.'
   acceptance_criteria:
-  - 'File exists: src/bob/spec_findings_io.py'
-  - 'Function defined: bob.spec_findings_io.atomic_write_findings'
-  - 'Function defined: bob.spec_findings_io.load_findings_or_quarantine'
-  - 'pytest: tests/test_spec_findings_io.py'
-  - 'integration: bob.spec_findings'
+  - 'File exists: src/bob/spec_findings_writer.py'
+  - 'Function defined: bob.spec_findings_writer.atomic_write_findings'
+  - 'Function defined: bob.spec_findings_writer.load_findings_or_quarantine'
+  - 'pytest: tests/test_spec_findings_writer.py'
+  - 'integration: bob.spec_findings_writer'
   - 'pytest: tests/test_spec_findings_yaml_writer_must_use_atomic_tmp_rena_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_spec_findings_yaml_writer_must_use_atomic_tmp_rena_error.py — invalid input raises
@@ -1312,10 +1325,11 @@ features:
     restart mid-completion). Audit log records sentinel\nsubagent_reaped_on_terminal=<feature_id> on each\
     \ reap."
   acceptance_criteria:
-  - 'File exists: src/bob/orchestrator/subagent_reaper.py'
-  - 'Function defined: bob.orchestrator.subagent_reaper.reap_subagent_on_terminal'
-  - 'pytest: tests/test_subagent_reaper_terminal.py'
-  - 'integration: bob.orchestrator.run_loop'
+  - 'File exists: src/bob/subagent_reaper.py'
+  - 'Function defined: bob.subagent_reaper.reap_subagent_on_terminal'
+  - 'Function defined: bob.subagent_reaper.sweep_orphan_subagents'
+  - 'pytest: tests/test_subagent_reaper.py'
+  - 'integration: bob.run_loop'
   - 'pytest: tests/test_run_loop_must_reap_claude_subagent_process_on_feat_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_run_loop_must_reap_claude_subagent_process_on_feat_error.py — invalid input raises
@@ -1377,9 +1391,9 @@ features:
 
     per-feature tests_pass.'
   acceptance_criteria:
-  - 'File exists: src/bob/verifier.py'
-  - 'Function defined: bob.verifier.scope_pytest_to_feature'
-  - 'pytest: tests/test_verifier_scoped_pytest.py'
+  - 'File exists: src/bob/verifier_test_scoping.py'
+  - 'Function defined: bob.verifier_test_scoping.scope_pytest_to_feature'
+  - 'pytest: tests/test_verifier_test_scoping.py'
   - 'integration: bob.verifier'
   - 'pytest: tests/test_verifier_must_scope_pytest_to_the_current_feature__boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -1412,10 +1426,11 @@ features:
 
     (compound predicate).'
   acceptance_criteria:
-  - 'File exists: src/hippy/spec_quality/behavior_ac_parser.py'
-  - 'Function defined: hippy.spec_quality.behavior_ac_parser.parse_behavior_ac'
+  - 'File exists: src/bob/spec_quality/behavior_ac_parser.py'
+  - 'Function defined: bob.spec_quality.behavior_ac_parser.parse_behavior_ac'
+  - 'Function defined: bob.spec_quality.behavior_ac_parser.normalize_clause'
   - 'pytest: tests/test_behavior_ac_parser.py'
-  - 'integration: hippy.spec_quality'
+  - 'integration: bob.spec_quality'
   - 'pytest: tests/test_spec_quality_behavior_ac_parser_must_accept_canoni_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_spec_quality_behavior_ac_parser_must_accept_canoni_error.py — invalid input raises
@@ -1437,10 +1452,11 @@ features:
 
     false-negative silent drops depending on rename direction.'
   acceptance_criteria:
-  - 'File exists: src/bob/permanent_forward_carry_auditor.py'
-  - 'Function defined: bob.permanent_forward_carry_auditor.match_carry_forward_by_canonical_id'
+  - 'File exists: src/hippy/permanent_forward_carry_auditor.py'
+  - 'Function defined: hippy.permanent_forward_carry_auditor.match_canonical_feature_id'
+  - 'Function defined: hippy.permanent_forward_carry_auditor.audit_forward_carry'
   - 'pytest: tests/test_permanent_forward_carry_auditor.py'
-  - 'integration: bob.permanent_forward_carry_auditor'
+  - 'integration: hippy.audit_exemptions'
   - 'pytest: tests/test_permanent_forward_carry_auditor_must_match_by_f_r7_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_permanent_forward_carry_auditor_must_match_by_f_r7_error.py — invalid input raises
@@ -1497,10 +1513,11 @@ features:
 
     crash retry (F-R7-478 path).'
   acceptance_criteria:
-  - 'File exists: src/bob/zero_reported_cost_must_not_disable_budget_enforcement.py'
-  - 'Function defined: bob.zero_reported_cost_must_not_disable_budget_enforcement.apply_cost_telemetry_lost_ceiling'
-  - 'pytest: tests/test_zero_reported_cost_must_not_disable_budget_enforcement.py'
-  - 'integration: bob.cost_enforcement'
+  - 'File exists: src/bob/cost_telemetry_guard.py'
+  - 'Function defined: bob.cost_telemetry_guard.enforce_budget_on_zero_cost'
+  - 'Function defined: bob.cost_telemetry_guard.classify_cost_telemetry'
+  - 'pytest: tests/test_cost_telemetry_guard.py'
+  - 'integration: bob.run_loop'
   - 'pytest: tests/test_zero_reported_cost_must_not_disable_budget_enforce_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_zero_reported_cost_must_not_disable_budget_enforce_error.py — invalid input raises
@@ -1526,11 +1543,11 @@ features:
     \ if owner\nunknown) — NOT counted against the currently-verifying feature.\nWhole-suite regression\
     \ detection retains its safety value\nwhile no longer mis-blaming unrelated features."
   acceptance_criteria:
-  - 'File exists: src/bob/regression_baseline_attribution.py'
-  - 'Function defined: bob.regression_baseline_attribution.attribute_regression_to_owning_feature'
-  - 'Function defined: bob.regression_baseline_attribution.build_test_path_to_feature_map'
-  - 'pytest: tests/test_regression_baseline_attribution.py'
-  - 'integration: bob.verification'
+  - 'File exists: src/bob/regression_attribution.py'
+  - 'Function defined: bob.regression_attribution.attribute_regression_to_owner'
+  - 'Function defined: bob.regression_attribution.build_test_owner_map'
+  - 'pytest: tests/test_regression_attribution.py'
+  - 'integration: tests_pass'
   - 'pytest: tests/test_tests_pass_regression_vs_baseline_must_attribute_f_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_tests_pass_regression_vs_baseline_must_attribute_f_error.py — invalid input raises
@@ -1585,7 +1602,8 @@ features:
     subagent_killed_on_attempt_cost_cap=<feature_id>:<cost>.'
   acceptance_criteria:
   - 'File exists: src/bob/per_attempt_cost_cap.py'
-  - 'Function defined: bob.per_attempt_cost_cap.enforce_per_attempt_cost_cap'
+  - 'Function defined: bob.per_attempt_cost_cap.enforce_attempt_cost_cap'
+  - 'Function defined: bob.per_attempt_cost_cap.resolve_cost_cap'
   - 'pytest: tests/test_per_attempt_cost_cap.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_per_feature_subagent_cost_cap_default_10_boundary.py — empty, zero, or minimum
@@ -1736,10 +1754,10 @@ features:
 
     spec_quality gate this tick) are seeded on the next tick.'
   acceptance_criteria:
-  - 'File exists: src/bob/readiness_score_must_rederived_current_confidence_components.py'
-  - 'Function defined: bob.readiness_score_must_rederived_current_confidence_components.rederive_readiness_score'
-  - 'Function defined: bob.readiness_score_must_rederived_current_confidence_components.seed_ready_features_readiness'
-  - 'pytest: tests/test_readiness_score_must_rederived_current_confidence_components.py'
+  - 'File exists: src/bob/readiness.py'
+  - 'Function defined: bob.readiness.rederive_readiness_score'
+  - 'Function defined: bob.readiness.assess_feature_confidence'
+  - 'pytest: tests/test_readiness_rederivation.py'
   - 'integration: bob.run_loop'
   - 'pytest: tests/test_readiness_score_must_be_rederived_from_current_con_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -1798,9 +1816,8 @@ features:
     the contract-grammar synthesis BEFORE persistence.'
   acceptance_criteria:
   - 'File exists: src/bob/spec_quality/contract_grammar.py'
-  - 'Function defined: bob.spec_quality.contract_grammar.emit_require_decorator'
-  - 'Function defined: bob.spec_quality.contract_grammar.validate_lambda_free_variables'
-  - 'pytest: tests/spec_quality/test_contract_grammar_lambda_binding.py'
+  - 'Function defined: bob.spec_quality.contract_grammar.emit_contract_decorators'
+  - 'pytest: tests/test_contract_grammar_lambda_binding.py'
   - 'integration: bob.spec_quality.contract_grammar'
   - 'pytest: tests/test_contract_grammar_emitter_must_bind_lambda_paramete_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -1862,7 +1879,7 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/enhanced_verification.py'
   - 'Function defined: bob.enhanced_verification._search_for_function'
-  - 'pytest: tests/test_enhanced_verification_class_defined.py'
+  - 'pytest: tests/test_class_defined_ac_handler.py'
   - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_enhanced_verification_must_recognize_class_defined_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -1907,10 +1924,10 @@ features:
 
     `executing` rows updated in last 60s) agree.'
   acceptance_criteria:
-  - 'File exists: src/bob/orchestrator_liveness.py'
-  - 'Function defined: bob.orchestrator_liveness.is_orchestrator_running'
-  - 'Function defined: bob.orchestrator_liveness.should_remove_lock'
-  - 'pytest: tests/test_orchestrator_liveness.py'
+  - 'File exists: src/bob/liveness_probe.py'
+  - 'Function defined: bob.liveness_probe.is_orchestrator_alive'
+  - 'Function defined: bob.liveness_probe.should_remove_lock'
+  - 'pytest: tests/test_liveness_probe.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_orchestrator_liveness_probe_must_match_bob_0_9_reg_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -1968,11 +1985,11 @@ features:
 
     `code_emission_defect` and allow another attempt.'
   acceptance_criteria:
-  - 'File exists: src/bob/f_r7_479_rca_auto_reset_must_grant_fresh_attempt_budget_when.py'
-  - 'Function defined: bob.f_r7_479_rca_auto_reset_must_grant_fresh_attempt_budget_when.classify_verification_gate_cause'
-  - 'Function defined: bob.f_r7_479_rca_auto_reset_must_grant_fresh_attempt_budget_when.should_reset_attempt_budget'
-  - 'pytest: tests/test_f_r7_479_rca_auto_reset_fresh_budget.py'
-  - 'integration: bob.rca_auto_reset'
+  - 'File exists: src/bob/rca_auto_reset.py'
+  - 'Function defined: bob.rca_auto_reset.should_grant_fresh_attempt'
+  - 'Function defined: bob.rca_auto_reset.classify_verification_failure'
+  - 'pytest: tests/test_rca_auto_reset.py'
+  - 'integration: bob.run_loop'
   - 'pytest: tests/test_f_r7_479_rca_auto_reset_must_grant_fresh_attempt_b_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_f_r7_479_rca_auto_reset_must_grant_fresh_attempt_b_error.py — invalid input raises
@@ -2022,7 +2039,6 @@ features:
     docstring MUST stop promising "Always 0.85".'
   acceptance_criteria:
   - 'File exists: src/bob/spec_quality/quality_score.py'
-  - 'Function defined: bob.spec_quality.quality_score._resolve_threshold'
   - 'Function defined: bob.spec_quality.quality_score.score_threshold'
   - 'pytest: tests/test_spec_quality_threshold_env.py'
   - 'integration: bob.spec_quality.quality_score'
@@ -2065,11 +2081,10 @@ features:
 
     bootstraps re-apply it.'
   acceptance_criteria:
-  - 'File exists: src/hippy/subagent_verification_policy.py'
-  - 'Function defined: hippy.subagent_verification_policy.forbid_pytest_output_redirection'
-  - 'Function defined: hippy.subagent_verification_policy.build_verification_prompt'
-  - 'pytest: tests/test_subagent_verification_policy.py'
-  - 'integration: hippy.superpowers'
+  - 'File exists: src/bob/pytest_redirection_guard.py'
+  - 'Function defined: bob.pytest_redirection_guard.forbid_pytest_stdout_redirection'
+  - 'pytest: tests/test_pytest_redirection_guard.py'
+  - 'integration: bob.superpowers'
   - 'pytest: tests/test_subagent_observability_mandate_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_subagent_observability_mandate_error.py — invalid input raises ValueError and
@@ -2200,10 +2215,10 @@ features:
 
     the file actually changed).'
   acceptance_criteria:
-  - 'File exists: src/bob/prompt_hot_reload.py'
-  - 'Function defined: bob.prompt_hot_reload.reload_if_changed'
-  - 'Function defined: bob.superpowers.get_verification_prompt_section'
-  - 'pytest: tests/test_prompt_hot_reload.py'
+  - 'File exists: src/bob/hot_reload_prompt_source.py'
+  - 'Function defined: bob.hot_reload_prompt_source.reload_if_changed'
+  - 'Function defined: bob.hot_reload_prompt_source.get_prompt_sections'
+  - 'pytest: tests/test_hot_reload_prompt_source.py'
   - 'integration: bob.superpowers'
   - 'pytest: tests/test_hot_reload_subagent_prompt_source_on_each_dispatch_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -2246,11 +2261,11 @@ features:
 
     human escalation.'
   acceptance_criteria:
-  - 'File exists: src/orchestrator/reap_backoff.py'
-  - 'Function defined: orchestrator.reap_backoff.next_dispatch_allowed_at'
-  - 'Function defined: orchestrator.reap_backoff.should_refuse_redispatch'
+  - 'File exists: src/bob/reap_backoff.py'
+  - 'Function defined: bob.reap_backoff.next_reap_dispatch_delay'
+  - 'Function defined: bob.reap_backoff.should_refuse_redispatch'
   - 'pytest: tests/test_reap_backoff.py'
-  - 'integration: orchestrator.reaper'
+  - 'integration: bob.supervisor_loop'
   - 'pytest: tests/test_exponential_backoff_after_reaper_reset_boundary.py — empty, zero, or minimum input
     returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_exponential_backoff_after_reaper_reset_error.py — invalid input raises ValueError
@@ -2303,7 +2318,7 @@ features:
   - 'File exists: src/bob/enhanced_verification.py'
   - 'Function defined: bob.enhanced_verification.is_executable_or_structural_criterion'
   - 'Function defined: bob.enhanced_verification._check_criterion_with_details'
-  - 'pytest: tests/test_prose_ac_demotion.py'
+  - 'pytest: tests/test_prose_ac_demote_to_warning.py'
   - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_enhanced_verification_check_criterion_with_details_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -2394,11 +2409,11 @@ features:
     \ AC containing\n\"pytest:\" mid-sentence DEMOTES, AND a positive test that\na real \"pytest: tests/foo.py\"\
     \ criterion still ROUTES to\n`_run_pytest_criterion`."
   acceptance_criteria:
-  - 'Function defined: bob.criterion_demoter.is_structural_prefix_match'
-  - 'Function defined: bob.criterion_demoter.is_executable_or_structural_criterion'
-  - 'Function defined: bob.criterion_demoter.prose_connector_registry'
-  - 'pytest: tests/test_criterion_demoter_prefix_match.py'
-  - 'integration: bob.criterion_demoter'
+  - 'File exists: src/bob/prose_ac_demoter.py'
+  - 'Function defined: bob.prose_ac_demoter.is_structural_prefix_match'
+  - 'Function defined: bob.prose_ac_demoter.is_executable_or_structural_criterion'
+  - 'pytest: tests/test_prose_ac_prefix_demoter.py'
+  - 'integration: bob.prose_ac_demoter'
   - 'pytest: tests/test_prose_ac_and_integration_ac_demoters_must_match_st_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_prose_ac_and_integration_ac_demoters_must_match_st_error.py — invalid input raises
@@ -2474,8 +2489,8 @@ features:
   - 'File exists: src/bob/orchestrator/probe_ancestry.py'
   - 'Function defined: bob.orchestrator.probe_ancestry.is_self_or_ancestor'
   - 'Function defined: bob.orchestrator.probe_ancestry.is_shell_wrapper'
-  - 'integration: bob.orchestrator.liveness_probe'
   - 'pytest: tests/test_probe_ancestry.py'
+  - 'integration: bob.orchestrator.liveness_probe'
   - 'pytest: tests/test_orchestrator_liveness_probe_must_exclude_process_a_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_orchestrator_liveness_probe_must_exclude_process_a_error.py — invalid input raises
@@ -2640,7 +2655,7 @@ features:
   - 'File exists: src/bob/enhanced_verification.py'
   - 'Function defined: bob.enhanced_verification._integration_wired'
   - 'Function defined: bob.enhanced_verification._check_criterion'
-  - 'pytest: tests/test_pattern8_integration_prose_fallback.py'
+  - 'pytest: tests/test_pattern8_integration_function_existence_fallback.py'
   - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_pattern_8_integration_ac_handler_must_fall_back_to_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -2690,14 +2705,14 @@ features:
 
     signal, failing them no longer causes NH. Spec-carry into a prior generation.'
   acceptance_criteria:
+  - 'File exists: src/bob/enhanced_verification.py'
   - 'Function defined: bob.enhanced_verification.run_bespoke_ac_handler'
-  - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_bespoke_demote_on_failure.py'
+  - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_bespoke_ac_handlers_must_demote_on_failure_when_ta_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_bespoke_ac_handlers_must_demote_on_failure_when_ta_error.py — invalid input raises
     ValueError and the function does not silently succeed (error path)'
-  - 'File exists: src/bob/enhanced_verification.py'
   permanent_forward_carry: true
 - key: F-R7-585
   title: apply_pessimistic_cost MUST use a per-feature ceiling — current code passes ENTIRE project max_cost_usd,
@@ -2769,8 +2784,8 @@ features:
     ` is unchanged\n(preserves DB / serialization compat). Only the user-visible string and\nlog token\
     \ differ. Spec-carry into a prior generation so the regenerated tree\nkeeps the rename."
   acceptance_criteria:
-  - 'Function defined: bob.orchestrator.run_loop.run_loop'
-  - 'Function defined: bob.cli.main'
+  - 'Function defined: bob.orchestrator.run_loop._run_orchestration_loop'
+  - 'Function defined: bob.cli.run'
   - 'pytest: tests/test_queue_drained_rename.py'
   - 'integration: bob.orchestrator.run_loop'
   - 'integration: bob.cli'
@@ -2809,8 +2824,8 @@ features:
 
     reaper that runs in the main loop tick.'
   acceptance_criteria:
+  - 'File exists: src/bob/run_loop.py'
   - 'Function defined: bob.run_loop.sweep_orphan_subagents'
-  - 'Function defined: bob.run_loop._run_locked'
   - 'pytest: tests/test_final_reaper_sweep_on_exit.py'
   - 'integration: bob.run_loop'
   - 'pytest: tests/test_final_reaper_sweep_on_orchestrator_exit_boundary.py — empty, zero, or minimum
@@ -2847,7 +2862,6 @@ features:
     If still not found, hard-fail as today. Mirror F-R7-582 pattern.'
   acceptance_criteria:
   - 'Function defined: bob.enhanced_verification.fuzzy_function_lookup'
-  - 'Function defined: bob.enhanced_verification.verify_structural_ac'
   - 'pytest: tests/test_structural_ac_fuzzy_fallback.py'
   - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_structural_ac_fuzzy_function_lookup_fallback_boundary.py — empty, zero, or minimum
@@ -2888,8 +2902,9 @@ features:
 
     with a WARNING record. Mirror F-R7-582 / F-R7-577 / F-R7-588 pattern.'
   acceptance_criteria:
-  - 'File exists: src/bob/enhanced_verification.py'
-  - 'Function defined: bob.enhanced_verification.demote_cross_feature_policy_ac'
+  - 'File exists: src/bob/policy_ac_demotion.py'
+  - 'Function defined: bob.policy_ac_demotion.is_cross_feature_policy_ac'
+  - 'Function defined: bob.policy_ac_demotion.demote_cross_feature_ac'
   - 'pytest: tests/test_policy_ac_demotion.py'
   - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_policy_ac_demotion_for_cross_feature_reference_acs_boundary.py — empty, zero,
@@ -2916,10 +2931,9 @@ features:
     \ content\n(regex: ['\"]\\s*\\n\\s*['\"] → ''). Token-order fallback demotes to WARNING +\nPASS when\
     \ all whitespace tokens are present in order. Mirror F-R7-582 /\nF-R7-588 / F-R7-589 pattern."
   acceptance_criteria:
-  - 'File exists: src/bob/orchestrator/enhanced_verification.py'
-  - 'Function defined: bob.orchestrator.enhanced_verification.check_structural_log_line_ac'
-  - 'pytest: tests/test_structural_log_line_ac.py'
-  - 'integration: bob.orchestrator.enhanced_verification'
+  - 'Function defined: bob.enhanced_verification.check_structural_log_line'
+  - 'pytest: tests/test_structural_log_line_handler.py'
+  - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_structural_log_line_ac_handler_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_structural_log_line_ac_handler_error.py — invalid input raises ValueError and
@@ -2942,9 +2956,10 @@ features:
     \ src/**/*.py substring grep. PASS when must-string\npresent AND forbid-string absent. WARNING-log\
     \ the demotion."
   acceptance_criteria:
-  - 'Function defined: enhanced_verification.check_behavior_quoted_substring'
+  - 'File exists: src/bob/enhanced_verification.py'
+  - 'Function defined: bob.enhanced_verification.verify_behavior_quoted_substring'
   - 'pytest: tests/test_behavior_quoted_substring.py'
-  - 'integration: enhanced_verification'
+  - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_behavior_ac_quoted_substring_must_mention_must_not_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_behavior_ac_quoted_substring_must_mention_must_not_error.py — invalid input raises
@@ -2986,10 +3001,10 @@ features:
 
     defers verification to the gen that CAN verify it.'
   acceptance_criteria:
-  - 'Function defined: bob.enhanced_verification.VERIFIER_EXTENSION_MODULES'
-  - 'Function defined: bob.run_loop.classify_verifier_extension_failure'
-  - 'pytest: tests/test_pending_successor_verify.py'
-  - 'integration: bob.run_loop'
+  - 'File exists: src/bob/successor_verify.py'
+  - 'Function defined: bob.successor_verify.should_defer_to_successor'
+  - 'Function defined: bob.successor_verify.reconcile_pending_successor'
+  - 'pytest: tests/test_successor_verify.py'
   - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_successor_gen_verification_handoff_boundary.py — empty, zero, or minimum input
     returns a well-defined result rather than raising (boundary case)'
@@ -3011,11 +3026,11 @@ features:
     \ path (declared via plan stage), the\nextractor MUST reject any AC line starting with 'behavior:'\
     \ and emit a\nwarning suggesting the structural or integration form."
   acceptance_criteria:
-  - 'File exists: src/hippy/spec_extraction.py'
-  - 'Function defined: hippy.spec_extraction.reject_behavior_ac_for_verifier_extension'
-  - 'Function defined: hippy.spec_extraction.is_verifier_extension_target'
-  - 'pytest: tests/test_ac_discipline_verifier_extension.py'
-  - 'integration: spec_extractor'
+  - 'File exists: src/hippy/verifier_extension_ac_discipline.py'
+  - 'Function defined: hippy.verifier_extension_ac_discipline.reject_behavior_acs_for_verifier_extensions'
+  - 'Function defined: hippy.verifier_extension_ac_discipline.is_verifier_extension_target'
+  - 'pytest: tests/test_verifier_extension_ac_discipline.py'
+  - 'integration: hippy.spec_extractor'
   - 'pytest: tests/test_ac_discipline_rule_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
   - 'pytest: tests/test_ac_discipline_rule_error.py — invalid input raises ValueError and the function
@@ -3038,10 +3053,10 @@ features:
     \ 'F-R7-594'.\n\nSafe: real missing-script bugs still fail (file doesn't exist OR mode is\nnot 0o755).\
     \ Non-script integration ACs continue down the existing\npytest path (regression guard)."
   acceptance_criteria:
-  - 'File exists: src/bob/integration_shell_script_demoter.py'
-  - 'Function defined: bob.integration_shell_script_demoter.is_executable_shell_script_integration'
-  - 'pytest: tests/test_integration_shell_script_demoter.py'
-  - 'integration: bob.verification.integration_ac_resolver'
+  - 'File exists: src/hippy/integration_ac_shell_handler.py'
+  - 'Function defined: hippy.integration_ac_shell_handler.demote_shell_integration_ac'
+  - 'pytest: tests/test_integration_ac_shell_handler.py'
+  - 'integration: bob.integration_shell_script_demoter'
   - 'pytest: tests/test_pattern_9_boundary.py — empty, zero, or minimum input returns a well-defined result
     rather than raising (boundary case)'
   - 'pytest: tests/test_pattern_9_error.py — invalid input raises ValueError and the function does not
@@ -3080,7 +3095,8 @@ features:
     generation late — no closure regressions."
   acceptance_criteria:
   - 'File exists: src/bob/pending_successor_verify.py'
-  - 'Function defined: bob.pending_successor_verify.detect_verifier_self_reference'
+  - 'Function defined: bob.pending_successor_verify.scan_for_verifier_self_reference'
+  - 'Function defined: bob.pending_successor_verify.defer_to_successor'
   - 'pytest: tests/test_pending_successor_verify.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_pending_successor_verify_boundary.py — empty, zero, or minimum input returns a
@@ -3111,15 +3127,16 @@ features:
     \ un-defer or close\nanything. False-positives just push a feature one gen forward\n(no regression\
     \ vs current behavior, which would have failed it\nanyway). False-negatives reduce to the v.28 ceiling."
   acceptance_criteria:
-  - 'File exists: src/bob/enhanced_verification.py'
-  - 'Function defined: bob.enhanced_verification.scan_ac_for_verifier_tokens'
-  - 'Function defined: bob.enhanced_verification.mark_pending_successor_verify'
-  - 'pytest: tests/test_pending_successor_verify_detection.py'
+  - 'File exists: src/bob/pending_successor_verify.py'
+  - 'Function defined: bob.pending_successor_verify.scan_acs_for_verifier_tokens'
+  - 'Function defined: bob.pending_successor_verify.should_defer_successor_verify'
+  - 'pytest: tests/test_pending_successor_verify.py'
   - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_pending_successor_verify_boundary.py — empty, zero, or minimum input returns a
     well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_pending_successor_verify_error.py — invalid input raises ValueError and the function
     does not silently succeed (error path)'
+  - 'File exists: src/bob/enhanced_verification.py'
   permanent_forward_carry: true
 - key: F-R7-597
   title: Evaluator-MCP transient cert/conn crashes — classify as retryable, not feature-failure
@@ -3150,14 +3167,16 @@ features:
     \ on the explicit\nMCP-transient token set; any other evaluator failure (real test\nregression, real\
     \ rubric rejection) is untouched."
   acceptance_criteria:
-  - 'Function defined: bob.run_loop.classify_evaluator_mcp_transient'
-  - 'File exists: src/bob/run_loop.py'
+  - 'File exists: src/bob/evaluator_mcp_transient.py'
+  - 'Function defined: bob.evaluator_mcp_transient.classify_evaluator_failure'
+  - 'Function defined: bob.evaluator_mcp_transient.is_mcp_transient'
   - 'pytest: tests/test_evaluator_mcp_transient.py'
   - 'integration: bob.run_loop'
   - 'pytest: tests/test_evaluator_mcp_transient_cert_conn_crashes_boundary.py — empty, zero, or minimum
     input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_evaluator_mcp_transient_cert_conn_crashes_error.py — invalid input raises ValueError
     and the function does not silently succeed (error path)'
+  - 'File exists: src/bob/run_loop.py'
   permanent_forward_carry: true
 - key: F-R7-598
   title: _final_exit_sweep — check disk_reconciler BEFORE flipping orphan-executing to failed
@@ -3182,6 +3201,7 @@ features:
     \ end of sweep.\n\nSafety: only PROMOTES on disk evidence — never silences a failure.\nIf reconciler\
     \ can't satisfy ACs, behavior is unchanged."
   acceptance_criteria:
+  - 'File exists: src/bob/run_loop.py'
   - 'Function defined: bob.run_loop._final_exit_sweep'
   - 'pytest: tests/test_final_exit_sweep.py'
   - 'integration: bob.run_loop'
@@ -3189,7 +3209,6 @@ features:
     result rather than raising (boundary case)'
   - 'pytest: tests/test_final_exit_sweep_error.py — invalid input raises ValueError and the function does
     not silently succeed (error path)'
-  - 'File exists: src/bob/run_loop.py'
   - 'File exists: src/bob/verification/ac_artifact_check.py'
   permanent_forward_carry: true
 - key: F-R7-599
@@ -3211,10 +3230,10 @@ features:
     \ BF-4 (Localizer) and\nBF-5 (Resurrection); they read survey.db."
   acceptance_criteria:
   - 'File exists: src/bob/brownfield/survey.py'
+  - 'Function defined: bob.brownfield.survey.survey_repo'
   - 'Function defined: bob.brownfield.survey.compute_pagerank'
-  - 'Function defined: bob.brownfield.survey.scan_implicit_features'
-  - 'CLI command: survey --refresh'
   - 'pytest: tests/test_brownfield_survey.py'
+  - 'integration: bob.cli'
   - 'pytest: tests/test_bf_1_boundary.py — empty, zero, or minimum input returns a well-defined result
     rather than raising (boundary case)'
   - 'pytest: tests/test_bf_1_error.py — invalid input raises ValueError and the function does not silently
@@ -3240,7 +3259,7 @@ features:
   - 'Function defined: bob.brownfield.localizer.localize'
   - 'Function defined: bob.brownfield.localizer.check_disjointness'
   - 'pytest: tests/test_localizer.py'
-  - 'integration: bob.brownfield.survey'
+  - 'integration: bob.brownfield'
   - 'pytest: tests/test_bf_4_boundary.py — empty, zero, or minimum input returns a well-defined result
     rather than raising (boundary case)'
   - 'pytest: tests/test_bf_4_error.py — invalid input raises ValueError and the function does not silently
@@ -3268,8 +3287,8 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/acceptance/kinds.py'
   - 'Function defined: bob.acceptance.kinds.characterization'
-  - 'pytest: tests/acceptance/test_characterization_kind.py'
-  - 'integration: bob.acceptance.disk_reconciler'
+  - 'pytest: tests/test_bf_6_characterization_ac.py'
+  - 'integration: bob.disk_reconciler'
   - 'pytest: tests/test_bf_6_boundary.py — empty, zero, or minimum input returns a well-defined result
     rather than raising (boundary case)'
   - 'pytest: tests/test_bf_6_error.py — invalid input raises ValueError and the function does not silently
@@ -3297,7 +3316,7 @@ features:
   - 'Function defined: bob.brownfield.patch_planner.emit_diff_plan'
   - 'Function defined: bob.brownfield.patch_planner.apply_diff_plan'
   - 'pytest: tests/test_patch_planner.py'
-  - 'integration: bob.coordinator'
+  - 'integration: bob.brownfield'
   - 'pytest: tests/test_bf_7_boundary.py — empty, zero, or minimum input returns a well-defined result
     rather than raising (boundary case)'
   - 'pytest: tests/test_bf_7_error.py — invalid input raises ValueError and the function does not silently
@@ -3324,9 +3343,9 @@ features:
     \ None}\n 5. Changing the thinking flag MUST go via a fresh subagent\n (invalidates messages cache;\
     \ explicitly logged)."
   acceptance_criteria:
-  - 'File exists: .claude/hooks/context_budget.py'
-  - 'Function defined: context_budget.main'
-  - 'File exists: .claude/hooks/extended_thinking_classifier.py'
+  - 'File exists: src/bob/hooks/context_budget.py'
+  - 'Function defined: bob.extended_thinking_classifier.classify_extended_thinking'
+  - 'Function defined: bob.extended_thinking.thinking_kwargs'
   - 'pytest: tests/test_context_budget.py'
   - 'integration: claude_code.settings'
   - 'pytest: tests/test_bf_8_boundary.py — empty, zero, or minimum input returns a well-defined result
@@ -3354,7 +3373,7 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/agents/roles.py'
   - 'Function defined: bob.agents.roles.researcher_prompt'
-  - 'Function defined: bob.agents.roles.run_researcher'
+  - 'Function defined: bob.agents.researcher.run_researcher'
   - 'pytest: tests/test_researcher_role.py'
   - 'integration: bob.agents.roles'
   - 'pytest: tests/test_bf_2_boundary.py — empty, zero, or minimum input returns a well-defined result
@@ -3385,7 +3404,7 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/brownfield/elicit.py'
   - 'Function defined: bob.brownfield.elicit.BrownfieldIntent'
-  - 'Function defined: bob.brownfield.elicit.extract_intent'
+  - 'Function defined: bob.brownfield.elicit.score_ambiguity'
   - 'Function defined: bob.brownfield.elicit.clarification_gate'
   - 'pytest: tests/test_elicit.py'
   - 'integration: bob.orchestrator.run_loop'
@@ -3416,7 +3435,7 @@ features:
   - 'File exists: src/bob/brownfield/resurrection.py'
   - 'Function defined: bob.brownfield.resurrection.detect_partial_work'
   - 'Function defined: bob.brownfield.resurrection.write_resurrection_report'
-  - 'pytest: tests/brownfield/test_resurrection.py'
+  - 'pytest: tests/test_resurrection.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_bf_5_boundary.py — empty, zero, or minimum input returns a well-defined result
     rather than raising (boundary case)'
@@ -3452,7 +3471,7 @@ features:
     \ will keep relying on F-R7-598 as the sole net."
   acceptance_criteria:
   - 'Function defined: bob.run_loop.classify_mcp_transient_pre_hook'
-  - 'pytest: tests/test_r7_607_classifier_precedence_hoist.py'
+  - 'pytest: tests/test_f_r7_597_pre_hook_classifier.py'
   - 'integration: bob.run_loop'
   - 'pytest: tests/test_f_r7_597_ordering_fix_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
@@ -3525,10 +3544,11 @@ features:
     \ a stronger AC.\n - Cost: 1 extra test run per feature. Worth it.\n\nAll four wired through src/bob/dispatch.py\
     \ worker-spawn path.\nAll four toggleable via feature YAML (defaults ON)."
   acceptance_criteria:
-  - 'Function defined: bob.dispatch.build_repo_tree'
-  - 'Function defined: bob.dispatch.select_edit_mode'
-  - 'Function defined: bob.dispatch.mutation_pass_check'
-  - 'pytest: tests/test_swebench_cheap_wins.py'
+  - 'File exists: src/bob/swe_bench_cheap_wins.py'
+  - 'Function defined: bob.swe_bench_cheap_wins.build_repo_tree'
+  - 'Function defined: bob.swe_bench_cheap_wins.select_edit_mode'
+  - 'Function defined: bob.swe_bench_cheap_wins.mutation_pass_check'
+  - 'pytest: tests/test_swe_bench_cheap_wins.py'
   - 'integration: bob.dispatch'
   - 'pytest: tests/test_swe_bench_cheap_wins_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
@@ -3557,10 +3577,9 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/brownfield/search_subagent.py'
   - 'Function defined: bob.brownfield.search_subagent.locate_candidates'
-  - 'Function defined: bob.brownfield.multi_candidate.judge_and_select'
+  - 'Function defined: bob.brownfield.search_subagent.multi_candidate_patch'
   - 'pytest: tests/test_search_subagent.py'
-  - 'pytest: tests/test_multi_candidate.py'
-  - 'integration: bob.brownfield.localizer'
+  - 'integration: bob.brownfield'
   - 'pytest: tests/test_search_subagent_pattern_warpgrep_multi_candidate_p_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_search_subagent_pattern_warpgrep_multi_candidate_p_error.py — invalid input raises
@@ -3597,10 +3616,10 @@ features:
     \ three duplicative features."
   acceptance_criteria:
   - 'File exists: src/bob/brownfield/survey.py'
-  - 'Function defined: bob.brownfield.resurrection.graveyard_signal'
+  - 'Function defined: bob.brownfield.resurrection.graveyard_pr_signal'
   - 'Function defined: bob.brownfield.elicit.branch_into_candidates'
-  - 'pytest: tests/test_brownfield_scope_correction.py'
   - 'integration: bob.brownfield.survey'
+  - 'pytest: tests/test_brownfield_scope_correction.py'
   - 'pytest: tests/test_brownfield_scope_correction_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_brownfield_scope_correction_error.py — invalid input raises ValueError and the
@@ -3631,10 +3650,9 @@ features:
     \ that\nsurfaces a fixable-by-disk-state feature wastes a feature slot\nand a /loop tick. F-R7-598\
     \ closed the orphan path; this closes\nthe symmetric verification path."
   acceptance_criteria:
-  - 'Function defined: bob.disk_reconciler.reconcile_from_disk'
-  - 'Function defined: bob.run_loop.promote_on_verify_fail_from_disk'
-  - 'integration: bob.run_loop'
-  - 'pytest: tests/test_verify_fail_disk_promote.py'
+  - 'Function defined: bob.run_loop.reconcile_from_disk'
+  - 'pytest: tests/test_verify_fail_disk_promotion.py'
+  - 'integration: bob.disk_reconciler'
   - 'pytest: tests/test_extend_disk_reconciler_promotion_to_verification_f_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_extend_disk_reconciler_promotion_to_verification_f_error.py — invalid input raises
@@ -3684,10 +3702,10 @@ features:
     \ attack\nsurface — five generations of features die from upstream\ntransport crashes they didn't\
     \ cause and were never given\na fair retry on."
   acceptance_criteria:
-  - 'Function defined: bob.run_loop.is_transport_transient_crash'
-  - 'Function defined: bob.run_loop.read_startup_crash_exempt_count'
-  - 'Function defined: bob.run_loop.increment_startup_crash_exempt_count'
-  - 'pytest: tests/test_subagent_startup_crash_exempt.py'
+  - 'File exists: src/bob/subagent_startup_crash_exemption.py'
+  - 'Function defined: bob.subagent_startup_crash_exemption.classify_startup_crash_exemption'
+  - 'Function defined: bob.subagent_startup_crash_exemption.track_exempt_count'
+  - 'pytest: tests/test_subagent_startup_crash_exemption.py'
   - 'integration: bob.run_loop'
   - 'pytest: tests/test_sub_agent_startup_crash_exempt_from_retry_budget_boundary.py — empty, zero, or
     minimum input returns a well-defined result rather than raising (boundary case)'
@@ -3748,9 +3766,9 @@ features:
     \ Add 2 integration ACs naming pytest test functions\n - Remove own-id token from existing structural\
     \ ACs\n\nEmits same JSON via --json flag for programmatic consumption."
   acceptance_criteria:
+  - 'File exists: src/bob/cli/explain_gate_block.py'
+  - 'Function defined: bob.cli.explain_gate_block.explain_gate_block'
   - 'CLI command: bob explain-gate-block'
-  - 'Function defined: bob.explain_gate_block.explain_gate_block'
-  - 'File exists: src/bob/explain_gate_block.py'
   - 'pytest: tests/test_explain_gate_block.py'
   - 'integration: bob.enhanced_verification'
   - 'pytest: tests/test_bob_explain_gate_block_cli_boundary.py — empty, zero, or minimum input returns
@@ -3776,10 +3794,9 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/extract_from_peas.py'
   - 'Function defined: bob.extract_from_peas.extract_from_peas'
-  - 'Function defined: bob.extract_from_peas.parse_peas_markdown'
   - 'CLI command: bob extract-from-peas'
   - 'pytest: tests/test_extract_from_peas.py'
-  - 'integration: bob.cli'
+  - 'integration: bob.score_gate_loop'
   - 'pytest: tests/test_peas_pipeline_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
   - 'pytest: tests/test_peas_pipeline_error.py — invalid input raises ValueError and the function does
@@ -3819,10 +3836,10 @@ features:
 
     live process, only manual SQL reset unblocked it.'
   acceptance_criteria:
-  - 'File exists: src/orchestrator/stuck_executing_reaper.py'
-  - 'Function defined: orchestrator.stuck_executing_reaper.reap_stuck_executing'
+  - 'File exists: src/bob/stuck_executing_reaper.py'
+  - 'Function defined: bob.stuck_executing_reaper.reap_stuck_executing'
   - 'pytest: tests/test_stuck_executing_reaper.py'
-  - 'integration: orchestrator.run_loop'
+  - 'integration: bob.supervisor_loop'
   - 'pytest: tests/test_stuck_executing_reaper_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
   - 'pytest: tests/test_stuck_executing_reaper_error.py — invalid input raises ValueError and the function
@@ -3853,7 +3870,7 @@ features:
   - 'File exists: src/bob/ac_form_validator.py'
   - 'Function defined: bob.ac_form_validator.validate_acceptance_criteria'
   - 'pytest: tests/test_ac_form_validator.py'
-  - 'integration: bob.plan'
+  - 'integration: bob.cli'
   - 'pytest: tests/test_ac_form_validator_at_planning_time_boundary.py — empty, zero, or minimum input
     returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_ac_form_validator_at_planning_time_error.py — invalid input raises ValueError
@@ -3886,9 +3903,10 @@ features:
 
     surface phantom in-flight work.'
   acceptance_criteria:
-  - 'File exists: src/bob/zombie_sub_agent_runs_reaper.py'
-  - 'Function defined: bob.zombie_sub_agent_runs_reaper.reap_zombie_sub_agent_runs'
-  - 'pytest: tests/test_zombie_sub_agent_runs_reaper.py'
+  - 'File exists: src/bob/zombie_subagent_reaper.py'
+  - 'Function defined: bob.zombie_subagent_reaper.reap_zombie_subagent_runs'
+  - 'pytest: tests/test_zombie_subagent_reaper.py'
+  - 'integration: bob.db'
   - 'pytest: tests/test_zombie_sub_agent_runs_reaper_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_zombie_sub_agent_runs_reaper_error.py — invalid input raises ValueError and the
@@ -3927,8 +3945,8 @@ features:
 
     (extracted from `pytest:` ACs) instead of the suite root.'
   acceptance_criteria:
-  - 'Function defined: superpowers.build_scoped_pytest_command'
-  - 'pytest: tests/test_superpowers_scoped_verification.py'
+  - 'Function defined: superpowers.build_scoped_verification_section'
+  - 'pytest: tests/test_subagent_scoped_pytest_verification.py'
   - 'integration: superpowers'
   - 'pytest: tests/test_subagent_self_verification_must_use_scoped_pytest__boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -3966,7 +3984,8 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/orchestrator/periodic_resume_scan.py'
   - 'Function defined: bob.orchestrator.periodic_resume_scan.periodic_resume_scan'
-  - 'pytest: tests/test_periodic_resume_picks_up_interrupted_mid_run.py'
+  - 'Function defined: bob.orchestrator.periodic_resume_scan.promote_interrupted_rows'
+  - 'pytest: tests/test_periodic_resume_scan.py'
   - 'integration: bob.orchestrator.run_loop'
   - 'pytest: tests/test_periodic_resume_scan_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
@@ -3998,10 +4017,10 @@ features:
 
     flag on the feature record) that bypasses the gate.'
   acceptance_criteria:
-  - 'File exists: src/bob/spec_quality_gate_allowlist.py'
-  - 'Function defined: bob.spec_quality_gate_allowlist.is_permanent_forward_carry'
-  - 'Function defined: bob.spec_quality_gate_allowlist.bypass_quality_gate'
-  - 'pytest: tests/test_spec_quality_gate_allowlist.py'
+  - 'File exists: src/bob/spec_quality_gate_permanent_carry_allowlist.py'
+  - 'Function defined: bob.spec_quality_gate_permanent_carry_allowlist.is_permanent_forward_carry'
+  - 'Function defined: bob.spec_quality_gate_permanent_carry_allowlist.bypass_quality_gate'
+  - 'pytest: tests/test_spec_quality_gate_permanent_carry_allowlist.py'
   - 'integration: bob.spec_quality_gate'
   - 'pytest: tests/test_spec_quality_gate_permanent_carry_allowlist_boundary.py — empty, zero, or minimum
     input returns a well-defined result rather than raising (boundary case)'
@@ -4048,9 +4067,8 @@ features:
     gate_passed, gate_failed, gate_avg_attempts in the return dict.'
   acceptance_criteria:
   - 'File exists: src/bob/spec_synthesizer.py'
-  - 'Function defined: bob.spec_synthesizer.sanitize_spec_file'
   - 'Function defined: bob.spec_synthesizer.score_gate_loop'
-  - 'pytest: tests/test_spec_synthesizer_score_gate.py'
+  - 'pytest: tests/test_spec_synthesizer_score_gate_loop.py'
   - 'integration: tools.spec_quality_score'
   - 'pytest: tests/test_spec_synthesizer_score_gate_loop_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
@@ -4103,10 +4121,10 @@ features:
     exemptions before falling through to the original path.'
   acceptance_criteria:
   - 'File exists: src/bob/startup_crash_exempt.py'
-  - 'Function defined: bob.startup_crash_exempt.is_startup_crash_exempt'
+  - 'Function defined: bob.startup_crash_exempt.is_transport_crash_exempt'
   - 'Function defined: bob.startup_crash_exempt.count_persisted_artifacts'
   - 'pytest: tests/test_startup_crash_exempt.py'
-  - 'integration: bob.rca_classifier'
+  - 'integration: bob.startup_crash_exempt'
   - 'pytest: tests/test_sub_agent_startup_crash_exempt_from_retry_budget_boundary.py — empty, zero, or
     minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_sub_agent_startup_crash_exempt_from_retry_budget_error.py — invalid input raises
@@ -4195,10 +4213,11 @@ features:
 
     env value, not 500.'
   acceptance_criteria:
+  - 'Function defined: bob.models.resolve_max_cost_usd'
   - 'Function defined: bob.db.create_project'
+  - 'pytest: tests/test_per_project_cost_cap_env_overridable.py'
+  - 'integration: bob.db'
   - 'integration: bob.models'
-  - 'pytest: tests/test_max_cost_env_override.py'
-  - 'CLI command: bob init'
   - 'pytest: tests/test_per_project_cost_cap_must_be_env_overridable_and_d_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_per_project_cost_cap_must_be_env_overridable_and_d_error.py — invalid input raises
@@ -4325,8 +4344,7 @@ features:
 
     observable and not silent.'
   acceptance_criteria:
-  - 'File exists: src/bob/spec_synthesizer.py'
-  - 'File exists: src/bob/enhanced_verification.py'
+  - 'File exists: src/bob/function_name_equivalence.py'
   - 'pytest: tests/test_function_name_equivalence.py'
   - 'integration: bob.spec_synthesizer'
   - 'integration: bob.enhanced_verification'
@@ -4405,9 +4423,8 @@ features:
 
     observable.'
   acceptance_criteria:
-  - 'File exists: src/bob/run_loop.py'
   - 'Function defined: bob.run_loop.find_next_ready_feature'
-  - 'pytest: tests/test_run_loop_concurrent_batch.py'
+  - 'pytest: tests/test_concurrent_batch_builder.py'
   - 'integration: bob.run_loop'
   - 'pytest: tests/test_concurrent_batch_builder_must_claim_the_first_feat_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -4460,7 +4477,7 @@ features:
     both ACs.'
   acceptance_criteria:
   - 'Function defined: bob.spec_synthesizer._derive_canonical_slug'
-  - 'pytest: tests/test_derive_canonical_slug_length_cap.py'
+  - 'pytest: tests/test_derived_module_slug_length_cap.py'
   - 'integration: bob.spec_synthesizer'
   - 'pytest: tests/test_derived_module_slug_must_be_length_capped_boundary.py — empty, zero, or minimum
     input returns a well-defined result rather than raising (boundary case)'
@@ -4532,9 +4549,8 @@ features:
     the real one.'
   acceptance_criteria:
   - 'Function defined: bob.db.create_agent_run'
-  - 'Function defined: bob.db.connect'
-  - 'pytest: tests/test_create_agent_run_db_path.py'
-  - 'integration: bob.synthesizer'
+  - 'pytest: tests/test_create_agent_run_project_db.py'
+  - 'integration: bob.db'
   - 'pytest: tests/test_create_agent_run_must_write_to_the_project_s_datab_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_create_agent_run_must_write_to_the_project_s_datab_error.py — invalid input raises
@@ -4617,10 +4633,11 @@ features:
 
     and reason so transient-upstream bursts are observable, not silent.'
   acceptance_criteria:
-  - 'Function defined: bob.spec_synthesizer.synthesize_for_feature'
-  - 'Function defined: bob.spec_synthesizer.score_gate_loop'
-  - 'pytest: tests/test_spec_synthesizer_retry.py'
-  - 'integration: bob.spec_synthesizer'
+  - 'File exists: src/bob/synth_retry.py'
+  - 'Function defined: bob.synth_retry.synthesize_for_feature'
+  - 'Function defined: bob.synth_retry.score_gate_loop'
+  - 'pytest: tests/test_synth_retry.py'
+  - 'integration: bob.synth_retry'
   - 'pytest: tests/test_spec_synthesizer_must_retry_on_transient_upstream__boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_spec_synthesizer_must_retry_on_transient_upstream__error.py — invalid input raises
@@ -4685,11 +4702,11 @@ features:
 
     they are specific, not generic boilerplate.'
   acceptance_criteria:
-  - 'File exists: src/bob/synthesizer_boundary_error_injector.py'
-  - 'Function defined: bob.criteria_parser.parse_criteria_response'
-  - 'Function defined: bob.synthesizer_boundary_error_injector.inject_boundary_and_error_acs'
-  - 'pytest: tests/test_synthesizer_boundary_error_injector.py'
-  - 'integration: bob.synthesizer'
+  - 'File exists: src/bob/spec_synthesizer.py'
+  - 'Function defined: bob.spec_synthesizer.parse_criteria_response'
+  - 'Function defined: bob.spec_synthesizer.inject_boundary_and_error_acs'
+  - 'pytest: tests/test_spec_synthesizer_coverage.py'
+  - 'integration: bob.spec_synthesizer'
   - 'pytest: tests/test_synthesizer_must_guarantee_boundary_error_path_ac__boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_synthesizer_must_guarantee_boundary_error_path_ac__error.py — invalid input raises
@@ -4755,7 +4772,7 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/spec_synthesizer.py'
   - 'Function defined: bob.spec_synthesizer.score_gate_loop'
-  - 'pytest: tests/test_spec_synthesizer_scorer_import.py'
+  - 'pytest: tests/test_score_gate_loop_scorer_import.py'
   - 'integration: bob.spec_synthesizer'
   - 'pytest: tests/test_score_gate_loop_must_import_the_spec_quality_score_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -4810,10 +4827,11 @@ features:
 
     AC so the composite can exceed 0.0.'
   acceptance_criteria:
-  - 'Function defined: bob.synthesizer.deterministic_fallback'
-  - 'Function defined: bob.synthesizer._ensure_boundary_and_error_coverage'
-  - 'pytest: tests/test_deterministic_fallback_boundary_error_coverage.py'
-  - 'integration: bob.synthesizer'
+  - 'File exists: src/bob/deterministic_fallback.py'
+  - 'Function defined: bob.deterministic_fallback.deterministic_fallback'
+  - 'Function defined: bob.deterministic_fallback._ensure_boundary_and_error_coverage'
+  - 'pytest: tests/test_deterministic_fallback_boundary_error_acs.py'
+  - 'integration: bob.spec_synthesizer'
   - 'pytest: tests/test_deterministic_fallback_must_also_carry_boundary_er_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_deterministic_fallback_must_also_carry_boundary_er_error.py — invalid input raises
@@ -4854,10 +4872,9 @@ features:
 
     boundaries, prose-only) so injection and scoring never disagree.'
   acceptance_criteria:
-  - 'File exists: src/hippy/spec_synthesis.py'
-  - 'Function defined: hippy.spec_synthesis._ensure_boundary_and_error_coverage'
-  - 'pytest: tests/test_boundary_error_coverage_word_boundary.py'
-  - 'integration: hippy.spec_synthesis'
+  - 'Function defined: bob.spec_synthesis._ensure_boundary_and_error_coverage'
+  - 'pytest: tests/test_boundary_error_coverage_word_boundaries.py'
+  - 'integration: bob.spec_synthesis'
   - 'pytest: tests/test_boundary_error_coverage_detection_must_use_word_bo_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_boundary_error_coverage_detection_must_use_word_bo_error.py — invalid input raises
@@ -4921,15 +4938,17 @@ features:
 
     duplicate paths are not double-added.'
   acceptance_criteria:
-  - 'File exists: tools/spec_quality_score.py'
+  - 'File exists: src/bob/spec_synthesis.py'
+  - 'Function defined: bob.spec_synthesis.emit_file_exists_acs_for_described_paths'
   - 'Function defined: tools.spec_quality_score._contract_completeness'
-  - 'pytest: tests/test_contract_completeness.py'
+  - 'pytest: tests/test_file_exists_ac_synthesis.py'
   - 'integration: tools.spec_quality_score'
   - 'pytest: tests/test_synthesizer_must_emit_file_exists_acs_for_py_paths_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_synthesizer_must_emit_file_exists_acs_for_py_paths_error.py — invalid input raises
     ValueError and the function does not silently succeed (error path)'
   - 'File exists: src/bob/brownfield/survey.py'
+  - 'File exists: tools/spec_quality_score.py'
   permanent_forward_carry: true
 - key: F-R7-630
   title: Scorer API-surface detection MUST reject all-caps prose placeholders — 'def NAME(...)' templates
@@ -4963,7 +4982,7 @@ features:
     treated as real symbols requiring AC coverage.'
   acceptance_criteria:
   - 'Function defined: tools.spec_quality_score._is_code_identifier'
-  - 'pytest: tests/test_spec_quality_score_identifier.py'
+  - 'pytest: tests/test_scorer_api_surface_rejects_allcaps_placeholders.py'
   - 'integration: tools.spec_quality_score'
   - 'pytest: tests/test_scorer_api_surface_detection_must_reject_all_caps__boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -5026,7 +5045,8 @@ features:
     seconds so chronic slow features are observable.'
   acceptance_criteria:
   - 'File exists: src/bob/feature_timeout.py'
-  - 'Function defined: bob.feature_timeout.enforce_feature_timeout'
+  - 'Function defined: bob.feature_timeout.execute_feature_with_timeout'
+  - 'Function defined: bob.feature_timeout.terminate_process_tree'
   - 'pytest: tests/test_feature_timeout.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_per_feature_execution_must_have_a_hard_wall_clock__boundary.py — empty, zero,
@@ -5092,8 +5112,10 @@ features:
 
     never did for the pre-execution gate.'
   acceptance_criteria:
-  - 'Function defined: bob.orchestrator.resynthesize_gate_blocked_feature'
-  - 'pytest: tests/test_resynthesize_gate_blocked.py'
+  - 'File exists: src/bob/gate_blocked_resynth.py'
+  - 'Function defined: bob.gate_blocked_resynth.resynthesize_gate_blocked_feature'
+  - 'Function defined: bob.gate_blocked_resynth.has_resynthesized'
+  - 'pytest: tests/test_gate_blocked_resynth.py'
   - 'integration: bob.orchestrator'
   - 'pytest: tests/test_gate_blocked_features_must_be_re_synthesized_mid_r_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -5276,10 +5298,11 @@ features:
 
     weakens an existing structural AC.'
   acceptance_criteria:
-  - 'File exists: src/bob/spec_quality/parity_test_anti_cheat.py'
-  - 'Function defined: bob.spec_quality.parity_test_anti_cheat.synthesize_parity_ac'
-  - 'pytest: tests/test_parity_test_anti_cheat.py'
-  - 'integration: bob.spec_quality.synthesizer'
+  - 'File exists: src/hippy/parity_test_anticheat.py'
+  - 'Function defined: hippy.parity_test_anticheat.synthesize_parity_ac'
+  - 'Function defined: hippy.parity_test_anticheat.requires_execution_evidence'
+  - 'pytest: tests/test_parity_test_anticheat.py'
+  - 'integration: hippy.spec_quality'
   - 'pytest: tests/test_parity_test_anti_cheat_boundary.py — empty, zero, or minimum input returns a well-defined
     result rather than raising (boundary case)'
   - 'pytest: tests/test_parity_test_anti_cheat_error.py — invalid input raises ValueError and the function
@@ -5346,10 +5369,10 @@ features:
     implementable-skip ratio.'
   acceptance_criteria:
   - 'File exists: src/bob/skip_ratio_gate.py'
-  - 'Function defined: bob.skip_ratio_gate.emit_skip_ratio_bound'
+  - 'Function defined: bob.skip_ratio_gate.emit_skip_ratio_bound_ac'
   - 'Function defined: bob.skip_ratio_gate.classify_skip_reason'
   - 'pytest: tests/test_skip_ratio_gate.py'
-  - 'integration: bob.synthesizer'
+  - 'integration: bob.spec_synthesizer'
   - 'pytest: tests/test_coverage_gates_must_bound_the_skip_xfail_ratio_boundary.py — empty, zero, or minimum
     input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_coverage_gates_must_bound_the_skip_xfail_ratio_error.py — invalid input raises
@@ -5438,8 +5461,8 @@ features:
     hand-built-with-citation rather than vendor-passthrough.'
   acceptance_criteria:
   - 'File exists: src/bob/capability_probe.py'
-  - 'Function defined: bob.capability_probe.probe_vendor_capability'
-  - 'Function defined: bob.capability_probe.reclassify_infeasible_passthrough'
+  - 'Function defined: bob.capability_probe.verify_library_capability'
+  - 'Function defined: bob.capability_probe.reclassify_absent_capability'
   - 'pytest: tests/test_capability_probe.py'
   - 'integration: bob.spec_extractor'
   - 'pytest: tests/test_spec_extractor_must_verify_vendor_library_capabili_boundary.py — empty, zero,
@@ -5511,11 +5534,11 @@ features:
 
     of the word "all".'
   acceptance_criteria:
-  - 'File exists: src/bob/scope_enumeration_linter.py'
-  - 'Function defined: bob.scope_enumeration_linter.check_scope_enumeration'
-  - 'Function defined: bob.scope_enumeration_linter.has_unbounded_scope_word'
-  - 'pytest: tests/test_scope_enumeration_linter.py'
-  - 'integration: bob.spec_extractor'
+  - 'File exists: src/hippy/scope_resolver.py'
+  - 'Function defined: hippy.scope_resolver.resolve_scope_enumeration'
+  - 'Function defined: hippy.scope_resolver.flag_unbounded_scope'
+  - 'pytest: tests/test_scope_resolver.py'
+  - 'integration: hippy.spec_extractor'
   - 'pytest: tests/test_spec_extractor_must_resolve_comprehensive_full_sco_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_spec_extractor_must_resolve_comprehensive_full_sco_error.py — invalid input raises
@@ -5595,10 +5618,11 @@ features:
 
     create an undispatchable feature.'
   acceptance_criteria:
-  - 'Function defined: extract_from_peas.parse_depends_on'
-  - 'Function defined: extract_from_peas.emit_stub_features'
+  - 'File exists: src/bob/extract_from_peas.py'
+  - 'Function defined: bob.extract_from_peas.parse_depends_on'
+  - 'Function defined: bob.extract_from_peas.emit_stub_features'
   - 'pytest: tests/test_parse_depends_on.py'
-  - 'integration: extract_from_peas'
+  - 'integration: tests.test_f075_create_features_from_spec'
   - 'pytest: tests/test_peas_extractor_must_parse_prose_depends_on_f_xx_nn_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_peas_extractor_must_parse_prose_depends_on_f_xx_nn_error.py — invalid input raises
@@ -5674,6 +5698,7 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/backend_required_check.py'
   - 'Function defined: bob.backend_required_check.check_backend_required'
+  - 'Function defined: bob.backend_required_check.feature_performs_backend_compute'
   - 'pytest: tests/test_backend_required_check.py'
   - 'integration: bob.verification'
   - 'pytest: tests/test_gpu_hip_compute_features_must_actually_use_the_gpu_boundary.py — empty, zero,
@@ -5733,8 +5758,9 @@ features:
 
     back to a full scan only when it yields nothing (clock skew / re-run).'
   acceptance_criteria:
-  - 'Function defined: hippy.verifier.backend_required_check'
-  - 'Function defined: hippy.verifier.has_simulation_admission'
+  - 'File exists: src/hippy/backend_required_check.py'
+  - 'Function defined: hippy.backend_required_check.check_backend_required'
+  - 'Function defined: hippy.backend_required_check.detect_simulation_admission'
   - 'pytest: tests/test_backend_required_scope_and_simulation.py'
   - 'integration: hippy.verifier'
   - 'pytest: tests/test_backend_required_check_must_scope_to_the_feature_s_boundary.py — empty, zero,
@@ -5795,7 +5821,8 @@ features:
   - 'File exists: src/hippy/backend_required_check.py'
   - 'Function defined: hippy.backend_required_check.is_harness_feature'
   - 'Function defined: hippy.backend_required_check.backend_required_check'
-  - 'pytest: tests/test_backend_required_check_harness_exemption.py'
+  - 'pytest: tests/test_backend_required_harness_exemption.py'
+  - 'integration: hippy.backend_required_check'
   - 'pytest: tests/test_backend_required_check_must_exempt_harness_test_in_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_backend_required_check_must_exempt_harness_test_in_error.py — invalid input raises
@@ -5859,10 +5886,11 @@ features:
 
     so the override is a manual escape hatch, not the only path to progress.'
   acceptance_criteria:
-  - 'File exists: src/bob/orchestrator/feature_claim.py'
-  - 'Function defined: bob.orchestrator.feature_claim.claim_next_ready_feature'
+  - 'File exists: src/hippy/readiness_threshold.py'
+  - 'Function defined: hippy.readiness_threshold.resolve_readiness_threshold'
+  - 'Function defined: hippy.readiness_threshold.claim_next_ready_feature'
   - 'pytest: tests/test_readiness_threshold_env_override.py'
-  - 'integration: bob.orchestrator.run_loop'
+  - 'integration: hippy.scheduler'
   - 'pytest: tests/test_readiness_claim_threshold_must_be_env_overridable_boundary.py — empty, zero, or
     minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_readiness_claim_threshold_must_be_env_overridable_error.py — invalid input raises
@@ -5937,10 +5965,11 @@ features:
 
     a CPU simulation cannot produce — prefer it where the runtime exposes it.'
   acceptance_criteria:
-  - 'File exists: src/hippy/checks/backend_required_call_site.py'
-  - 'Function defined: hippy.checks.backend_required_call_site.has_real_call_site'
-  - 'Function defined: hippy.checks.backend_required_call_site.has_simulation_marker'
+  - 'File exists: src/hippy/backend_required_check.py'
+  - 'Function defined: hippy.backend_required_check.has_real_call_site'
+  - 'Function defined: hippy.backend_required_check.check_backend_required'
   - 'pytest: tests/test_backend_required_call_site.py'
+  - 'integration: hippy.backend_required_check'
   - 'pytest: tests/test_backend_required_check_must_verify_a_real_lib_call_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_backend_required_check_must_verify_a_real_lib_call_error.py — invalid input raises
@@ -6017,9 +6046,10 @@ features:
     have saved the entire hippy build from silently faking GPU work.'
   acceptance_criteria:
   - 'File exists: src/hippy/namespace_collision.py'
-  - 'Function defined: hippy.namespace_collision.check_namespace_collisions'
+  - 'Function defined: hippy.namespace_collision.check_namespace_collision'
+  - 'Function defined: hippy.namespace_collision.find_shadowed_distributions'
   - 'pytest: tests/test_namespace_collision.py'
-  - 'integration: conftest'
+  - 'integration: hippy.verification'
   - 'pytest: tests/test_generated_modules_must_not_shadow_a_real_dependenc_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_generated_modules_must_not_shadow_a_real_dependenc_error.py — invalid input raises
@@ -6088,10 +6118,10 @@ features:
     still completes; the crash count is logged but does not reset the agent.'
   acceptance_criteria:
   - 'File exists: src/bob/sdk_transport_retry.py'
-  - 'Function defined: bob.sdk_transport_retry.query_with_transport_retry'
   - 'Function defined: bob.sdk_transport_retry.is_transport_transient'
+  - 'Function defined: bob.sdk_transport_retry.query_with_transport_retry'
   - 'pytest: tests/test_sdk_transport_retry.py'
-  - 'integration: bob.disk_quota'
+  - 'integration: bob.orchestrator'
   - 'pytest: tests/test_sub_agent_transport_crashes_must_be_retried_at_the_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_sub_agent_transport_crashes_must_be_retried_at_the_error.py — invalid input raises
@@ -6134,8 +6164,9 @@ features:
   acceptance_criteria:
   - 'File exists: src/bob/supervisor_loop.py'
   - 'Function defined: bob.supervisor_loop.auto_resume_run'
-  - 'pytest: tests/test_supervisor_loop.py'
-  - 'integration: bob.cli.run'
+  - 'Function defined: bob.supervisor_loop.supervise_run'
+  - 'pytest: tests/test_bob_run_must_auto_resume.py'
+  - 'integration: bob.cli'
   - 'pytest: tests/test_bob_run_must_auto_resume_after_queue_drained_inste_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_bob_run_must_auto_resume_after_queue_drained_inste_error.py — invalid input raises
@@ -6181,11 +6212,11 @@ features:
 
     stability and misplaces code.'
   acceptance_criteria:
-  - 'File exists: src/bob/feature_splitter.py'
-  - 'Function defined: bob.feature_splitter.recommend_split'
-  - 'Function defined: bob.feature_splitter.pin_canonical_package'
+  - 'File exists: src/hippy/feature_splitter.py'
+  - 'Function defined: hippy.feature_splitter.recommend_split'
+  - 'Function defined: hippy.feature_splitter.pin_canonical_package'
   - 'pytest: tests/test_feature_splitter.py'
-  - 'integration: bob.spec_extractor'
+  - 'integration: hippy.spec_extractor'
   - 'pytest: tests/test_oversized_features_must_be_split_at_extraction_so__boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_oversized_features_must_be_split_at_extraction_so__error.py — invalid input raises
@@ -6235,10 +6266,11 @@ features:
     \ are unaffected; with the GPU-backend requirement\ndisabled the behaviour is exactly as before, so\
     \ non-GPU projects and bob's own\nself-build are unaffected."
   acceptance_criteria:
-  - 'File exists: src/hippy/dispatch_facade.py'
-  - 'Function defined: hippy.dispatch_facade.dispatch_launch'
+  - 'File exists: src/hippy/dispatch_coupled_evidence.py'
+  - 'Function defined: hippy.dispatch_coupled_evidence.assert_dispatch_coupled'
+  - 'Function defined: hippy.dispatch_coupled_evidence.record_dispatch_on_success'
   - 'pytest: tests/test_dispatch_coupled_evidence.py'
-  - 'integration: bob.spec_quality_score'
+  - 'integration: hippy.orchestrator'
   - 'pytest: tests/test_gpu_execution_proof_must_be_dispatch_coupled_not_a_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_gpu_execution_proof_must_be_dispatch_coupled_not_a_error.py — invalid input raises
@@ -6290,9 +6322,9 @@ features:
     never as a transport-transient free retry.'
   acceptance_criteria:
   - 'File exists: src/bob/turn_limit_completability.py'
-  - 'Function defined: bob.turn_limit_completability.is_turn_limit_result'
   - 'Function defined: bob.turn_limit_completability.is_transport_transient'
-  - 'pytest: tests/bob/test_turn_limit_completability.py'
+  - 'Function defined: bob.turn_limit_completability.classify_turn_limit_result'
+  - 'pytest: tests/test_turn_limit_completability.py'
   - 'integration: bob.startup_crash_exempt'
   - 'pytest: tests/test_turn_limit_exhaustion_is_a_completability_signal_n_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
@@ -6402,7 +6434,7 @@ features:
   - 'Function defined: hippy.audit_exemptions.get_frozen_exempt_ops'
   - 'Function defined: hippy.audit_exemptions.classify_op_exemption'
   - 'pytest: tests/test_audit_exemption_frozen.py'
-  - 'integration: auditor'
+  - 'integration: hippy.auditor'
   - 'pytest: tests/test_audit_exemption_sets_are_frozen_in_the_spec_boundary.py — empty, zero, or minimum
     input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_audit_exemption_sets_are_frozen_in_the_spec_error.py — invalid input raises ValueError
@@ -6435,11 +6467,11 @@ features:
 
     completed feature never suppresses a distinct pending feature.'
   acceptance_criteria:
-  - 'File exists: src/bob/scheduler.py'
-  - 'Function defined: bob.scheduler.compute_runnable'
-  - 'Function defined: bob.extract.assign_unique_spec_slot'
-  - 'pytest: tests/test_unique_spec_slot.py'
-  - 'integration: bob.superpowers'
+  - 'File exists: src/bob/spec_slot.py'
+  - 'Function defined: bob.spec_slot.assign_unique_spec_slot'
+  - 'Function defined: bob.spec_slot.is_runnable'
+  - 'pytest: tests/test_spec_slot.py'
+  - 'integration: bob.supervisor_loop'
   - 'pytest: tests/test_unique_spec_slot_per_feature_boundary.py — empty, zero, or minimum input returns
     a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_unique_spec_slot_per_feature_error.py — invalid input raises ValueError and the
@@ -6471,8 +6503,791 @@ features:
     THEN collection succeeds because tests/ is a package.'
   acceptance_criteria:
   - 'File exists: tests/__init__.py'
-  - 'pytest: tests/test_tests_package_importable.py'
+  - 'Function defined: bob.skeleton.create_project_skeleton'
+  - 'pytest: tests/test_skeleton_tests_package.py'
+  - 'integration: bob.ablation'
   - 'pytest: tests/test_skeleton_must_create_tests_init_py_so_cross_test_i_boundary.py — empty, zero,
     or minimum input returns a well-defined result rather than raising (boundary case)'
   - 'pytest: tests/test_skeleton_must_create_tests_init_py_so_cross_test_i_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R7-654
+  title: tests_pass MUST be scoped to the feature's own tests, never the whole tree
+  tier: Core
+  priority: high
+  description: 'The verifier''s tests_pass checklist step ran `pytest tests/` across the
+
+    ENTIRE shared workspace suite. In a multi-feature build (and any
+
+    generation seeded from a parent with a large tests/ tree) this causes
+
+    cross-feature contamination: a sibling feature''s in-flight test module
+
+    that imports a not-yet-built module raises an ImportError during
+
+    collection, and any pre-existing flake or partial-feature failure trips
+
+    --maxfail — so EVERY feature''s tests_pass fails regardless of its own
+
+    correctness, mass-marking unrelated features needs_human at attempt 5.
+
+    Observed on the bob96 build: 223 tests_pass failures, all
+
+    "ImportError while importing test module" / "N failed, 0 passed" from
+
+    sibling modules, while each feature''s OWN acceptance_criteria_met passed.
+
+    bob already contains bob.verification.per_feature_test_scope
+
+    (scope_pytest_to_feature) built for exactly this, but _check_tests_pass
+
+    never called it and the checklist never passed feature_id/acs down. Fix
+
+    (bob CODE, STRENGTHENS attribution, lowers no threshold): the tests_pass
+
+    step MUST resolve the feature''s own test paths (its `pytest:` ACs plus
+
+    tests/<feature_id>/) via scope_pytest_to_feature and run pytest ONLY on
+
+    those; fall back to the whole tree solely when no scoped paths exist. The
+
+    per-feature `pytest:` acceptance criteria remain the correctness gate.
+
+    Also: a generation seeded from a parent MUST install the parent''s
+
+    test-only deps (e.g. hypothesis) or those collection errors reappear.
+
+    Behaviour: WHEN a feature declares a `pytest:` acceptance criterion THEN
+
+    tests_pass runs only that feature''s own test paths and a sibling module''s
+
+    collection error cannot fail it.'
+  acceptance_criteria:
+  - 'Function defined: bob.verification.per_feature_test_scope.scope_pytest_to_feature'
+  - 'pytest: tests/test_tests_pass_feature_scope.py'
+  - 'integration: bob.verification.per_feature_test_scope'
+  - 'pytest: tests/test_tests_pass_must_be_scoped_to_the_feature_s_own_tes_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_tests_pass_must_be_scoped_to_the_feature_s_own_tes_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R7-655
+  title: AC path-normalizer MUST strip synthesizer path corruption (file. prefix, leading /)
+  tier: Core
+  priority: high
+  description: 'The AC synthesizer intermittently emits File-exists / pytest path ACs with
+
+    corrupted paths that can NEVER be satisfied, silently NH-ing an otherwise
+
+    COMPLETE feature at attempt 5. Observed on the bob96 build at 147/149: feature
+
+    F-R7-603 got `File exists: file.claude/hooks/context_budget.py` (spurious
+
+    `file.` prefix) and F-R7-626 got `File exists: /src/bob/spec_synthesizer.py`
+
+    (spurious leading `/`) — in BOTH cases the CORRECT workspace-relative path was
+
+    already present as a sibling AC and the real file existed on disk, so the
+
+    feature''s actual work was done; only the bogus-path AC failed. This is the same
+
+    family as F-R7-411 (reachability) and F-R7-654 (grammar). Fix (bob CODE at
+
+    synthesis/extraction time; STRENGTHENS the gate by removing false negatives,
+
+    lowers NO threshold): a path-AC normalizer MUST canonicalize every File-exists
+
+    and pytest path to a workspace-relative form — strip a spurious leading `/`,
+
+    strip a spurious `file.`/`file:` prefix, collapse `<pkg>/src/<pkg>`-style
+
+    duplication, and de-duplicate against existing sibling ACs — BEFORE the AC is
+
+    persisted. A path that does not resolve under the workspace after normalization
+
+    is a synthesis defect to repair, not a feature to fail. Behaviour: WHEN the
+
+    synthesizer emits a File-exists or pytest AC whose path has a `file.`/`file:`
+
+    prefix or a leading `/` THEN the normalizer rewrites it to the canonical
+
+    workspace-relative path and drops it if an equivalent sibling AC already exists.
+
+
+    # ============================================================================
+
+    # R9 SERIES — C++ BROWNFIELD + RCCL/ROCm CAPABILITY (added for bob97)
+
+    # Research: 6-agent Opus cadre + NVIDIA GPU-optimization skill methodology.
+
+    # These give bob first-class C++ code-intelligence (clangd/compile_commands),
+
+    # real compile/ctest/sanitizer verification gates, C++/HIP anti-cheat, and
+
+    # RCCL collective correctness + noise-aware perf + rocprof-compute roofline.
+
+    # ============================================================================'
+  acceptance_criteria:
+  - 'File exists: src/bob/ac_path_normalizer.py'
+  - 'Function defined: bob.ac_path_normalizer.normalize_path_ac'
+  - 'pytest: tests/test_ac_path_normalizer.py'
+  - 'integration: bob.spec_synthesizer'
+  - 'pytest: tests/test_ac_path_normalizer_must_strip_synthesizer_path_cor_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_ac_path_normalizer_must_strip_synthesizer_path_cor_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+  - 'File exists: /src/bob/spec_synthesizer.py'
+  - 'File exists: file.claude/hooks/context_budget.py'
+- key: F-R9-001
+  title: Compilation-database ingestion for C++ brownfield survey
+  tier: Core
+  priority: critical
+  description: 'bob''s BF-1 survey (`src/bob/brownfield/survey.py`) is hardwired to Python: `_SOURCE_EXTENSIONS
+    = {''.py''}`, a `**/*.py` glob, and `_parse_python_file()` on the stdlib `ast` module. A C++ repo
+    like RCCL has none of this and, worse, C++ cannot be parsed correctly without the exact per-translation-unit
+    compile flags (`-I` include dirs, `-D` defines, `-std`, the hipcc/amdclang++ driver). Add a compile-commands-aware
+    survey front end: when the workspace is a CMake project, run the configure step with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`
+    (falling back to `bear -- make` / `intercept-build` for non-CMake builds) to produce `compile_commands.json`,
+    then drive the survey off that database''s `file`/`arguments`/`directory` entries instead of a glob.
+    Each entry names exactly one translation unit and the exact flags needed to parse it; without them,
+    macros and includes cannot resolve and any AST is garbage. bob must persist the per-TU flag set (and
+    a flags-hash) alongside each file in `survey.db` so every downstream stage (localizer, verifier, stub-detector)
+    can re-invoke clang tooling with identical flags, and must key index invalidation on `(path, sha,
+    flags-hash)`. This is the foundational prerequisite on which every other C++ intelligence feature
+    depends.'
+  acceptance_criteria:
+  - 'File exists: src/bob/brownfield/compile_commands.py'
+  - 'Function defined: bob.brownfield.compile_commands.load_compile_commands'
+  - 'Function defined: bob.brownfield.compile_commands.ingest_compilation_database'
+  - 'pytest: tests/test_compile_commands_ingestion.py'
+  - 'integration: bob.brownfield.survey'
+  - 'pytest: tests/test_compilation_database_ingestion_for_c_brownfield_su_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_compilation_database_ingestion_for_c_brownfield_su_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+  - 'File exists: src/bob/brownfield/survey.py'
+  - 'Function defined: _parse_python_file'
+- key: F-R9-002
+  title: clangd/libclang semantic symbol index (C++ survey backend)
+  tier: Core
+  priority: critical
+  description: BF-1 builds its symbol graph with Python `ast` and resolves edges by naive textual name-matching
+    (`name_to_ids.get(base_name)`), which is meaningless for C++ where one name spans many namespaces/overloads
+    and cross-TU resolution requires a real compiler front end (tree-sitter alone cannot resolve overloads,
+    expand RCCL's macro/template machinery, or follow references across TUs). Add a C++ survey backend
+    that drives `clangd-indexer` (or clangd over LSP, or libclang) against `compile_commands.json` to
+    emit a semantic index where each symbol carries a stable clang USR/SymbolID, separate declaration
+    and definition location(s), enclosing namespace/scope, and full signature. Populate bob's existing
+    `survey.db` `symbols`/`edges` tables from this index instead of the ast walker, extending edge kinds
+    to `calls`, `overrides`, `instantiates`, and `includes`. Because clangd resolves references by USR,
+    bob finally gets true cross-TU call graphs — e.g. every caller of `ncclAllReduce` across RCCL's dozens
+    of `.cc` files, which import/inherits-only textual edges can never find. Cache the index and refresh
+    incrementally keyed on the `file_hashes` bob already tracks. Detect availability in preflight (clangd
+    on PATH, `compile_commands.json` present) and fall back to tree-sitter-cpp when absent, keeping BF-1
+    as the greenfield path.
+  acceptance_criteria:
+  - 'File exists: src/bob/survey/clangd_backend.py'
+  - 'Function defined: bob.survey.clangd_backend.build_clangd_index'
+  - 'Function defined: bob.survey.clangd_backend.detect_clangd_availability'
+  - 'pytest: tests/test_clangd_backend.py'
+  - 'integration: bob.survey'
+  - 'pytest: tests/test_clangd_libclang_semantic_symbol_index_c_survey_bac_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_clangd_libclang_semantic_symbol_index_c_survey_bac_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-003
+  title: 'Header/impl pairing and #include blast-radius graph'
+  tier: Core
+  priority: critical
+  description: C++ splits one logical symbol across a declaration in a header (`.h`/`.hpp`/`.cuh`) and
+    a definition in an implementation file (`.cc`/`.cpp`/`.hip`); bob's data model has no notion of this
+    — `symbols` rows hold a single `path`/`lineno` and BF-1 would treat a header and its `.cpp` as unrelated
+    files. Extend the schema and survey to (1) record per symbol both `decl_path`/`decl_line` and `def_path`/`def_line`
+    (from clangd's separate declaration-vs-definition locations, mirroring LSP `textDocument/declaration`
+    vs `textDocument/definition`), (2) compute header<->source pairing via clangd's `switchSourceHeader`
+    heuristic, and (3) build a preprocessor include-graph resolved through the `-I` paths in `compile_commands.json`,
+    stored as `includes` edges. This lets bob reason about a widely-included public header (e.g. `rccl.h`)
+    as a distinct, high-blast-radius surface, and expose a per-symbol blast-radius score (count of downstream
+    TUs reachable through `includes`) so touching a core header is never mistaken for a local edit.
+  acceptance_criteria:
+  - 'File exists: src/bob/header_impl_pairing.py'
+  - 'Function defined: bob.header_impl_pairing.build_include_graph'
+  - 'Function defined: bob.header_impl_pairing.compute_blast_radius'
+  - 'pytest: tests/test_header_impl_pairing.py'
+  - 'integration: bob.survey'
+  - 'pytest: tests/test_header_impl_pairing_and_include_blast_radius_graph_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_header_impl_pairing_and_include_blast_radius_graph_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-004
+  title: Cross-TU coupled edit-site localization (header + definitions + overrides)
+  tier: Core
+  priority: high
+  description: 'BF-4''s localizer (`src/bob/brownfield/localizer.py`) emits an edit-site as a single `(path,
+    start_line, end_line)` block and, when `end_lineno` is absent, falls back to `start_line + 20` — a
+    Python-shaped guess that is wrong for C++ and only ever names one file. For C++, changing a function
+    signature almost always requires a coordinated edit in the header declaration AND every implementation/override.
+    Upgrade Stage C so that, given a localized C++ symbol, it uses the clangd index to expand one logical
+    change into the full set of coupled edit-sites: the declaration in the header, the definition in the
+    `.cc`/`.hip`, and every overriding definition (via `overrides` edges / LSP `textDocument/implementation`),
+    deriving accurate `end_line` from clang''s decl source range instead of the `+20` heuristic. Emit
+    these as a linked edit-site group so the code-writing subagent is told up-front that a header plus
+    N implementations must move together, preventing the classic failure of editing the `.cpp` signature
+    while leaving the header declaration stale (a compile break). This becomes the C++ substrate for the
+    hierarchical localizer (file -> namespace/class -> symbol -> edit-site).'
+  acceptance_criteria:
+  - 'File exists: src/bob/brownfield/coupled_edit_sites.py'
+  - 'Function defined: bob.brownfield.coupled_edit_sites.expand_coupled_edit_sites'
+  - 'Function defined: bob.brownfield.coupled_edit_sites.derive_decl_end_line'
+  - 'pytest: tests/test_coupled_edit_sites.py'
+  - 'integration: bob.brownfield.localizer'
+  - 'pytest: tests/test_cross_tu_coupled_edit_site_localization_header_def_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_cross_tu_coupled_edit_site_localization_header_def_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+  - 'File exists: src/bob/brownfield/localizer.py'
+- key: F-R9-005
+  title: Include-graph-aware disjoint-surface gate for the coordinator
+  tier: Core
+  priority: high
+  description: 'The coordinator serializes overlapping features using `check_disjoint()`, which detects
+    overlap only when two edit-sites share the same `path` and their `[start_line,end_line]` ranges intersect.
+    In C++ this misses the dominant conflict mode: two features that edit different `.cpp` files but both
+    `#include` (or both modify) the same header are semantically coupled and can break each other''s compilation,
+    yet bob would run them in parallel and call their surfaces disjoint. Extend the disjointness/serialization
+    logic to consult the include-graph and header/impl pairing from the survey: two edit-site groups conflict
+    if they touch the same header, if one edits a header the other''s TU includes, or if they touch different
+    definitions of the same USR. Additionally use the per-feature blast-radius score to flag high-fan-out
+    header changes (e.g. a core RCCL public header) for single-threaded execution or tighter review. This
+    turns bob''s parallelism safety model from line-range-only into compilation-graph-aware.'
+  acceptance_criteria:
+  - 'File exists: src/bob/include_graph_disjoint_gate.py'
+  - 'Function defined: bob.include_graph_disjoint_gate.check_disjoint_include_aware'
+  - 'Function defined: bob.include_graph_disjoint_gate.flag_high_fanout_header'
+  - 'pytest: tests/test_include_graph_disjoint_gate.py'
+  - 'integration: bob.coordinator'
+  - 'pytest: tests/test_include_graph_aware_disjoint_surface_gate_for_the__boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_include_graph_aware_disjoint_surface_gate_for_the__error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-006
+  title: Vendored/generated subtree classifier for index and scope-guard
+  tier: Core
+  priority: high
+  description: bob's C++ source discovery is a whole-repo `rglob` for `*.cpp`/`*.hpp`/`*.h`/`*.c` excluding
+    only `build` and `.git`. On RCCL that sweeps in git submodules, third-party/vendored dependencies,
+    and CMake/hipify-generated sources — inflating the index, misdirecting the localizer, and letting
+    the BF-7 patch scope-guard "allow" edits to code that will be regenerated or overwritten. Add a subtree
+    classifier that reads `.gitmodules`, CMake `FetchContent`/`ExternalProject` and install/vendored directories,
+    and generated-file markers (files under the build tree, `*.h.in`-derived outputs, hipify outputs,
+    `DO-NOT-EDIT`/`@generated` headers), tagging each indexed node as `source|vendored|generated`. The
+    localizer down-ranks or excludes vendored/generated nodes; the scope-guard hard-refuses any diff-plan
+    touching a vendored/generated path and instead points the edit at the true source (the `.in` template
+    or pre-hipify source). Persist the classification in `survey.db` so it is computed once per `(path,
+    sha)`.
+  acceptance_criteria:
+  - 'File exists: src/bob/subtree_classifier.py'
+  - 'Function defined: bob.subtree_classifier.classify_subtree'
+  - 'Function defined: bob.subtree_classifier.persist_classification'
+  - 'pytest: tests/test_subtree_classifier.py'
+  - 'integration: bob.score_gate'
+  - 'pytest: tests/test_vendored_generated_subtree_classifier_for_index_an_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_vendored_generated_subtree_classifier_for_index_an_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-007
+  title: 'cmake/ninja build verification gate (build: AC kind)'
+  tier: Core
+  priority: critical
+  description: 'Today bob''s verifier NEVER runs a compiler: in `enhanced_verification.py::_check_criterion`
+    the criterion "CMake builds successfully" is satisfied merely by `(workspace / "CMakeLists.txt").exists()`,
+    and "No compilation errors" hard-returns False because it "cannot confirm statically" — so every C++/RCCL
+    feature can be rubber-stamped without ever compiling. Add a `build:`/`compile:`/`link:` AC kind and
+    a real executor mirroring `_run_pytest_criterion`: configure with `cmake -S <src> -B <build> -G Ninja
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo` using the project''s ROCm toolchain
+    (`CMAKE_CXX_COMPILER=hipcc`/amdclang++), then `cmake --build <build> -j` (or a single-TU `hipcc` for
+    `compile:`), all under the existing `_run_with_pgroup_timeout` wrapper. Parse exit code AND the compiler
+    diagnostic stream; a non-zero build is a hard FAIL with the first N error lines surfaced as the reason
+    (exactly as pytest failures are surfaced), and `link:` asserts the expected artifact was produced
+    with no unresolved-symbol errors. Persist command, exit code, and stdout/stderr as verification evidence
+    artifacts. Auto-arm on `is_cmake_project`. Compile-must-succeed becomes the C++ analog of tests-collect-cleanly.'
+  acceptance_criteria:
+  - 'File exists: src/bob/build_verification.py'
+  - 'Function defined: bob.build_verification.run_build_criterion'
+  - 'Function defined: bob.build_verification.is_cmake_project'
+  - 'pytest: tests/test_build_verification.py'
+  - 'integration: bob.enhanced_verification'
+  - 'pytest: tests/test_cmake_ninja_build_verification_gate_build_ac_kind_boundary.py — empty, zero, or
+    minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_cmake_ninja_build_verification_gate_build_ac_kind_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-008
+  title: 'ctest/gtest runner with JUnit-XML parsing and per-feature scoping (ctest: AC kind)'
+  tier: Core
+  priority: critical
+  description: 'bob''s `tests_pass` path is pytest-only (the pytest verifier in `bob.verification` builds
+    pytest argv/node-ids via `bob.verification.per_feature_test_scope`), and for a project with no `.py`
+    files it returns a soft WARNING PASS ("no Python source files found; pytest run skipped") — so a C++/RCCL
+    feature passes verification without a single test compiling or running. Add a `ctest:`/`gtest:` AC
+    kind that runs `ctest --test-dir <build> --output-junit <tmp>.xml -R <feature-regex> --output-on-failure`
+    (or a gtest binary with `--gtest_filter=Suite.*` and `--gtest_output=xml`) and parses the JUnit XML
+    (testcase/failure/skipped counts) into the same PASS/FAIL/reason shape the pytest handler emits, requiring
+    N>0 tests actually ran and 0 failed. Critically, replicate bob''s per-feature pytest SCOPING for C++:
+    scope with `ctest -R`/`--gtest_filter` built from the feature''s suite/label so a feature is verified
+    against ONLY its own tests, not a rebuild-and-rerun-the-world. Prefer CTest''s native `--output-junit`
+    over gtest''s per-binary directory output, which corrupts under parallel `-j` runs. Reuse bob''s baseline/regression
+    demotion so pre-existing ctest failures don''t false-fail an unrelated feature.'
+  acceptance_criteria:
+  - 'File exists: src/bob/verification/ctest_runner.py'
+  - 'Function defined: bob.verification.ctest_runner.run_ctest_ac'
+  - 'Function defined: bob.verification.ctest_runner.parse_junit_xml'
+  - 'pytest: tests/test_ctest_runner.py'
+  - 'integration: bob.verification'
+  - 'pytest: tests/test_ctest_gtest_runner_with_junit_xml_parsing_and_per__boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_ctest_gtest_runner_with_junit_xml_parsing_and_per__error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-009
+  title: C++/HIP no-stubs gate (AST bodies + link-level undefined symbols)
+  tier: Core
+  priority: critical
+  description: 'bob''s anti-stub gate is Python-only: the `bob.ast_checks` and `bob.scaffolding_audit`
+    modules gate on Python sources and `_is_stub_function` walks a Python `ast` for `pass`/`...`/`raise
+    NotImplementedError`; for C++ it emits "Stub detection skipped (non-Python project)". A C++ implementer
+    can therefore ship `float allreduce_bw(){ /* TODO */ return 0; }`, `void tune(){ throw std::logic_error("not
+    implemented"); }`, an empty `{}` body, or `return hipSuccess;`-only bodies and pass `no_stubs` untouched.
+    Add a C++/HIP stub detector with two layers. (1) Static, via the clang AST over the feature''s edit-site
+    TUs: flag empty or trivial-return-only bodies (`{}`, `return {};`, `return 0/nullptr/hipSuccess;`
+    with no work — CompoundStmt size / single trivial ReturnStmt or CXXThrowExpr-only), `throw std::runtime_error/logic_error("...implement...")`,
+    `assert(false && "not implemented")`, `= 0;` pure-virtuals with no concrete override in the changed
+    files, `#error`/`static_assert(false)` placeholders, newly-added `#if 0`/`#ifdef NEVER` blocks around
+    target code, and `TODO`/`FIXME`/`stub` markers inside the edited function''s span. Cover the full
+    native extension set `.cpp .cc .cxx .hpp .h .hip .cu .cuh` (the current `_search_for_function` misses
+    `.cu`/`.hip`, exactly where RCCL kernels live). (2) Link-level: after the build, run `nm -uC`/`readelf
+    -s` on the produced objects and libraries to enumerate undefined symbols, catching cross-TU missing
+    definitions no per-TU static check can see. Feed results into the same demote-to-NH path the Python
+    stub gate uses; a C++ feature passes only when its target USR resolves to a real, non-trivial definition
+    that links.'
+  acceptance_criteria:
+  - 'File exists: src/bob/cpp_stub_detector.py'
+  - 'Function defined: bob.cpp_stub_detector.detect_cpp_stubs'
+  - 'Function defined: bob.cpp_stub_detector.find_undefined_symbols'
+  - 'pytest: tests/test_cpp_stub_detector.py'
+  - 'integration: bob.scaffolding_audit'
+  - 'pytest: tests/test_c_hip_no_stubs_gate_ast_bodies_link_level_undefine_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_c_hip_no_stubs_gate_ast_bodies_link_level_undefine_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-010
+  title: clang-AST resolution for Function/Class-defined ACs
+  tier: Core
+  priority: critical
+  description: 'For `Function defined:`/`Class defined:` ACs on C++ projects, `_search_for_function`/`_search_for_class`
+    fall into an `is_cpp` branch that does `re.search(f"{name}\\(", content)` over `*.cpp`/`*.hpp`/`*.h`
+    — a substring match that false-PASSES on call sites, comments, forward declarations, and unrelated
+    overloads, false-FAILS on templated/namespaced/operator forms, and silently skips `.cc`/`.cxx`/`.hip`/`.cu`/`.cuh`.
+    Replace it for `is_cmake_project` with a clang-tooling probe over the project''s `compile_commands.json`:
+    run `clang-query -p <build> -c ''match functionDecl(hasName("ns::foo"), isDefinition(), hasBody(compoundStmt(unless(statementCountIs(0)))))''`
+    (or the clangd index), and `cxxRecordDecl(isDefinition())` for classes. This proves the symbol is
+    genuinely DEFINED with a non-empty body against the real preprocessed AST (handling namespaces, templates,
+    macros, overloads) rather than matching source text, and distinguishes definition from declaration/call
+    the way the Python `def`/`class` branch does. When clang tooling is unavailable, fail with a clear
+    "clang tooling unavailable" reason (logged PASS-with-warning like the existing `FILE_EXISTS_BASENAME_FALLBACK`
+    path) rather than silently degrading to the gameable regex.'
+  acceptance_criteria:
+  - 'File exists: src/bob/clang_ast_resolution.py'
+  - 'Function defined: bob.clang_ast_resolution.search_for_function_clang'
+  - 'Function defined: bob.clang_ast_resolution.search_for_class_clang'
+  - 'pytest: tests/test_clang_ast_resolution.py'
+  - 'integration: bob.ac_verifier'
+  - 'pytest: tests/test_clang_ast_resolution_for_function_class_defined_ac_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_clang_ast_resolution_for_function_class_defined_ac_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-011
+  title: Scoped incremental build with compiler-warning baseline attribution
+  tier: Core
+  priority: medium
+  description: bob has no notion of compiler warnings and, never building, no incremental-build discipline
+    — the Python analog (per-feature pytest scoping to avoid running the world) has no C++ counterpart,
+    and a naive full RCCL build recompiles every arch on every feature. Extend the `build:` gate to (a)
+    keep a persistent build directory keyed across features so each feature triggers an INCREMENTAL `cmake
+    --build`/`ninja` recompiling only the edited TUs (the analog of scoping pytest to a feature's subtree),
+    building only the ninja targets that depend on the edited TUs rather than the whole tree, and (b)
+    compile the feature's edited TUs with `-Wall -Wextra -Werror=return-type -Werror=uninitialized` and
+    treat NEW warnings introduced on the changed files as a soft signal that demotes confidence, diffing
+    against a baseline warning-set captured at bootstrap so pre-existing brownfield warnings don't scapegoat
+    the current feature. This mirrors bob's `tests_pass_regression_vs_baseline` attribution but for the
+    compiler diagnostic stream, and uses `ninja -d explain` to detect and warn on spurious full rebuilds
+    (a common HIP depfile problem).
+  acceptance_criteria:
+  - 'File exists: src/bob/scoped_incremental_build.py'
+  - 'Function defined: bob.scoped_incremental_build.incremental_build_targets'
+  - 'Function defined: bob.scoped_incremental_build.attribute_new_warnings_vs_baseline'
+  - 'pytest: tests/test_scoped_incremental_build.py'
+  - 'integration: bob.gates'
+  - 'pytest: tests/test_scoped_incremental_build_with_compiler_warning_bas_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_scoped_incremental_build_with_compiler_warning_bas_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-012
+  title: 'Compile-cost build budgeting: ccache + local-GPU-arch scoping'
+  tier: Core
+  priority: high
+  description: 'BF-8''s context-budget hook throttles the LLM, but on RCCL the expensive step is the C++/HIP
+    compile, not the model: a naive build links every default GPU arch and can take tens of minutes per
+    verification, and bob''s whole-repo globbing triggers unnecessary rebuilds. Add a build-budget layer
+    that (a) forces a Ninja generator with `CMAKE_CXX_COMPILER_LAUNCHER=ccache` and `CMAKE_HIP_COMPILER_LAUNCHER=ccache`
+    and a warm persistent ccache dir shared across features, (b) scopes GPU codegen to the box''s arch
+    during iteration via `-DGPU_TARGETS=gfx942`/`gfx950` (or `-DBUILD_LOCAL_GPU_TARGET_ONLY=ON`) instead
+    of all-arch fat binaries, and (c) records per-feature wall-clock and ccache hit-rate and enforces
+    a real compile-time ceiling so one feature''s verification cannot blow the generation''s time budget
+    on cold recompiles. Nothing in bob models compile wall-clock, ccache, ninja target selection, or GPU-arch
+    scoping — the dominant cost on a C++/RCCL repo.'
+  acceptance_criteria:
+  - 'File exists: src/bob/build_budget.py'
+  - 'Function defined: bob.build_budget.configure_ccache_ninja'
+  - 'Function defined: bob.build_budget.scope_gpu_targets'
+  - 'Function defined: bob.build_budget.enforce_compile_budget'
+  - 'pytest: tests/test_build_budget.py'
+  - 'integration: bob.orchestrator.run_loop'
+  - 'pytest: tests/test_compile_cost_build_budgeting_ccache_local_gpu_arch_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_compile_cost_build_budgeting_ccache_local_gpu_arch_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-013
+  title: 'symbol-in-binary: AC kind (nm/objdump defined-symbol check)'
+  tier: Core
+  priority: high
+  description: 'A source-level "Function defined" check cannot prove a symbol actually made it into the
+    shipped artifact with a real body that links — a header declaration or a body optimized away can pass
+    a source probe yet be undefined in the library. Add a `symbol defined in binary: <lib>::<demangled-or-mangled>`
+    AC kind that runs `nm -C <artifact>` / `objdump -T` / `readelf -s` on the built object or shared library
+    and requires the symbol to appear as a DEFINED text symbol (type `T`/`t`), not undefined (`U`). Persist
+    the command and its output as evidence. This complements the link-level layer of the no-stubs gate
+    and gives RCCL features a machine-checkable guarantee that, e.g., a new `ncclAllReduce` code path
+    resolves to a defined symbol in `librccl.so` rather than a dangling reference.'
+  acceptance_criteria:
+  - 'File exists: src/bob/ac_kinds/symbol_in_binary.py'
+  - 'Function defined: bob.ac_kinds.symbol_in_binary.check_symbol_defined_in_binary'
+  - 'Function defined: bob.ac_kinds.symbol_in_binary.parse_symbol_ac'
+  - 'pytest: tests/test_symbol_in_binary.py'
+  - 'integration: bob.ac_handler'
+  - 'pytest: tests/test_symbol_in_binary_ac_kind_nm_objdump_defined_symbol_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_symbol_in_binary_ac_kind_nm_objdump_defined_symbol_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-014
+  title: Sanitizer-clean execution AC with instrumentation proof and tripwire
+  tier: Core
+  priority: high
+  description: 'bob''s GPU anti-cheat proves a kernel launched, but there is no memory/UB safety gate
+    for C++ host+HIP code — and RCCL work (custom kernels, buffer registration, XGMI ring pointer arithmetic)
+    is exactly where UB and OOB writes hide. Add a `sanitizer-clean: <asan|ubsan|tsan> <ctest-regex-or-command>`
+    AC that (1) builds a dedicated instrumented configuration (`-fsanitize=address,undefined -fno-sanitize-recover=all`
+    for host), (2) PROVES instrumentation is actually present rather than silently dropped — assert `__SANITIZE_ADDRESS__`
+    via a compiled canary and/or verify the binary links the asan/ubsan runtime with `nm -D`/`ldd`, so
+    a subagent cannot game the gate by deleting the `-fsanitize` flags, (3) runs the target under `ASAN_OPTIONS=halt_on_error=1:detect_leaks=1:exitcode=1
+    UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1` requiring exit 0 with an empty sanitizer report,
+    and (4) runs a known-bad tripwire once at setup to confirm the harness genuinely catches an injected
+    error (guards against a mis-wired always-green path). `-fno-sanitize-recover` ensures a reported error
+    cannot coexist with a success exit code.'
+  acceptance_criteria:
+  - 'File exists: src/bob/sanitizer_clean_ac.py'
+  - 'Function defined: bob.sanitizer_clean_ac.verify_sanitizer_clean'
+  - 'Function defined: bob.sanitizer_clean_ac.run_tripwire'
+  - 'pytest: tests/test_sanitizer_clean_ac.py'
+  - 'integration: bob.ac_handler'
+  - 'pytest: tests/test_sanitizer_clean_execution_ac_with_instrumentation__boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_sanitizer_clean_execution_ac_with_instrumentation__error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-015
+  title: C++ test-integrity gate (DISABLED_/GTEST_SKIP/ctest-drop anti-cheat)
+  tier: Core
+  priority: high
+  description: Beyond stub bodies, a C++ subagent can hide failures by renaming a gtest to the `DISABLED_`
+    prefix, inserting `GTEST_SKIP()`, or dropping a test from the ctest set — none of which bob's Python-shaped
+    gates detect. Add a test-integrity gate that, after building, runs `<testbin> --gtest_list_tests`
+    and fails if any `DISABLED_` test appears beyond a committed baseline allowlist; runs `--gtest_filter=*DISABLED_*
+    --gtest_also_run_disabled_tests` to prove disabled tests still pass (not rot-hiding a failure); parses
+    `--gtest_output=xml` for `<skipped>` counts and fails when skips exceed a reviewed baseline (GTEST_SKIP
+    has no force-run flag); and diffs `CTestTestfile.cmake`/`add_test` calls so a subagent cannot silently
+    remove a test from the ctest set. This is the C++ analog of bob's mutation/no-cheat discipline for
+    the test suite itself.
+  acceptance_criteria:
+  - 'File exists: src/bob/cpp_test_integrity_gate.py'
+  - 'Function defined: bob.cpp_test_integrity_gate.check_test_integrity'
+  - 'Function defined: bob.cpp_test_integrity_gate.check_disabled_tests_pass'
+  - 'Function defined: bob.cpp_test_integrity_gate.check_ctest_set_diff'
+  - 'pytest: tests/test_cpp_test_integrity_gate.py'
+  - 'pytest: tests/test_c_test_integrity_gate_disabled_gtest_skip_ctest_dr_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_c_test_integrity_gate_disabled_gtest_skip_ctest_dr_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-016
+  title: clang-format minimal-diff patch mode for C++
+  tier: Core
+  priority: high
+  description: 'BF-7''s `patch_planner` emits/applies/rolls back diff-plans but is format-blind, so LLM-generated
+    C++ edits reflow whitespace/braces and produce huge noisy hunks that fail review and pollute git blame
+    in a repo with a strict `.clang-format`. Add a formatting-normalization stage: before diffing, run
+    `clang-format` with the repo''s own `.clang-format` on both the pre-edit region and the candidate
+    edit so hunks contain only semantic changes; then run `git-clang-format`/`clang-format-diff.py -p1`
+    over the applied hunks to guarantee the patch is already style-clean. Add a scope-guard extension
+    that rejects a diff-plan whose hunk touches lines outside the localized edit-site (reusing F-R9-004
+    localization) or that reformats untouched code, and emit the normalized minimal diff into `.bob/features/<id>/diff_plan.yaml`
+    so the existing reviewable-diff artifact stays the review surface. BF-7 is language-agnostic and format-blind;
+    this adds the C++-specific normalization and reformat-guard.'
+  acceptance_criteria:
+  - 'File exists: src/bob/clang_format_patch.py'
+  - 'Function defined: bob.clang_format_patch.normalize_edit_region'
+  - 'Function defined: bob.clang_format_patch.guard_reformat_scope'
+  - 'pytest: tests/test_clang_format_patch.py'
+  - 'integration: bob.patch_planner'
+  - 'pytest: tests/test_clang_format_minimal_diff_patch_mode_for_c_boundary.py — empty, zero, or minimum
+    input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_clang_format_minimal_diff_patch_mode_for_c_error.py — invalid input raises ValueError
+    and the function does not silently succeed (error path)'
+- key: F-R9-017
+  title: C++/GPU characterization harness with numeric tolerance (extend BF-6)
+  tier: Core
+  priority: high
+  description: 'BF-6 captures characterization snapshots by importing a Python target and diffing stdout/return
+    values — it cannot observe a compiled C++ collective, and bitwise diffs are meaningless across GPU
+    reductions. Add a C++/GPU characterization harness that, in the observer phase, builds and runs a
+    small driver or an existing rccl-tests binary against fixed inputs and captures a golden artifact:
+    for correctness, the reduced buffer contents / validation pass-fail and error bound; for numerics,
+    results compared with a tolerance rather than exact byte diff. The verifier phase rebuilds after the
+    edit and re-runs, failing if correctness regresses or output drifts outside the allowed tolerance,
+    and — tying into the existing dispatch-coupled anti-cheat — requires that the collective actually
+    dispatched a device kernel so a host-side shortcut cannot fake a passing snapshot. Store goldens under
+    the feature''s `snapshot_dir` so the disk-reconciler treats them as satisfaction artifacts.'
+  acceptance_criteria:
+  - 'File exists: src/bob/cpp_gpu_characterization_harness.py'
+  - 'Function defined: bob.cpp_gpu_characterization_harness.capture_gpu_golden'
+  - 'Function defined: bob.cpp_gpu_characterization_harness.verify_gpu_golden'
+  - 'pytest: tests/test_cpp_gpu_characterization_harness.py'
+  - 'integration: bob.acceptance.characterization'
+  - 'pytest: tests/test_c_gpu_characterization_harness_with_numeric_tolera_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_c_gpu_characterization_harness_with_numeric_tolera_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-018
+  title: C++/HIP device-dispatch anti-cheat (source + compiled-binary evidence)
+  tier: Core
+  priority: critical
+  description: bob's GPU anti-cheat suite (`no_simulation_in_source`/`hip_backend_required`/`gpu_execution_proven`)
+    lives inside `if _gpu_backend_required and is_python_project:` and scans `.py` text with Python regexes;
+    the C++ branch has no dispatch check at all — so the host-not-GPU cheat already observed in hippy
+    is fully reproducible in C++ (a host-side `std::accumulate` loop dressed as a collective). Add a C++/HIP
+    dispatch-evidence verifier that (1) scans the feature's own `.cpp`/`.hip`/`.cu` sources for genuine
+    device dispatch — `__global__` kernel defs plus real launch sites `hipLaunchKernelGGL(`, `<<<...>>>`,
+    `hipModuleLaunchKernel(`, or genuine RCCL calls `ncclAllReduce(`/`ncclCommInitRank(` — not just includes
+    or comments; (2) verifies the COMPILED artifact actually contains device code and RCCL symbols via
+    `roc-obj`/`llvm-objdump -d`, `readelf`/`nm -D build/... | grep -E 'ncclAllReduce|__amdgpu_'`, or an
+    embedded `.hip` fatbin section, so a CPU-only binary that merely `#include`s `rccl.h` is rejected;
+    and (3) mirrors the Python `no_simulation` marker scan for C++ tells (`// simulate on host`, `CPU
+    fallback`, host reductions where a collective is claimed). Port the existing `_sim_markers`/`_real_call_re`
+    design to C++ token grammar plus binary inspection.
+  acceptance_criteria:
+  - 'File exists: src/bob/cpp_hip_device_dispatch_anticheat.py'
+  - 'Function defined: bob.cpp_hip_device_dispatch_anticheat.scan_cpp_device_dispatch'
+  - 'Function defined: bob.cpp_hip_device_dispatch_anticheat.verify_compiled_device_evidence'
+  - 'pytest: tests/test_cpp_hip_device_dispatch_anticheat.py'
+  - 'integration: bob.stuck_executing_reaper'
+  - 'pytest: tests/test_c_hip_device_dispatch_anti_cheat_source_compiled_b_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_c_hip_device_dispatch_anti_cheat_source_compiled_b_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-019
+  title: RCCL collective-correctness AC (#wrong=0 across in-place/out-of-place cross-product)
+  tier: Core
+  priority: critical
+  description: 'For RCCL work "the build is faster" is meaningless unless the collective is still numerically
+    correct, and bob has no AC tying a perf change to correctness. RCCL can silently corrupt results at
+    non-power-of-two sizes, partial last chunks, or odd rank counts while still "winning" on bandwidth.
+    Add an `rccl-correct: <collective> -b <min> -e <max> -f <factor> -g <ngpus>` AC that runs the matching
+    rccl-tests binary (e.g. `all_reduce_perf`) with validation enabled (`-c 1`) and parses the tabular
+    `#wrong` column, requiring it to be exactly 0 for BOTH the out-of-place and in-place variants across
+    the full size sweep — and across the cross-product the RCCL spec''s F-R8-002 demands: power-of-two
+    AND explicit non-pow2 sizes (3MB/5MB/1GB-minus-one-elem), multiple redops via `-o`, multiple dtypes
+    via `-d fp16/bf16`, and odd rank counts via `-g 6`/`-g 7` with high `-n`. Enforce anti-gaming preconditions:
+    assert the run header''s reported `nRanks`/`nGpus` and `minBytes`/`maxBytes` match the AC''s demand
+    so a subagent cannot pass by collapsing to a single rank or shrinking the sweep to a trivially-correct
+    range; capture the float tolerance and fail on any asterisked out-of-bounds entry. The correctness
+    evidence must come from a freshly executed benchmark whose command, header, and `#wrong` columns are
+    stored as artifacts, so it cannot be satisfied by a frozen/cached log.'
+  acceptance_criteria:
+  - 'File exists: src/bob/rccl_correctness.py'
+  - 'Function defined: bob.rccl_correctness.parse_wrong_column'
+  - 'Function defined: bob.rccl_correctness.verify_rccl_correct'
+  - 'pytest: tests/test_rccl_correctness.py'
+  - 'integration: bob.acceptance'
+  - 'pytest: tests/test_rccl_collective_correctness_ac_wrong_0_across_in_p_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_rccl_collective_correctness_ac_wrong_0_across_in_p_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-020
+  title: RCCL busbw/algbw perf-uplift gate (self-measured, noise-aware A/B)
+  tier: Core
+  priority: critical
+  description: 'The RCCL spec''s only pass/fail bar for every performance feature is "the optimized build
+    beats bob''s OWN freshly-measured baseline for this same machine/partition/protocol by a margin exceeding
+    measurement noise," and it warns back-to-back runs vary up to 2x — yet bob''s vocabulary (File exists
+    / Function-Class defined / pytest / integration / behavior) cannot express it, and its `regression_*`
+    modules parse only pytest results. Add a `benchmark:`/`rccl-perf:` AC kind plus a busbw/algbw table
+    parser and a baseline store that implements the F-R8-001 protocol: parse the rccl-tests columns (size,
+    count, type, redop, root, then time/algbw/busbw/#wrong for out-of-place AND in-place); pin clocks
+    with `rocm-smi --setperfdeterminism` (with readback assert) and assert partition mode via `--showcomputepartition`;
+    measure the UNMODIFIED build FIRST and persist it as the baseline (never an internet/blog number as
+    the denominator); run N>=10 interleaved OLD/NEW reps with identical warmup/iters (`-w 20 -n 50`);
+    compute MEDIAN busbw with bootstrap 95% CIs and a per-size noise band = max(CI half-width, half-IQR).
+    A "win" passes only if NEW median > OLD median, the CIs are disjoint, and the delta exceeds `max(feature
+    threshold, 2x noise half-band)`, guarding against the obvious cheats (stale/absent baseline, cherry-picking
+    best-of-N, changing the size range between baseline and candidate).'
+  acceptance_criteria:
+  - 'File exists: src/bob/rccl_perf_gate.py'
+  - 'Function defined: bob.rccl_perf_gate.parse_busbw_algbw_table'
+  - 'Function defined: bob.rccl_perf_gate.evaluate_perf_uplift_gate'
+  - 'pytest: tests/test_rccl_perf_gate.py'
+  - 'integration: bob.regression_detector'
+  - 'pytest: tests/test_rccl_busbw_algbw_perf_uplift_gate_self_measured_no_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_rccl_busbw_algbw_perf_uplift_gate_self_measured_no_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-021
+  title: RCCL selection-log + rocprof execution proof (selection != execution)
+  tier: Core
+  priority: high
+  description: 'RCCL behavior is governed by env knobs and tuner files that bob must both control and
+    prove took effect: `NCCL_ALGO` (Ring/Tree), `NCCL_PROTO` (Simple/LL/LL128, with the LL128 data-corruption
+    caveat), `NCCL_TUNER_PLUGIN` + `NCCL_TUNER_CONFIG_PATH` CSV rules, and `NCCL_DEBUG=INFO`/`NCCL_DEBUG_SUBSYS=TUNING`
+    which logs the selected algo/proto. bob''s existing launch-evidence is a Python-side counter for `hipModuleLaunchKernel`;
+    it does not parse selection logs or prove a distinct kernel ran. Add (a) a knob/tuner-file model so
+    features can set and byte-freeze the full `RCCL_*`/`NCCL_*` env identically between OLD and NEW runs
+    (required by the perf gate), (b) an `NCCL_DEBUG` selection-log parser to confirm the intended algorithm/protocol
+    was actually chosen at the target sizes and that `TUNER: Initializing tuner...` appeared (proving
+    the plugin loaded), and (c) a `rocprof` kernel-name-trace verifier that proves a DISTINCT new kernel
+    symbol executed and serviced the benchmarked bytes with the gate ON, plus a gate-off/gate-on differential
+    so a claimed win that is present with the gate OFF fails the feature. This is the RCCL analog of bob''s
+    launch-evidence, but log/trace-based instead of a source counter.'
+  acceptance_criteria:
+  - 'File exists: src/bob/rccl_selection_proof.py'
+  - 'Function defined: bob.rccl_selection_proof.parse_selection_log'
+  - 'Function defined: bob.rccl_selection_proof.verify_rocprof_kernel_trace'
+  - 'Function defined: bob.rccl_selection_proof.freeze_rccl_env'
+  - 'pytest: tests/test_rccl_selection_proof.py'
+  - 'integration: bob.orchestrator.run_loop'
+  - 'pytest: tests/test_rccl_selection_log_rocprof_execution_proof_selecti_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_rccl_selection_log_rocprof_execution_proof_selecti_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-022
+  title: Multi-GPU launch with topology and rank-count enforcement
+  tier: Core
+  priority: high
+  description: RCCL correctness/perf tests are inherently multi-process/multi-GPU (one MPI rank per GPU,
+    e.g. `mpirun -np 8 --bind-to numa ./build/all_reduce_perf -b 8 -e 1G -f 2 -g 1` with `ROCR_VISIBLE_DEVICES=0..7`,
+    or single-process `-g 8`), and bob has no capability to discover topology, size the launch, or run
+    a multi-rank binary. Add a multi-GPU execution helper that (1) discovers device count and topology
+    via `rocminfo`/`rocm-smi --showtopo`/`hipGetDeviceCount` and exposes it so an AC can say "runs on
+    all 8 GPUs"; (2) detects `mpirun`/`mpirun.mpich` in preflight, builds the `-np <ngpu>` command, sets
+    `ROCR_VISIBLE_DEVICES` and needed env (`HSA_NO_SCRATCH_RECLAIM=1`, `NCCL_DEBUG=VERSION`), and captures
+    per-rank exit status; and (3) GATES on the launch actually using the expected number of ranks/devices
+    — parsing `NCCL_DEBUG` rank-init lines or the rccl-tests `# Using devices` header — so a feature cannot
+    quietly run on 1 GPU and claim 8. This is the collective-launch analog of the single-GPU dispatch
+    anti-cheat.
+  acceptance_criteria:
+  - 'File exists: src/bob/multi_gpu_launch.py'
+  - 'Function defined: bob.multi_gpu_launch.discover_topology'
+  - 'Function defined: bob.multi_gpu_launch.build_mpirun_command'
+  - 'Function defined: bob.multi_gpu_launch.verify_rank_count'
+  - 'pytest: tests/test_multi_gpu_launch.py'
+  - 'integration: bob.orchestrator'
+  - 'pytest: tests/test_multi_gpu_launch_with_topology_and_rank_count_enfo_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_multi_gpu_launch_with_topology_and_rank_count_enfo_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-023
+  title: ROCm/HIP toolchain preflight with version and arch pinning
+  tier: Core
+  priority: critical
+  description: 'bob''s env preflight (`orchestrator/env_preflight.py`, `preflight.py`) enumerates deps
+    as bare CLI names probed with `shutil.which` and Python modules probed with `import X`; there is zero
+    version awareness and no HIP/ROCm concept. Building RCCL from the rocm-systems monorepo requires a
+    specific, compatible toolchain: hipcc/amdclang++, a minimum cmake, a pinned ROCm release, `rocminfo`/`rocm_agent_enumerator`,
+    and matching hip/hsa runtime libs. Add a toolchain-preflight capability that (1) parses version/arch
+    pins from the PEAS CONTEXT block (e.g. "ROCm 7.2.1", "gfx942"), (2) probes real versions via `hipcc
+    --version`, `cmake --version`, `cat /opt/rocm/.info/version`, `rocminfo | grep gfx`, and compares
+    them semver-style against the pin, and (3) HALTS with an operator-actionable message on mismatch instead
+    of proceeding to a build that fails cryptically or links the wrong ROCm. Also probe the target arch
+    (`--offload-arch=gfx942`) so an arch-mismatched build is caught at preflight, not after a 20-minute
+    compile. This is the ROCm analog of the existing Python/CLI dep enumeration, with the version/arch
+    dimension HIP builds fundamentally need.'
+  acceptance_criteria:
+  - 'File exists: src/bob/toolchain_preflight.py'
+  - 'Function defined: bob.toolchain_preflight.parse_toolchain_pins'
+  - 'Function defined: bob.toolchain_preflight.check_toolchain_preflight'
+  - 'pytest: tests/test_toolchain_preflight.py'
+  - 'integration: bob.orchestrator.env_preflight'
+  - 'pytest: tests/test_rocm_hip_toolchain_preflight_with_version_and_arch_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_rocm_hip_toolchain_preflight_with_version_and_arch_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+  - 'File exists: orchestrator/env_preflight.py'
+- key: F-R9-024
+  title: rocprof-compute roofline/SOL-guided kernel optimization loop
+  tier: Core
+  priority: high
+  description: 'bob has no structured GPU-kernel optimization methodology: a perf feature today is a blind
+    edit-and-benchmark with no bottleneck classification, so a subagent wastes effort tuning compute on
+    a memory-bound kernel (or vice-versa). Adopt the converged 2026 SOTA loop (KernelAgent/KernelPro;
+    NVIDIA''s perf-nsight-compute-analysis skill) but on the AMD stack: a profile -> diagnose-bottleneck
+    -> targeted-tune -> re-benchmark loop driven by `rocprof-compute` (formerly Omniperf), the AMD analog
+    of Nsight Compute, which uniquely provides Speed-of-Light (SOL%) and hierarchical roofline analysis
+    on MI200+ (MI300/MI355 supported). Each optimization iteration MUST: (1) run `rocprof-compute profile`
+    then `analyze` (or `--roof-only` for a standalone roofline) on the target HIP kernel to capture SOL%
+    per hardware block and the kernel''s position on the roofline; (2) classify the dominant bottleneck
+    (memory-bound vs compute-bound vs latency/occupancy) from arithmetic intensity relative to the ridge
+    point; (3) apply ONLY optimizations relevant to that bottleneck class (the KernelPro insight — do
+    not dump raw counters into the prompt and hope; SEPARATE telemetry-interpretation, a rule-governed
+    step, from code generation, a creative step); (4) re-profile and keep the change only if the core
+    metric (kernel latency / achieved bandwidth) improved beyond measurement noise. Persist the rocprof-compute
+    report (CSV/SQLite via rocpd on ROCm 7.0+) as verification evidence. Because ncu roofline metrics
+    do NOT map to AMD (no L1/L2/HBM transaction counts via rocprof), the loop MUST use rocprof-compute''s
+    native roofline, not a ported ncu-metric formula.'
+  acceptance_criteria:
+  - 'File exists: src/bob/rocprof_compute_roofline_loop.py'
+  - 'Function defined: bob.rocprof_compute_roofline_loop.classify_bottleneck'
+  - 'Function defined: bob.rocprof_compute_roofline_loop.run_optimization_iteration'
+  - 'pytest: tests/test_rocprof_compute_roofline_loop.py'
+  - 'integration: bob.orchestrator'
+  - 'pytest: tests/test_rocprof_compute_roofline_sol_guided_kernel_optimiz_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_rocprof_compute_roofline_sol_guided_kernel_optimiz_error.py — invalid input raises
+    ValueError and the function does not silently succeed (error path)'
+- key: F-R9-025
+  title: RCCL tuning autotune-sweep discipline (tune-once/cache, config pruning, parity)
+  tier: Core
+  priority: medium
+  description: 'RCCL performance is governed by a large discrete config space (protocols Simple/LL/LL128,
+    algorithms Ring/Tree, channel/chunk counts, and the RCCL_*/NCCL_* env + tuner-CSV knobs of F-R9-021),
+    and a naive sweep is both expensive and easy to game. Adopt the autotune discipline proven in NVIDIA''s
+    tilegym-cutile-autotuning skill, ported to RCCL: (1) tune-once then cache — sweep the config space
+    once per (collective, size-range, ngpus, arch) and persist the winning config keyed on that tuple,
+    rather than re-searching every run; (2) prune the search space to a bounded set (the skill targets
+    <=8 configs/arch) using arch- and size-guards so a sweep cannot blow the time budget; (3) MANDATORY
+    correctness parity on every swept config — run the F-R9-019 `rccl-correct` (#wrong=0) check with tuning
+    ENABLED and again with tuning DISABLED (a `DISABLE_AUTOTUNE`-equivalent baseline), so a config that
+    wins on bandwidth but corrupts results is rejected; (4) A/B the tuned config against the fixed best-known/default
+    via the F-R9-020 noise-aware perf gate. This makes RCCL knob-tuning systematic and cheat-resistant
+    instead of a one-off manual env poke, and reuses the correctness+perf gates as the accept criteria.'
+  acceptance_criteria:
+  - 'File exists: src/hippy/rccl_autotune_sweep.py'
+  - 'Function defined: hippy.rccl_autotune_sweep.tune_once_and_cache'
+  - 'Function defined: hippy.rccl_autotune_sweep.prune_search_space'
+  - 'pytest: tests/test_rccl_autotune_sweep.py'
+  - 'integration: hippy.audit_exemptions'
+  - 'pytest: tests/test_rccl_tuning_autotune_sweep_discipline_tune_once_ca_boundary.py — empty, zero,
+    or minimum input returns a well-defined result rather than raising (boundary case)'
+  - 'pytest: tests/test_rccl_tuning_autotune_sweep_discipline_tune_once_ca_error.py — invalid input raises
     ValueError and the function does not silently succeed (error path)'

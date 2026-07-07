@@ -1,11 +1,11 @@
-composite: 0.93492
+composite: 0.910282
 gate_block: 0.65
 gate_warn: 0.8
 sub_metrics:
   ac_atomicity: 1.0
-  boundary_coverage: 0.7142857142857142
+  boundary_coverage: 0.625
   contract_completeness: 1.0
-  error_path_coverage: 0.7142857142857142
+  error_path_coverage: 0.625
   predicate_coverage: 1.0
   smell_density: 1.0
   spec_executability: 1.0
