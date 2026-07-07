@@ -4427,6 +4427,7 @@ def _record_unattributed_failures(
 
 
 from bob.db.detect_regression import detect_regression
+from bob.db.test_ownership_map import get_test_ownership_map
 
 
 # ============================================================
