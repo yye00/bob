@@ -6,11 +6,14 @@ regression-cascade vote may flip its status below 'ready'. Reset the stamp
 only when a refinement attempt actually rewrites one of the AC-named source
 files.
 
-Integration: bob.evaluator
-    Call :func:`check_sticky_completed` before any evaluator-FAIL or
-    regression-cascade vote that would demote a feature's status.  If the
-    function returns True, the flip is blocked and the feature remains at
-    'ready'.
+Integration: bob.supervisor_loop
+    :func:`bob.supervisor_loop.supervise_run` applies
+    :func:`apply_sticky_completed_gate` before resetting a recoverable-failed
+    feature: a parent-completed feature whose acceptance criteria still verify
+    on disk is restored to 'ready' rather than demoted to 'pending'.  More
+    generally, call :func:`check_sticky_completed` before any evaluator-FAIL or
+    regression-cascade vote that would demote a feature's status — if it returns
+    True, the flip is blocked and the feature remains at 'ready'.
 
 Public API
 ----------
@@ -50,6 +53,7 @@ import json
 import logging
 import pathlib
 import re
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +191,119 @@ def apply_sticky_gate(
     ):
         return "ready"
     return target_status
+
+
+def apply_sticky_completed_gate(
+    parent_completed: bool,
+    target_status: str,
+    acceptance_criteria: str | list[str] | None,
+    workspace: pathlib.Path | str | None = None,
+) -> str:
+    """Return the status a feature should take after the sticky-completed gate.
+
+    AC-named canonical entry point (``bob.sticky_completed_gate.
+    apply_sticky_completed_gate``).  Behaves identically to
+    :func:`apply_sticky_gate`: when the gate fires the requested demotion is
+    refused and the feature is kept at ``'ready'`` — re-evaluation cannot
+    un-complete persisted work.  Otherwise *target_status* is returned
+    unchanged.
+
+    Args:
+        parent_completed: Flag indicating the feature was completed by the
+            parent generation.
+        target_status: The status the caller wishes to assign.
+        acceptance_criteria: Raw JSON string or Python list of AC strings.
+            May be None or empty — treated as an empty list.
+        workspace: Root directory for disk-based AC verification. Defaults
+            to ``pathlib.Path.cwd()``.
+
+    Returns:
+        ``'ready'`` when the gate blocks the demotion; otherwise
+        *target_status* unchanged.
+
+    Raises:
+        ValueError: If *parent_completed* is not a bool, *target_status* is
+            not a non-empty string, or *workspace* exists but is not a directory.
+    """
+    return apply_sticky_gate(
+        parent_completed=parent_completed,
+        target_status=target_status,
+        acceptance_criteria=acceptance_criteria,
+        workspace=workspace,
+    )
+
+
+def reset_stamp_on_ac_file_rewrite(
+    feature_id: str,
+    acceptance_criteria: str | list[str] | None,
+    rewritten_files: list[str],
+    reset_fn: Callable[[str], object] | None = None,
+    db_path: pathlib.Path | str | None = None,
+) -> bool:
+    """Clear the sticky stamp iff a refinement rewrote an AC-named source file.
+
+    This is the *only* authorized way to un-stick a previously-completed
+    feature: the stamp is reset when — and only when — one of the files named
+    by a ``File exists: <path>`` acceptance criterion appears in
+    *rewritten_files*.  A refinement that touches unrelated files (docs, sibling
+    modules, tests) does NOT reopen the gate.
+
+    Args:
+        feature_id: The feature UUID whose stamp may be cleared.
+        acceptance_criteria: Raw JSON string or Python list of AC strings.
+            The AC-named source files are extracted from ``File exists:`` ACs.
+        rewritten_files: Workspace-relative paths that the refinement attempt
+            actually rewrote.
+        reset_fn: Optional callback invoked with *feature_id* when the stamp is
+            reset. When omitted, :func:`reset_sticky_completed_stamp` is used to
+            clear the stamp in the database at *db_path*.
+        db_path: Optional explicit DB path forwarded to the default reset path
+            when *reset_fn* is None.
+
+    Returns:
+        True if an AC-named file was rewritten and the stamp was reset;
+        False otherwise (no AC file rewritten — stamp left intact).
+
+    Raises:
+        ValueError: If *feature_id* is not a non-empty string, *rewritten_files*
+            is not a list, or *reset_fn* is provided but not callable.
+    """
+    if not isinstance(feature_id, str) or not feature_id.strip():
+        raise ValueError(
+            f"feature_id must be a non-empty string, got {feature_id!r}"
+        )
+    if not isinstance(rewritten_files, list):
+        raise ValueError(
+            f"rewritten_files must be a list, got {type(rewritten_files).__name__!r}"
+        )
+    if reset_fn is not None and not callable(reset_fn):
+        raise ValueError("reset_fn must be callable or None")
+
+    ac_list = _parse_acceptance_criteria(acceptance_criteria)
+    ac_files = {str(p) for p in _extract_file_paths(ac_list)}
+    if not ac_files:
+        return False
+
+    rewritten = {str(pathlib.Path(f)) for f in rewritten_files}
+    if not (ac_files & rewritten):
+        logger.debug(
+            "reset_stamp_on_ac_file_rewrite: no AC file among rewritten files "
+            "for feature %s; leaving stamp intact",
+            feature_id[:8],
+        )
+        return False
+
+    if reset_fn is not None:
+        reset_fn(feature_id)
+    else:
+        reset_sticky_completed_stamp(feature_id, db_path=db_path)
+
+    logger.info(
+        "reset_stamp_on_ac_file_rewrite: AC file rewritten for feature %s; "
+        "sticky stamp reset",
+        feature_id[:8],
+    )
+    return True
 
 
 def should_accept_status_flip(

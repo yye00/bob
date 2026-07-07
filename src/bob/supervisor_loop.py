@@ -244,17 +244,32 @@ def supervise_run(project_id: str) -> ResumeDecision:
         raise ValueError("project_id must be a non-empty string")
 
     from bob import db
+    from bob.sticky_completed_gate import apply_sticky_completed_gate
 
     rows = db.list_features(project_id=project_id)
 
     # Feature rows store dependencies in a separate table; project them onto a
     # plain snapshot so the pure decision function can reason about the graph.
     features: list[dict[str, Any]] = []
+    row_by_id: dict[str, Any] = {}
     for row in rows:
         deps = [d.depends_on_feature_id for d in db.get_feature_dependencies(row.id)]
         features.append({"id": row.id, "status": row.status, "depends_on": deps})
+        row_by_id[row.id] = row
 
     def _reset(fid: str) -> None:
-        db.update_feature(fid, status="pending")
+        # Sticky-completed gate: a feature that was status='completed' in the
+        # parent generation and whose acceptance criteria still verify on disk
+        # must NOT be demoted to 'pending' by the auto-resume reset — that would
+        # un-complete persisted work. Restore it to 'ready' instead.
+        row = row_by_id.get(fid)
+        target = "pending"
+        if row is not None:
+            target = apply_sticky_completed_gate(
+                parent_completed=bool(getattr(row, "parent_completed", False)),
+                target_status="pending",
+                acceptance_criteria=getattr(row, "acceptance_criteria", None),
+            )
+        db.update_feature(fid, status=target)
 
     return auto_resume_run(features, reset_fn=_reset)

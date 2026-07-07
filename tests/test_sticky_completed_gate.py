@@ -13,7 +13,12 @@ import pathlib
 
 import pytest
 
-from bob.sticky_completed_gate import apply_sticky_gate, should_accept_status_flip
+from bob.sticky_completed_gate import (
+    apply_sticky_completed_gate,
+    apply_sticky_gate,
+    reset_stamp_on_ac_file_rewrite,
+    should_accept_status_flip,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -305,3 +310,144 @@ class TestApplyStickyGate:
             workspace=tmp_path,
         )
         assert type(resolved) is str  # noqa: E721
+
+
+# ---------------------------------------------------------------------------
+# apply_sticky_completed_gate — AC-named canonical entry point
+# ---------------------------------------------------------------------------
+
+
+class TestApplyStickyCompletedGate:
+    """apply_sticky_completed_gate returns the resolved status string.
+
+    It must behave identically to apply_sticky_gate: keep a stamped feature at
+    'ready' when the gate fires, otherwise return the requested status.
+    """
+
+    def test_returns_ready_when_gate_blocks_demotion(self, tmp_path):
+        _write_ac_file(tmp_path, "src/mod.py")
+        resolved = apply_sticky_completed_gate(
+            parent_completed=True,
+            target_status="failed",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            workspace=tmp_path,
+        )
+        assert resolved == "ready"
+
+    def test_returns_target_when_not_stamped(self, tmp_path):
+        _write_ac_file(tmp_path, "src/mod.py")
+        resolved = apply_sticky_completed_gate(
+            parent_completed=False,
+            target_status="failed",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            workspace=tmp_path,
+        )
+        assert resolved == "failed"
+
+    def test_returns_target_when_ac_file_missing(self, tmp_path):
+        resolved = apply_sticky_completed_gate(
+            parent_completed=True,
+            target_status="failed",
+            acceptance_criteria=_acs(["src/missing.py"]),
+            workspace=tmp_path,
+        )
+        assert resolved == "failed"
+
+    def test_return_type_is_str(self, tmp_path):
+        _write_ac_file(tmp_path, "src/mod.py")
+        resolved = apply_sticky_completed_gate(
+            parent_completed=True,
+            target_status="failed",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            workspace=tmp_path,
+        )
+        assert type(resolved) is str  # noqa: E721
+
+    def test_invalid_parent_completed_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="parent_completed"):
+            apply_sticky_completed_gate(
+                parent_completed="yes",  # type: ignore[arg-type]
+                target_status="failed",
+                acceptance_criteria=None,
+                workspace=tmp_path,
+            )
+
+
+# ---------------------------------------------------------------------------
+# reset_stamp_on_ac_file_rewrite — clears stamp only on a real AC-file rewrite
+# ---------------------------------------------------------------------------
+
+
+class TestResetStampOnAcFileRewrite:
+    """The stamp resets only when a refinement rewrote an AC-named source file."""
+
+    def test_resets_when_ac_file_in_rewritten_set(self, tmp_path):
+        calls: list[str] = []
+        did_reset = reset_stamp_on_ac_file_rewrite(
+            feature_id="feat-123",
+            acceptance_criteria=_acs(["src/mod.py", "src/other.py"]),
+            rewritten_files=["src/mod.py"],
+            reset_fn=lambda fid: calls.append(fid),
+        )
+        assert did_reset is True
+        assert calls == ["feat-123"]
+
+    def test_no_reset_when_no_ac_file_rewritten(self, tmp_path):
+        calls: list[str] = []
+        did_reset = reset_stamp_on_ac_file_rewrite(
+            feature_id="feat-123",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            rewritten_files=["docs/readme.md", "src/unrelated.py"],
+            reset_fn=lambda fid: calls.append(fid),
+        )
+        assert did_reset is False
+        assert calls == []
+
+    def test_no_reset_when_rewritten_files_empty(self, tmp_path):
+        calls: list[str] = []
+        did_reset = reset_stamp_on_ac_file_rewrite(
+            feature_id="feat-123",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            rewritten_files=[],
+            reset_fn=lambda fid: calls.append(fid),
+        )
+        assert did_reset is False
+        assert calls == []
+
+    def test_no_reset_when_no_file_acs(self, tmp_path):
+        calls: list[str] = []
+        did_reset = reset_stamp_on_ac_file_rewrite(
+            feature_id="feat-123",
+            acceptance_criteria=json.dumps(["pytest: tests/test_x.py"]),
+            rewritten_files=["src/mod.py"],
+            reset_fn=lambda fid: calls.append(fid),
+        )
+        assert did_reset is False
+        assert calls == []
+
+    def test_return_type_is_bool(self, tmp_path):
+        did_reset = reset_stamp_on_ac_file_rewrite(
+            feature_id="feat-123",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            rewritten_files=["src/mod.py"],
+            reset_fn=lambda fid: None,
+        )
+        assert type(did_reset) is bool  # noqa: E721
+
+    def test_invalid_feature_id_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="feature_id"):
+            reset_stamp_on_ac_file_rewrite(
+                feature_id="",
+                acceptance_criteria=_acs(["src/mod.py"]),
+                rewritten_files=["src/mod.py"],
+                reset_fn=lambda fid: None,
+            )
+
+    def test_invalid_rewritten_files_raises(self, tmp_path):
+        with pytest.raises(ValueError, match="rewritten_files"):
+            reset_stamp_on_ac_file_rewrite(
+                feature_id="feat-123",
+                acceptance_criteria=_acs(["src/mod.py"]),
+                rewritten_files="src/mod.py",  # type: ignore[arg-type]
+                reset_fn=lambda fid: None,
+            )
