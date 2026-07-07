@@ -19,8 +19,34 @@ import pytest
 from bob.spec_quality.behavior_ac_parser import (
     parse_behavior_ac,
     accepts_synonym_conditional,
+    normalize_clause,
     BehaviorAC,
 )
+
+
+def test_normalize_clause_collapses_whitespace():
+    assert normalize_clause("behavior:   x   does  y  when  z") == (
+        "behavior: x does y when z"
+    )
+
+
+def test_normalize_clause_lowercases_keyword_and_prefix():
+    assert normalize_clause("Behavior: x does y WHEN z").startswith("behavior:")
+    assert " when " in normalize_clause("Behavior: x does y WHEN z")
+
+
+def test_normalize_clause_maps_on_to_when_keyword_case():
+    assert " on " in normalize_clause("behavior: loader ON ValueError returns None")
+
+
+def test_normalize_clause_empty_raises():
+    with pytest.raises(ValueError):
+        normalize_clause("")
+
+
+def test_normalize_clause_non_string_raises():
+    with pytest.raises(ValueError):
+        normalize_clause(None)
 
 
 # ---------------------------------------------------------------------------

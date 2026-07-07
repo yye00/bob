@@ -1215,6 +1215,49 @@ def get_verification_prompt(acceptance_criteria: list[str] | None = None) -> str
     return VERIFICATION_PROMPT_SECTION + extra
 
 
+def build_scoped_verification_section(
+    acceptance_criteria: list[str] | None = None,
+) -> str:
+    """Build the verification-before-completion prompt scoped to a feature's own tests.
+
+    Canonical entry point (feature 87906c4c) for pointing a subagent's
+    self-verification at only its own feature's test files — extracted from
+    ``pytest:`` acceptance criteria — instead of the full ``tests/`` suite root.
+    The full suite has 1800+ tests and takes >30 min, long enough for
+    ``max_turns`` to cancel the subagent before it can mark the feature complete
+    (status='interrupted').
+
+    Validates *acceptance_criteria* the same way as
+    :func:`get_scoped_pytest_command`: a non-list, non-``None`` value or a
+    non-string list item raises ``ValueError`` rather than silently producing a
+    wrong prompt.  When no ``pytest:`` ACs are present the base
+    :data:`VERIFICATION_PROMPT_SECTION` is returned unchanged; otherwise the
+    returned text extends it with the exact scoped ``python -m pytest`` command.
+
+    Args:
+        acceptance_criteria: List of AC strings, or ``None``.
+
+    Returns:
+        The verification prompt section, scoped to the feature's own test files
+        when ``pytest:`` ACs are present.
+
+    Raises:
+        ValueError: If *acceptance_criteria* is not a list or ``None``, or if any
+            list item is not a string.
+    """
+    if acceptance_criteria is not None:
+        if not isinstance(acceptance_criteria, list):
+            raise ValueError(
+                f"acceptance_criteria must be a list or None, got {type(acceptance_criteria).__name__!r}"
+            )
+        for item in acceptance_criteria:
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"acceptance_criteria items must be strings, got {type(item).__name__!r}: {item!r}"
+                )
+    return get_verification_prompt(acceptance_criteria)
+
+
 def verification_prompt_section(acceptance_criteria: list[str] | None = None) -> str:
     """Return the verification-before-completion prompt section, scoped to the feature's tests.
 

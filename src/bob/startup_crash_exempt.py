@@ -600,6 +600,58 @@ def should_exempt_from_retry(
     return outcome.decision == ExemptDecision.EXEMPT
 
 
+def is_transport_crash_exempt(
+    *,
+    exit_signature: str | None,
+    workspace: str | os.PathLike[str] | None,
+    exempt_counter: int,
+) -> bool:
+    """Return True iff a mid_work_crash is a transport crash exempt from the retry budget.
+
+    Canonical predicate referenced by the feature acceptance criteria
+    (``Function defined: bob.startup_crash_exempt.is_transport_crash_exempt``).
+
+    A crash is exempt when ALL of the following hold:
+
+    * The exit signature matches a known transport-transient pattern
+      (self-signed cert chain, connection reset, timeout, MCP plugin failure).
+    * Zero persisted implementation artifacts exist in the workspace — the
+      crash preceded any src/tests write, so no real work was lost.
+    * The lifetime exemption cap (25) has not been reached.
+
+    A crash with persisted artifacts is a genuine work-loss crash and is NOT
+    exempt (charge a retry per F-R6-300). A crash with no transport signature
+    is unclassified and NOT exempt.
+
+    Parameters
+    ----------
+    exit_signature:
+        The stderr tail / crash signature from the failed sub-agent spawn.
+        ``None`` or empty string yields ``False``.
+    workspace:
+        Workspace root directory.  May be ``None`` or non-existent.
+    exempt_counter:
+        Current lifetime exemption count for this feature (0-based).
+
+    Returns
+    -------
+    bool
+        ``True`` when the crash should be exempt from the retry budget.
+
+    Raises
+    ------
+    ValueError
+        When ``exempt_counter`` is not an integer, or when ``exit_signature``
+        is provided but is not a string or None.
+    """
+    outcome = try_exempt(
+        exit_signature=exit_signature,
+        workspace=workspace,
+        exempt_counter=exempt_counter,
+    )
+    return outcome.decision == ExemptDecision.EXEMPT
+
+
 def classify_startup_crash(
     *,
     exit_signature: str | None,
@@ -768,6 +820,7 @@ __all__ = [
     "get_exempt_count",
     "is_startup_crash_exempt",
     "is_transport_crash",
+    "is_transport_crash_exempt",
     "persisted_artifact_count",
     "should_exempt_from_retry",
     "try_exempt",

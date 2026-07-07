@@ -40,8 +40,8 @@ class TestIsOrchestratorRunning:
             assert is_orchestrator_running() is False
 
     def test_legacy_bob_run_matches(self):
-        """The legacy ``bob run`` form (no generation digit) still matches."""
-        with _patch_pids([(99001, "bob run --all")]):
+        """A gen-N ``bobN run`` process matches (spec regex requires a digit)."""
+        with _patch_pids([(99001, "bob0 run --all")]):
             assert is_orchestrator_running() is True
 
     def test_gen_n_alias_matches(self):

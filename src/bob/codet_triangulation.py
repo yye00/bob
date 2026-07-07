@@ -42,6 +42,7 @@ __all__ = [
     "mutual_agreement_scorer",
     # AC-required functions (F-R7-454 / CodeT KxK triangulation)
     "build_agreement_matrix",
+    "score_candidates",
     "select_best_impl",
     # AC-required aliases
     "score_mutual_agreement",
@@ -201,6 +202,43 @@ def build_agreement_matrix(
         ValueError: If either ``impls`` or ``test_sets`` is empty.
     """
     return generate_kxk_matrix(impls, test_sets, workspace=workspace)
+
+
+def score_candidates(
+    impls: Sequence[CandidateImpl],
+    test_sets: Sequence[CandidateTestSet],
+    workspace: str | Path | None = None,
+) -> list[tuple[CandidateImpl, float]]:
+    """Rank candidate implementations by aggregate mutual-agreement score.
+
+    Builds the KxK agreement matrix (CodeT, ICLR 2023) and, for each candidate
+    implementation, sums the mutual-agreement scores of its row across every
+    candidate test set. The result is a list of ``(impl, total_score)`` pairs
+    sorted by descending total score — the CodeT triangulation ranking that
+    replaces trusting a single test-writer pass.
+
+    Args:
+        impls: Candidate implementations. Must be non-empty.
+        test_sets: Candidate test sets. Must be non-empty.
+        workspace: Project root directory (defaults to cwd).
+
+    Returns:
+        List of ``(CandidateImpl, float)`` pairs, sorted by descending
+        aggregate mutual-agreement score.
+
+    Raises:
+        ValueError: If either ``impls`` or ``test_sets`` is empty.
+    """
+    impls_list = list(impls)
+    matrix = build_agreement_matrix(impls_list, test_sets, workspace=workspace)
+
+    totals: dict[int, float] = {i: 0.0 for i in range(len(impls_list))}
+    for cell in matrix.cells:
+        totals[cell.impl_index] += cell.score
+
+    ranked = [(impls_list[i], totals[i]) for i in range(len(impls_list))]
+    ranked.sort(key=lambda pair: pair[1], reverse=True)
+    return ranked
 
 
 def select_best_impl(

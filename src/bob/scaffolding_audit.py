@@ -28,6 +28,12 @@ import ast
 import re
 from dataclasses import dataclass
 
+from bob.cpp_stub_detector import (
+    CppStubFinding,
+    detect_cpp_stubs,
+    find_undefined_symbols,
+)
+
 
 _SCAFFOLDING_RE = re.compile(r"#\s*SCAFFOLDING\(")
 
@@ -300,3 +306,51 @@ def audit_diff(diff: str) -> list[ScaffoldingViolation]:
         all_violations.extend(violations)
 
     return all_violations
+
+
+def audit_cpp_stubs(
+    sources: dict[str, str],
+    artifacts: list[str] | None = None,
+) -> list[ScaffoldingViolation]:
+    """Audit C++/HIP sources (and built artifacts) for stub patterns.
+
+    Bridges the C++/HIP no-stubs gate (:mod:`bob.cpp_stub_detector`) into the
+    same :class:`ScaffoldingViolation` shape the Python scaffolding audit emits,
+    so both feed the same demote-to-NEEDS_HUMAN path. Covers native sources the
+    Python-only gate skipped (``Stub detection skipped (non-Python project)``).
+
+    Args:
+        sources: Mapping of native ``filepath -> content``.
+        artifacts: Optional list of produced object/library paths to scan for
+            link-level undefined symbols.
+
+    Returns:
+        A list of :class:`ScaffoldingViolation`, one per stub pattern or
+        undefined symbol found.
+    """
+    violations: list[ScaffoldingViolation] = []
+
+    finding: CppStubFinding
+    for finding in detect_cpp_stubs(sources):
+        violations.append(
+            ScaffoldingViolation(
+                line=finding.line,
+                reason=f"C++ stub in {finding.filepath}: {finding.reason}",
+                code=finding.code,
+            )
+        )
+
+    if artifacts:
+        for undef in find_undefined_symbols(artifacts):
+            violations.append(
+                ScaffoldingViolation(
+                    line=0,
+                    reason=(
+                        f"undefined symbol {undef.symbol} in {undef.artifact} "
+                        "(missing definition — will not link)"
+                    ),
+                    code=undef.symbol,
+                )
+            )
+
+    return violations

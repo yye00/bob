@@ -112,3 +112,45 @@ class TestSynthesizerIntegration:
     def test_emit_spec_is_callable(self):
         from bob.schema_constrained_spec_emission import emit_spec
         assert callable(emit_spec)
+
+
+class TestEmitConstrainedSpec:
+    def test_valid_spec_returned_unchanged(self):
+        from bob.schema_constrained_spec_emission import emit_constrained_spec
+        spec = _minimal_valid_spec()
+        assert emit_constrained_spec(spec) is spec
+
+    def test_invalid_spec_rejected_with_value_error(self):
+        from bob.schema_constrained_spec_emission import emit_constrained_spec
+        with pytest.raises(ValueError):
+            emit_constrained_spec({})
+
+    def test_non_dict_rejected(self):
+        from bob.schema_constrained_spec_emission import emit_constrained_spec
+        with pytest.raises(ValueError):
+            emit_constrained_spec("nope")  # type: ignore[arg-type]
+
+
+class TestRejectInvalidSpec:
+    def test_valid_spec_passes_through(self):
+        from bob.schema_constrained_spec_emission import reject_invalid_spec
+        spec = _minimal_valid_spec()
+        assert reject_invalid_spec(spec) is spec
+
+    def test_invalid_spec_raises_and_does_not_silently_succeed(self):
+        from bob.schema_constrained_spec_emission import reject_invalid_spec
+        result = None
+        raised = False
+        try:
+            result = reject_invalid_spec(_minimal_valid_spec() | {"risks": "bad"})
+        except ValueError:
+            raised = True
+        assert raised
+        assert result is None
+
+    def test_missing_slot_raises(self):
+        from bob.schema_constrained_spec_emission import reject_invalid_spec
+        bad = _minimal_valid_spec()
+        del bad["acceptance_criteria"]
+        with pytest.raises(ValueError):
+            reject_invalid_spec(bad)

@@ -33,6 +33,7 @@ from bob.spec_quality.example_grammar import (
     parse_property_ac,
     requires_boundary,
 )
+from ears.evaluator import check_behavior as _check_behavior
 from ears_criteria import BehaviorCriterion, parse_behavior as _parse_behavior
 
 
@@ -108,6 +109,65 @@ def parse_behavior_ac(ac: str) -> BehaviorACTuple | None:
         condition=criterion.condition,
         raw=ac.strip(),
     )
+
+
+def check_behavior_ac(
+    ac: "str | BehaviorACTuple | BehaviorCriterion",
+    code_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate a behavior AC against optional code context.
+
+    This is the sixth-grammar evaluator check.  Instead of grading a
+    behavior AC from freeform prose, it uses the parsed
+    (subject, verb, object, condition) structure to produce a targeted
+    verification — delegating the structured evaluation to
+    :func:`ears.evaluator.check_behavior`.
+
+    Args:
+        ac: Either a raw ``behavior:`` AC string, a
+            :class:`BehaviorACTuple` produced by :func:`parse_behavior_ac`,
+            or a :class:`~ears_criteria.BehaviorCriterion`.
+        code_context: Optional dict with a ``files`` mapping of path->content
+            and/or ``test_results`` / ``diff`` entries used as evidence.
+
+    Returns:
+        A dict with keys ``verdict`` (bool), ``evidence`` (str),
+        ``confidence`` (float) and ``prompt`` (str).
+
+    Raises:
+        ValueError: When *ac* is a malformed ``behavior:`` string (prefix
+            present but missing the ``when`` clause), a non-behavior string,
+            or a value that is neither a behavior string, a
+            :class:`BehaviorACTuple`, nor a :class:`BehaviorCriterion`.
+    """
+    if isinstance(ac, str):
+        tup = parse_behavior_ac(ac)
+        if tup is None:
+            raise ValueError(
+                f"check_behavior_ac expected a behavior: AC string, got: {ac!r}"
+            )
+        criterion = BehaviorCriterion(
+            subject=tup.subject,
+            verb=tup.verb,
+            object_=tup.object_,
+            condition=tup.condition,
+        )
+    elif isinstance(ac, BehaviorACTuple):
+        criterion = BehaviorCriterion(
+            subject=ac.subject,
+            verb=ac.verb,
+            object_=ac.object_,
+            condition=ac.condition,
+        )
+    elif isinstance(ac, BehaviorCriterion):
+        criterion = ac
+    else:
+        raise ValueError(
+            "check_behavior_ac expects a behavior: string, BehaviorACTuple, "
+            f"or BehaviorCriterion, got {type(ac).__name__!r}"
+        )
+
+    return _check_behavior(criterion, code_context)
 
 
 @dataclass
@@ -275,6 +335,7 @@ def add_key_examples(
 
 __all__ = [
     "BehaviorACTuple",
+    "check_behavior_ac",
     "KeyExample",
     "KeyExampleVariant",
     "PropertyAC",

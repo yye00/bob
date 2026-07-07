@@ -122,6 +122,50 @@ def test_none_raises_value_error():
 
 
 # ---------------------------------------------------------------------------
+# is_cross_feature_policy_ac predicate
+# ---------------------------------------------------------------------------
+
+
+def test_is_cross_feature_policy_ac_importable():
+    """is_cross_feature_policy_ac must be importable from bob.policy_ac_demotion."""
+    from bob.policy_ac_demotion import is_cross_feature_policy_ac
+
+    assert callable(is_cross_feature_policy_ac)
+
+
+def test_is_cross_feature_true_for_fr_reference():
+    """A criterion containing an F-RX-YYY token is a cross-feature policy AC."""
+    from bob.policy_ac_demotion import is_cross_feature_policy_ac
+
+    assert is_cross_feature_policy_ac(
+        "integration: F-R7-478 unlimited spawn-retry path remains unaffected"
+    ) is True
+
+
+def test_is_cross_feature_false_for_normal_criterion():
+    """A criterion with no F-RX-YYY token is not a cross-feature policy AC."""
+    from bob.policy_ac_demotion import is_cross_feature_policy_ac
+
+    assert is_cross_feature_policy_ac("function defined: bob.mod.fn") is False
+
+
+def test_is_cross_feature_empty_string_raises():
+    """Empty string is invalid input — must raise ValueError."""
+    from bob.policy_ac_demotion import is_cross_feature_policy_ac
+
+    with pytest.raises(ValueError):
+        is_cross_feature_policy_ac("")
+
+
+def test_is_cross_feature_none_raises():
+    """None is invalid input — must raise ValueError."""
+    from bob.policy_ac_demotion import is_cross_feature_policy_ac
+
+    with pytest.raises(ValueError):
+        is_cross_feature_policy_ac(None)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
 # Integration with bob.enhanced_verification
 # ---------------------------------------------------------------------------
 

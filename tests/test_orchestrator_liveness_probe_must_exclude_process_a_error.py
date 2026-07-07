@@ -98,7 +98,7 @@ class TestProbeFunctionErrorPath:
         # must not silently claim a false positive.
         with patch(
             "bob.orchestrator.liveness_probe._iter_candidate_pids",
-            return_value=[(99999, "bob run --all")],
+            return_value=[(99999, "bob14 run --all")],
         ), patch(
             "bob.orchestrator.probe_ancestry.collect_ancestor_pids",
             return_value=frozenset({os.getpid()}),

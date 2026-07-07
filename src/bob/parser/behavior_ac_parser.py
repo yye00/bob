@@ -26,11 +26,13 @@ from __future__ import annotations
 from bob.spec_quality.behavior_ac_parser import (  # re-export for symmetry
     BehaviorAC,
     accepts_synonym_conditional,
+    normalize_clause,
     parse_behavior_ac,
 )
 
 __all__ = [
     "BehaviorAC",
     "accepts_synonym_conditional",
+    "normalize_clause",
     "parse_behavior_ac",
 ]

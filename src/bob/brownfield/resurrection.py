@@ -637,6 +637,38 @@ def get_graveyard_signal(
 signal_graveyard_prs = get_graveyard_signal
 
 
+def graveyard_pr_signal(
+    repo: str,
+    feature_keywords: list[str],
+    lookback_days: int = 90,
+    github_token: Optional[str] = None,
+) -> list[ResurrectionSignal]:
+    """Signal-A (GitHub-graveyard stale-PR) entry point (8a4ce8b9).
+
+    BF-5 scope reduction: after research, the only resurrection signal unique
+    to bob is the stale-PR / closed-unmerged GitHub search. Signal-B
+    (export_without_impl) and Signal-C (todo_cluster) are covered by Claude
+    Code session-resume + Plan Mode and gated behind deep_resurrection_scan.
+    This is the canonical public name the scope-correction sidecar pins for the
+    graveyard check; it delegates to get_graveyard_signal (Signal A only).
+
+    Args:
+        repo: GitHub repo slug, e.g. 'owner/repo'.
+        feature_keywords: Keywords from feature.capability for PR/body matching.
+        lookback_days: How old a draft PR must be to fire (default: 90).
+        github_token: Optional GitHub token for authenticated access.
+
+    Returns:
+        List of ResurrectionSignal with signal_kind='stale_pr'.
+    """
+    return get_graveyard_signal(
+        repo=repo,
+        feature_keywords=feature_keywords,
+        lookback_days=lookback_days,
+        github_token=github_token,
+    )
+
+
 def graveyard_signal(
     repo: str,
     feature_keywords: list[str],

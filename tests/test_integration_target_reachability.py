@@ -5,7 +5,31 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 
-from bob.integration_target_reachability import verify_integration_target_reachable
+from bob.integration_target_reachability import (
+    check_integration_reachability,
+    resolve_target,
+    verify_integration_target_reachable,
+)
+
+
+class TestACRequiredFunctions:
+    def test_resolve_target_is_exported(self, tmp_path):
+        assert resolve_target("os", workspace=tmp_path) == "in_workspace"
+        assert resolve_target("totally.missing.xyz", workspace=tmp_path) == "unreachable"
+
+    def test_check_integration_reachability_passes_for_reachable_spec(self, tmp_path):
+        features = [{"name": "F1", "acceptance_criteria": ["integration: os"]}]
+        result = check_integration_reachability(features, workspace=tmp_path)
+        assert result.passed is True
+
+    def test_check_integration_reachability_fails_for_unreachable_spec(self, tmp_path):
+        features = [{"name": "F1", "acceptance_criteria": ["integration: totally.missing.xyz"]}]
+        result = check_integration_reachability(features, workspace=tmp_path)
+        assert result.passed is False
+
+    def test_check_integration_reachability_rejects_non_list(self, tmp_path):
+        with pytest.raises(ValueError):
+            check_integration_reachability("not_a_list", workspace=tmp_path)  # type: ignore[arg-type]
 
 
 class TestVerifyIntegrationTargetReachable:

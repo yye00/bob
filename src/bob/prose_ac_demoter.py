@@ -42,11 +42,60 @@ from bob.verification.structural_prefix_match import (
 
 __all__ = [
     "is_structural_prefix_match",
+    "is_executable_or_structural_criterion",
     "is_prose_ac",
     "demote_if_prose",
     "prose_connector_registry",
     "get_prose_connectors",
 ]
+
+
+_INTEGRATION_PREFIX = "integration:"
+
+
+def _is_integration_prose(criterion: str) -> bool:
+    """Return True iff *criterion* is an ``integration:`` AC whose body is prose.
+
+    An ``integration:`` criterion names a real integration target only when its
+    body identifies a single module/route.  When the body contains a registered
+    prose-connector token ("continues to", "separately", "invariant", ...) it is
+    a policy statement, not an executable integration target, and MUST demote.
+
+    The connector set consulted here is the single source of truth returned by
+    :func:`get_prose_connectors` — callers extend coverage there, not here.
+    """
+    stripped = criterion.lstrip().lower()
+    if not stripped.startswith(_INTEGRATION_PREFIX):
+        return False
+    body = stripped[len(_INTEGRATION_PREFIX):]
+    return any(token in body for token in get_prose_connectors())
+
+
+def is_executable_or_structural_criterion(criterion: str) -> bool:
+    """Return True iff *criterion* is executable or structural (must NOT demote).
+
+    A criterion is executable/structural when it either:
+    - starts with a registered structural prefix at START-OF-STRING position
+      (is_structural_prefix_match), OR
+    - contains a keyword-style substring marker such as "function implemented"
+      or "no compilation errors" (is_substring_marker_match).
+
+    Exception: an ``integration:`` criterion whose body contains a prose-connector
+    token (see :func:`get_prose_connectors`) is a policy statement, not a real
+    integration target, and is therefore NOT executable — it must demote.
+
+    This is the single decision point the verifier consumes to decide whether
+    to run real verification (True) or demote the AC to a soft warning (False).
+    It is the logical complement of is_prose_ac for string input.
+
+    Non-string input returns False (treated as prose / non-executable) so the
+    caller never hard-fails on a malformed criterion.
+    """
+    if not isinstance(criterion, str):
+        return False
+    if _is_integration_prose(criterion):
+        return False
+    return is_structural_prefix_match(criterion) or is_substring_marker_match(criterion)
 
 
 def get_prose_connectors() -> frozenset[str]:
@@ -73,10 +122,7 @@ def is_prose_ac(criterion: str) -> bool:
     """
     if not isinstance(criterion, str):
         return True
-    return (
-        not is_structural_prefix_match(criterion)
-        and not is_substring_marker_match(criterion)
-    )
+    return not is_executable_or_structural_criterion(criterion)
 
 
 def demote_if_prose(criterion: str) -> tuple[bool, str] | None:

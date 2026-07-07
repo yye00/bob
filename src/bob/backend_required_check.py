@@ -41,6 +41,7 @@ from typing import Any, Mapping, Sequence
 __all__ = [
     "BackendCheckResult",
     "check_backend_required",
+    "feature_performs_backend_compute",
     "COMPUTE_MARKERS",
     "HIP_BACKEND_MARKERS",
 ]
@@ -155,7 +156,18 @@ def _feature_text(feature: Mapping[str, Any]) -> str:
     return "\n".join(parts).lower()
 
 
-def _is_compute_feature(feature: Mapping[str, Any]) -> bool:
+def feature_performs_backend_compute(feature: Any) -> bool:
+    """Return ``True`` when *feature* carries backend-compute markers.
+
+    A feature whose description/ACs mention any of :data:`COMPUTE_MARKERS`
+    (gpu/hip/kernel/matmul/linalg/fft/...) is a backend-compute feature and is
+    therefore in-scope for the backend-required check.  Non-mappings raise
+    :exc:`ValueError` so callers cannot silently pass junk (error path).
+    """
+    if not isinstance(feature, Mapping):
+        raise ValueError(
+            f"feature must be a mapping, got {type(feature).__name__!r}"
+        )
     blob = _feature_text(feature)
     if not blob:
         return False
@@ -165,6 +177,10 @@ def _is_compute_feature(feature: Mapping[str, Any]) -> bool:
         if re.search(r"\b" + re.escape(marker) + r"\b", blob):
             return True
     return False
+
+
+def _is_compute_feature(feature: Mapping[str, Any]) -> bool:
+    return feature_performs_backend_compute(feature)
 
 
 def _file_references_backend(text: str, markers: Sequence[str]) -> bool:

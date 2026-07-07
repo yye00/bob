@@ -510,6 +510,54 @@ def filter_candidates_by_confidence(
     return filtered
 
 
+def multi_candidate_patch(
+    feature: dict[str, Any],
+    *,
+    workspace: Optional[Path] = None,
+    candidate_count: int = 3,
+    patch_generator: Optional[Any] = None,
+    test_files: Optional[list[str]] = None,
+) -> Any:
+    """Run multi-candidate patch generation + LLM-judge vote (AC entry point).
+
+    This is the AC-required entry point for the multi-candidate patch pattern
+    (Feature a115f95a). It delegates to
+    ``bob.brownfield.multi_candidate_patch.run_multi_candidate``, which:
+
+      1. Gates on ``is_hard_feature`` (difficulty >= 'hard' or prior attempts).
+      2. Spawns N=3 worker candidates in parallel worktrees.
+      3. Filters out patches that break visible regression tests.
+      4. Ranks survivors with the LLM judge.
+      5. Commits the winner and archives losers, emitting MULTI_CANDIDATE_WIN.
+
+    Args:
+        feature: Feature dict with 'id', 'description', 'acceptance_criteria',
+                 'refinement_attempts', 'difficulty', etc.
+        workspace: Repository root. Defaults to cwd.
+        candidate_count: Number of parallel candidates to spawn (default 3).
+        patch_generator: Optional callable(worktree_path, feature) -> str.
+        test_files: Optional list of regression test files.
+
+    Returns:
+        A MultiCandidateResult with the winning patch and telemetry.
+
+    Raises:
+        ValueError: If feature is not a dict.
+    """
+    if not isinstance(feature, dict):
+        raise ValueError(f"feature must be a dict, got {type(feature)!r}")
+
+    from bob.brownfield.multi_candidate_patch import run_multi_candidate
+
+    return run_multi_candidate(
+        feature,
+        workspace=workspace,
+        candidate_count=candidate_count,
+        patch_generator=patch_generator,
+        test_files=test_files,
+    )
+
+
 def search_results_to_edit_sites(results: list[SearchResult]) -> list[dict[str, Any]]:
     """Convert SearchResult objects to the edit-site format used by the localizer.
 

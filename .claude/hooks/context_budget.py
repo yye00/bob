@@ -15,7 +15,7 @@ The hook emits:
   - decision='continue'  when context usage is within budget
   - decision='block'     with a reason when usage exceeds the 60% gate
 
-Telemetry: emits CTX_BUDGET_KILL events to .bob3/events.jsonl when blocking.
+Telemetry: emits CTX_BUDGET_KILL events to .bob/events.jsonl when blocking.
 
 Prefix-cache note: this hook NEVER edits the system prompt or tool definitions
 mid-feature.  Those fields carry the 5-minute TTL prefix cache; mutating them
@@ -47,9 +47,9 @@ _MODEL_WINDOW_TOKENS: dict[str, int] = {
     "default": 200_000,
 }
 
-# Path to the bob3 events log (relative to workspace root or absolute).
-_EVENTS_LOG_ENV = "BOB3_WORKSPACE"
-_EVENTS_LOG_RELATIVE = ".bob3/events.jsonl"
+# Path to the bob events log (relative to workspace root or absolute).
+_EVENTS_LOG_ENV = "BOB_WORKSPACE"
+_EVENTS_LOG_RELATIVE = ".bob/events.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ def emit_telemetry(
     limit: int,
     workspace: str | None = None,
 ) -> None:
-    """Append a telemetry event to .bob3/events.jsonl.
+    """Append a telemetry event to .bob/events.jsonl.
 
     Args:
         event:       Event name string (e.g. 'CTX_BUDGET_KILL').
@@ -152,10 +152,10 @@ def should_block(
 
     tokens = metrics["tokens_used"]
     limit = metrics["limit"]
-    feature_id = os.environ.get("BOB3_FEATURE_ID", "unknown")
+    feature_id = os.environ.get("BOB_FEATURE_ID", "unknown")
     reason = (
         f"context-budget-exceeded; spawn fresh subagent and hand off via "
-        f".bob3/handoff/{feature_id}.md "
+        f".bob/handoff/{feature_id}.md "
         f"(used {tokens}/{limit} tokens, "
         f"{metrics['fraction']:.1%} of model window)"
     )
@@ -222,7 +222,7 @@ def main() -> None:
 
     _emit_block(
         f"context-budget-exceeded; spawn fresh subagent and hand off via "
-        f".bob3/handoff/{feature_id or 'unknown'}.md "
+        f".bob/handoff/{feature_id or 'unknown'}.md "
         f"(used {tokens}/{limit} tokens, "
         f"{metrics['fraction']:.1%} of model window)"
     )
@@ -294,10 +294,10 @@ def _estimate_tokens_from_transcript(transcript_path: str) -> int:
 def _extract_feature_id(payload: dict[str, Any]) -> str | None:
     """Try to pull a feature_id from the hook payload.
 
-    Claude Code doesn't natively include feature_id; bob3 passes it via
+    Claude Code doesn't natively include feature_id; bob passes it via
     an environment variable set before spawning the sub-agent.
     """
-    feature_id = os.environ.get("BOB3_FEATURE_ID")
+    feature_id = os.environ.get("BOB_FEATURE_ID")
     if feature_id:
         return feature_id
     # Fall back to session_id as a last resort.

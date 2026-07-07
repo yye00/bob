@@ -382,6 +382,34 @@ def emit_icontract_decorators(spec: ContractSpec) -> str:
     return "\n".join(parts)
 
 
+def emit_contract_decorators(spec: ContractSpec) -> str:
+    """Emit Python source-code decorator stacks for a :class:`ContractSpec`.
+
+    AC-required canonical name; delegates to :func:`emit_icontract_decorators`.
+    Each ``pre`` condition becomes an ``@icontract.require`` decorator whose
+    lambda binds every free variable in the condition (fixing the zero-arg
+    lambda bug from feature 73879589); each ``post`` becomes
+    ``@icontract.ensure(lambda result: ...)``; each ``inv`` becomes
+    ``@icontract.invariant(lambda self: ...)``. Every emitted decorator is
+    validated with :func:`validate_lambda_binding` before it is returned, so a
+    contract whose lambda references an unbound variable raises
+    :exc:`~bob.spec_quality.contract_grammar_lambda_binder.ContractGrammarBindingError`
+    rather than being persisted.
+
+    Args:
+        spec: A parsed :class:`ContractSpec`.
+
+    Returns:
+        A string of Python decorator lines, or an empty string when the spec
+        has no clauses.
+
+    Raises:
+        ContractGrammarBindingError: When any emitted lambda leaves a free
+            variable unbound.
+    """
+    return emit_icontract_decorators(spec)
+
+
 # ---------------------------------------------------------------------------
 # attribute_blame
 # ---------------------------------------------------------------------------

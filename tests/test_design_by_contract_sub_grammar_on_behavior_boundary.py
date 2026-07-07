@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from f_r7_412.behavior_contract import apply_design_by_contract
+from hippy.behavior_contract import emit_contract_decorators, verify_contracts
 
 
 class TestBoundaryEmptyAndMinimalInput:
@@ -89,3 +90,48 @@ class TestBoundaryEmptyAndMinimalInput:
         assert result["spec"]["post"] == ["result >= 0"]
         assert result["spec"]["inv"] == ["self.ready"]
         assert result["spec"]["raises"] == ["E"]
+
+
+class TestHippyEmitBoundary:
+    """hippy.behavior_contract.emit_contract_decorators boundary behaviour."""
+
+    def test_empty_dict_returns_empty_string(self):
+        assert emit_contract_decorators({}) == ""
+
+    def test_behavior_only_returns_empty_string(self):
+        assert emit_contract_decorators({"behavior": "does the thing"}) == ""
+
+    def test_single_pre_emits_require(self):
+        out = emit_contract_decorators({"pre": "x > 0"})
+        assert "@icontract.require" in out
+
+    def test_raises_only_emits_comment_not_error(self):
+        out = emit_contract_decorators({"raises": "ValueError"})
+        assert "# raises: ValueError" in out
+
+
+class TestHippyVerifyBoundary:
+    """hippy.behavior_contract.verify_contracts boundary behaviour."""
+
+    def test_no_contracts_runs_and_returns_value(self):
+        result = verify_contracts(lambda x: x + 1, {}, 4)
+        assert result.ok is True
+        assert result.value == 5
+        assert result.violation is None
+
+    def test_behavior_only_is_no_op(self):
+        result = verify_contracts(lambda: 7, {"behavior": "returns 7"})
+        assert result.ok is True
+        assert result.value == 7
+
+    def test_zero_at_boundary_of_pre(self):
+        # pre requires x > 0; x == 0 is the boundary and must fail cleanly.
+        result = verify_contracts(lambda x: x, {"pre": "x > 0"}, 0)
+        assert result.ok is False
+        assert result.violation == "pre"
+        assert result.blame == "caller"
+
+    def test_pre_holds_returns_value(self):
+        result = verify_contracts(lambda x: x * 2, {"pre": "x >= 0"}, 0)
+        assert result.ok is True
+        assert result.value == 0

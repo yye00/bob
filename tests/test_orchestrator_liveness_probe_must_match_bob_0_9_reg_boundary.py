@@ -63,7 +63,7 @@ def test_check_orchestrator_running_with_single_matching_process():
     """check_orchestrator_running with minimum one matching process returns True."""
     with patch(
         "bob.orchestrator.liveness_probe._iter_candidate_pids",
-        return_value=[(99001, "bob run")],
+        return_value=[(99001, "bob14 run")],
     ):
         result = check_orchestrator_running()
     assert result is True

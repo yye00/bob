@@ -52,6 +52,43 @@ def _looks_like_feature_id(name: str) -> bool:
     return bool(_UUID_RE.match(name))
 
 
+def _validate_inputs(
+    feature_id: str,
+    acs: list[str],
+    workspace: str | Path,
+) -> None:
+    """Validate the common (feature_id, acs, workspace) inputs.
+
+    Raises:
+        ValueError: If *feature_id* is not a non-empty string, *acs* is not a
+            list/tuple of strings, or *workspace* is None/empty. This ensures
+            the scoping functions fail loudly on malformed input rather than
+            silently succeeding (or raising an opaque ``TypeError`` deep in a
+            path operation).
+    """
+    if not isinstance(feature_id, str) or not feature_id.strip():
+        raise ValueError(
+            f"feature_id must be a non-empty string, got {feature_id!r}"
+        )
+    if not isinstance(acs, (list, tuple)):
+        raise ValueError(
+            f"acs must be a list or tuple of strings, got {type(acs).__name__}"
+        )
+    for ac in acs:
+        if not isinstance(ac, str):
+            raise ValueError(
+                f"every acceptance criterion must be a string, got {ac!r}"
+            )
+    if workspace is None or (isinstance(workspace, str) and not workspace.strip()):
+        raise ValueError(
+            f"workspace must be a non-empty path, got {workspace!r}"
+        )
+    if not isinstance(workspace, (str, Path)):
+        raise ValueError(
+            f"workspace must be a str or Path, got {type(workspace).__name__}"
+        )
+
+
 def collect_feature_test_paths(
     feature_id: str,
     acs: list[str],
@@ -69,7 +106,11 @@ def collect_feature_test_paths(
         feature_id: The feature's UUID string.
         acs:        The feature's acceptance criteria list.
         workspace:  Repository root (directory containing ``tests/``).
+
+    Raises:
+        ValueError: If *feature_id*, *acs*, or *workspace* is malformed.
     """
+    _validate_inputs(feature_id, acs, workspace)
     ws = Path(workspace)
     paths: set[str] = set()
 

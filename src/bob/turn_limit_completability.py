@@ -36,6 +36,7 @@ __all__ = [
     "is_turn_limit_result",
     "is_transport_transient",
     "classify_result",
+    "classify_turn_limit_result",
 ]
 
 
@@ -281,3 +282,10 @@ def classify_result(result: object) -> TurnLimitOutcome:
             "(e.g. bare exit code); charge the attempt, do not grant a free retry"
         ),
     )
+
+
+# AC-named alias: ``classify_turn_limit_result`` is the acceptance-criteria
+# entry point; it delegates to :func:`classify_result`.
+def classify_turn_limit_result(result: object) -> TurnLimitOutcome:
+    """AC-named alias of :func:`classify_result`. See that function."""
+    return classify_result(result)

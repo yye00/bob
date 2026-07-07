@@ -51,6 +51,7 @@ from bob.verification.regression_attribution import (
 __all__ = [
     "attribute_failure_to_owner",
     "attribute_failures_to_owning_feature",
+    "attribute_regression",
     "attribute_regression_to_feature",
     "attribute_test_failure_to_owner",
     "build_test_owner_map",
@@ -523,6 +524,49 @@ def attribute_regression_to_feature(
     return detect_regression(
         newly_failing_tests=newly_failing_tests,
         test_ownership_map=ownership_map,
+    )
+
+
+def attribute_regression(
+    newly_failing_tests: list[str],
+    test_ownership_map: dict[str, str],
+) -> dict[str, dict]:
+    """Attribute newly-failing tests to their owning features — no scapegoats.
+
+    AC-canonical entry point (``bob.regression_attribution.attribute_regression``)
+    pairing with :func:`build_test_ownership_map`: pass the ``{test_path:
+    feature_id}`` map that ``build_test_ownership_map`` produces and the tests
+    that newly fail vs the pre-impl baseline.
+
+    Enforces the no-scapegoat policy: a feature is demoted (``"demote": True``)
+    ONLY when at least one of its own declared tests newly fails.  Tests with
+    no declared owner are collected under the ``"unattributed"`` sentinel key;
+    no other feature is blamed for them.
+
+    Args:
+        newly_failing_tests: Pytest node-ids that newly fail vs baseline.
+        test_ownership_map: ``{test_path: feature_id}`` ownership map, typically
+            built via :func:`build_test_ownership_map`.
+
+    Returns:
+        Dict keyed by feature_id (and possibly ``"unattributed"``).
+        Values are ``{"tests": [...], "demote": bool}``.
+
+    Raises:
+        TypeError: When *newly_failing_tests* or *test_ownership_map* is None
+            or of the wrong type.
+    """
+    if test_ownership_map is None:
+        raise TypeError("test_ownership_map must not be None")
+    if not isinstance(test_ownership_map, dict):
+        raise TypeError(
+            f"test_ownership_map must be a dict, got {type(test_ownership_map)!r}"
+        )
+    # Delegate through TestOwnershipMap so that file-level ``pytest:`` claims
+    # (e.g. "tests/test_foo.py") correctly attribute node-id failures
+    # ("tests/test_foo.py::test_x") via prefix matching.
+    return TestOwnershipMap(test_ownership_map).detect_regression(
+        newly_failing_tests
     )
 
 

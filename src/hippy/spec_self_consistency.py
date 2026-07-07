@@ -287,3 +287,42 @@ def run_self_consistency_check(
         result.route, result.consensus, feature_id,
     )
     return result
+
+
+def check_spec_consistency(
+    feature_id: str,
+    name: str,
+    description: str,
+    acceptance_criteria: list[str],
+    *,
+    n: int = 3,
+    variants_dir: Path | str | None = None,
+) -> SelfConsistencyResult:
+    """Pre-critic self-consistency gate for an extracted spec.
+
+    This is the public entry point named in the feature spec. It runs the
+    N-sample stability check (:func:`run_self_consistency_check`) and returns
+    the routed :class:`SelfConsistencyResult`:
+
+    * ``stability_score < 0.7`` → ``route="clarification"`` with
+      ``disagreeing_slots`` cited (routes to F-R7-456).
+    * ``0.7 ≤ score < 0.9``     → ``route="critic"`` (standard critic path).
+    * ``stability_score ≥ 0.9`` → ``route="auto_accept"`` with
+      ``consensus=True`` and the majority-vote spec.
+
+    Parameters mirror :func:`run_self_consistency_check`.
+
+    Raises
+    ------
+    ValueError
+        If ``acceptance_criteria`` is not a list, or ``n`` is not a positive
+        integer.
+    """
+    return run_self_consistency_check(
+        feature_id=feature_id,
+        name=name,
+        description=description,
+        acceptance_criteria=acceptance_criteria,
+        n=n,
+        variants_dir=variants_dir,
+    )

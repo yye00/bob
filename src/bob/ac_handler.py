@@ -19,6 +19,10 @@ from __future__ import annotations
 
 import pathlib
 
+from bob.sanitizer_clean_ac import (
+    parse_sanitizer_clean_ac,
+    verify_sanitizer_clean,
+)
 from bob.verifier.shell_script_ac import handle_shell_script_ac
 
 
@@ -55,8 +59,24 @@ def demote_shell_script_integration(
 #: Canonical alias expected by the AC verifier (F-R7-594).
 demote_shell_script_integration_ac = demote_shell_script_integration
 
+
+def handle_sanitizer_clean_ac(
+    criterion: str,
+    workspace: pathlib.Path,
+) -> tuple[bool, str] | None:
+    """Dispatch a ``sanitizer-clean:`` AC to the sanitizer-clean verifier.
+
+    Returns ``(passed, reason)`` when *criterion* is a ``sanitizer-clean:`` AC,
+    or ``None`` when it is not (caller continues to the next pattern).
+    """
+    if parse_sanitizer_clean_ac(criterion) is None:
+        return None
+    return verify_sanitizer_clean(criterion, workspace)
+
+
 __all__ = [
     "handle_integration_ac",
     "demote_shell_script_integration",
     "demote_shell_script_integration_ac",
+    "handle_sanitizer_clean_ac",
 ]

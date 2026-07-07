@@ -91,3 +91,27 @@ def verify_integration_target_reachable(
         raise ValueError(result.format_report())
 
     return result
+
+
+def check_integration_reachability(
+    features: Any,
+    workspace: Path | str | None = None,
+    *,
+    reject_on_failure: bool = False,
+) -> ReachabilityResult:
+    """Check every ``integration:`` AC in *features* is reachable.
+
+    Thin spec-mode wrapper over :func:`verify_integration_target_reachable`.
+    *features* must be a list of feature dicts; any other type raises
+    :exc:`ValueError`.  When *reject_on_failure* is True, an unreachable target
+    raises :exc:`ValueError` with a structured report.
+    """
+    if not isinstance(features, list):
+        raise ValueError(
+            f"features must be a list, got {type(features).__name__!r}"
+        )
+    return verify_integration_target_reachable(
+        features=features,
+        workspace=workspace,
+        reject_on_failure=reject_on_failure,
+    )

@@ -25,14 +25,62 @@ from __future__ import annotations
 
 from bob.cost_cap import enforce_per_attempt_cost_cap  # noqa: F401 — re-export
 from bob.orchestrator.per_attempt_cost_cap import (
+    get_per_attempt_cap,
     terminate_subagent_on_cost_cap,
 )
 
 __all__ = [
+    "enforce_attempt_cost_cap",
     "enforce_cost_cap",
     "enforce_per_attempt_cost_cap",
+    "resolve_cost_cap",
     "send_sigterm_on_cost_exceeded",
 ]
+
+
+def resolve_cost_cap() -> float:
+    """Resolve the effective per-attempt cost cap in USD.
+
+    Reads ``BOB_PER_ATTEMPT_COST_CAP`` (default 10.0), clamps it to the valid
+    range [0.5, 100], and returns the result. Never raises: an unset, empty,
+    or non-numeric env var falls back to the default. Canonical public name
+    for the cap-resolution step required by the feature's acceptance criteria.
+
+    Returns
+    -------
+    float
+        The per-attempt cap in USD, always within [0.5, 100].
+    """
+    return get_per_attempt_cap()
+
+
+def enforce_attempt_cost_cap(
+    *,
+    feature_id: str,
+    pid: int,
+    reported_cost: float,
+) -> bool:
+    """Enforce the per-attempt cost cap for an in-flight subagent.
+
+    If ``reported_cost`` exceeds the cap resolved by :func:`resolve_cost_cap`,
+    the subagent (``pid``) is terminated (SIGTERM → 15 s grace → SIGKILL), the
+    attempt is charged per F-R7-561 lossless-cost rules, and the audit sentinel
+    ``subagent_killed_on_attempt_cost_cap=<feature_id>:<cost>`` is written.
+    Otherwise this is a no-op.
+
+    Canonical public name required by the feature's acceptance criteria;
+    delegates to the verified :func:`enforce_per_attempt_cost_cap`.
+
+    Returns
+    -------
+    bool
+        True when the subagent was terminated, False otherwise.
+    """
+    return enforce_per_attempt_cost_cap(
+        feature_id=feature_id,
+        pid=pid,
+        reported_cost=reported_cost,
+    )
 
 
 def enforce_cost_cap(

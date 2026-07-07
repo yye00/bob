@@ -32,6 +32,8 @@ from spec_synthesis.constrained_emit import emit_with_schema as _emit_with_schem
 __all__ = [
     "emit_spec",
     "validate_spec",
+    "emit_constrained_spec",
+    "reject_invalid_spec",
 ]
 
 
@@ -107,3 +109,54 @@ def validate_spec(
     except ValueError as exc:
         return [str(exc)]
     return []
+
+
+def emit_constrained_spec(
+    spec: dict[str, Any],
+    *,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Emit a schema-constrained spec — the canonical constrained-decoding entry.
+
+    Thin alias over :func:`emit_spec`: validates *spec* against the pinned
+    ``schemas/spec.v1.json`` and returns it unchanged. Any spec that does not
+    conform is REJECTED with a ``ValueError`` — never silently coerced or
+    auto-retried. This is the function callers use in place of the old
+    generate-then-parse-then-retry loop.
+
+    See :func:`emit_spec` for parameter and exception semantics.
+    """
+    return emit_spec(spec, schema_path=schema_path)
+
+
+def reject_invalid_spec(
+    spec: dict[str, Any],
+    *,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Reject a non-conforming spec loudly; return it unchanged if valid.
+
+    Enforces the "reject, never coerce" contract: a spec that violates the
+    pinned schema raises ``ValueError`` rather than being silently repaired or
+    passed through. A conforming spec is returned unchanged so callers can use
+    this as a validating pass-through gate.
+
+    Parameters
+    ----------
+    spec:
+        Parsed spec dict to check.
+    schema_path:
+        Override the default ``schemas/spec.v1.json`` path.
+
+    Returns
+    -------
+    dict
+        The validated spec, identical to *spec*.
+
+    Raises
+    ------
+    ValueError
+        If *spec* is not a dict or does not conform to the schema. The
+        function never silently succeeds on an invalid spec.
+    """
+    return emit_spec(spec, schema_path=schema_path)

@@ -570,10 +570,68 @@ def gate_spec_quality(score_or_metrics: Union[float, int, Dict[str, float]]) -> 
     return "refuse"
 
 
+def build_remediation_report(
+    name: str,
+    description: str | None,
+    acceptance_criteria: Union[list[str], str],
+    workspace: Path | str | None = None,
+) -> str | None:
+    """Build a structured remediation report for a feature below the gate.
+
+    Combines F-R7-410 / F-R7-411 / F-R7-412 plus an AC-coverage metric into a
+    per-feature spec_quality_score in [0, 1]. When the score is below the
+    ready threshold (0.85) the feature stays pending and this function returns
+    a structured, human-readable report explaining which sub-scores dragged the
+    feature below the bar and how to remediate each one. Returns ``None`` when
+    the feature already passes the gate.
+
+    Parameters
+    ----------
+    name:
+        Feature name. Must be a non-None string.
+    description:
+        Feature description text. May be None.
+    acceptance_criteria:
+        List of AC strings, a JSON-encoded list, or a newline-separated string.
+    workspace:
+        Project root directory for reachability checks. Defaults to Path.cwd().
+
+    Returns
+    -------
+    str | None
+        Structured remediation report when the feature is below threshold, or
+        ``None`` when the feature passes the gate.
+
+    Raises
+    ------
+    ValueError
+        When *name* is None or not a string, or when *acceptance_criteria* is
+        neither a list nor a string.
+    """
+    if name is None:
+        raise ValueError("feature name must not be None; provide a non-empty string.")
+    if not isinstance(name, str):
+        raise ValueError(
+            f"feature name must be a string, got {type(name).__name__!r}."
+        )
+    if not isinstance(acceptance_criteria, (list, str)):
+        raise ValueError(
+            f"acceptance_criteria must be a list or string, got "
+            f"{type(acceptance_criteria).__name__!r}."
+        )
+    return generate_remediation_report(
+        name=name,
+        description=description,
+        acceptance_criteria=acceptance_criteria,
+        workspace=workspace,
+    )
+
+
 __all__ = [
     "compute",
     "compute_score",
     "gate_spec_quality",
+    "build_remediation_report",
     "SUB_METRIC_WEIGHTS",
     "compute_quality_score",
     "compute_spec_quality_score",

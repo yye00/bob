@@ -232,6 +232,11 @@ def emit_skip_ratio_bound(criteria: list[str], title: str = "") -> list[str]:
     return out
 
 
+# AC-named alias: the acceptance criterion requires the symbol
+# ``emit_skip_ratio_bound_ac`` to live in this module.
+emit_skip_ratio_bound_ac = emit_skip_ratio_bound
+
+
 def compute_skip_ratio(skipped: int, xfailed: int, total_collected: int) -> float:
     """Compute the skip/xfail ratio (skipped+xfailed over total collected).
 
@@ -332,6 +337,7 @@ __all__ = [
     "gates_on_suite_metric",
     "is_skip_ratio_bound_ac",
     "emit_skip_ratio_bound",
+    "emit_skip_ratio_bound_ac",
     "compute_skip_ratio",
     "evaluate_skip_ratio",
 ]

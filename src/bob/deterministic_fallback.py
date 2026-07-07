@@ -27,7 +27,16 @@ Public API::
 
 from __future__ import annotations
 
-from bob.spec_synthesizer import _ensure_boundary_and_error_coverage
+from bob.spec_synthesizer import (
+    _ensure_boundary_and_error_coverage,
+    deterministic_fallback,
+)
+
+__all__ = [
+    "deterministic_fallback",
+    "_ensure_boundary_and_error_coverage",
+    "ensure_boundary_and_error_coverage",
+]
 
 
 def ensure_boundary_and_error_coverage(

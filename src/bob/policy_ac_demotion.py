@@ -26,10 +26,32 @@ The underlying logic lives in ``bob.enhanced_verification.demote_cross_feature_c
 from __future__ import annotations
 
 import pathlib
+import re
 
 from bob.enhanced_verification import demote_cross_feature_ac as _demote_cross_feature_ac
 
-__all__ = ["demote_cross_feature_ac"]
+__all__ = ["demote_cross_feature_ac", "is_cross_feature_policy_ac"]
+
+# A cross-feature policy reference is any token like ``F-R7-478`` / ``F-R9-001``.
+_CROSS_FEATURE_TOKEN = re.compile(r"\bF-R\d+-\d{3}\b")
+
+
+def is_cross_feature_policy_ac(criterion: str) -> bool:
+    """Return True when *criterion* references another feature by F-RX-YYY id.
+
+    Cross-feature policy claims such as
+    "integration: F-R7-478 unlimited spawn-retry path remains unaffected" cannot
+    be statically verified by per-feature verification, so they are candidates
+    for demotion via :func:`demote_cross_feature_ac`.
+
+    Raises ``ValueError`` when *criterion* is not a non-empty string.
+    """
+    if not isinstance(criterion, str) or not criterion:
+        raise ValueError(
+            f"is_cross_feature_policy_ac: criterion must be a non-empty str, "
+            f"got {type(criterion).__name__!r}"
+        )
+    return _CROSS_FEATURE_TOKEN.search(criterion) is not None
 
 
 def demote_cross_feature_ac(

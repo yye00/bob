@@ -19,11 +19,23 @@ from bob.verification.verifier import (  # noqa: F401
 from bob.backend_required_check import (  # noqa: F401
     BackendCheckResult,
     check_backend_required,
+    feature_performs_backend_compute,
+)
+from bob.verification.ctest_runner import (  # noqa: F401
+    JUnitResult,
+    build_ctest_command,
+    parse_junit_xml,
+    run_ctest_ac,
 )
 
 __all__ = [
+    "JUnitResult",
+    "build_ctest_command",
+    "parse_junit_xml",
+    "run_ctest_ac",
     "BackendCheckResult",
     "check_backend_required",
+    "feature_performs_backend_compute",
     "ArtifactMiss",
     "ArtifactMissingError",
     "check_file_exists_ac",

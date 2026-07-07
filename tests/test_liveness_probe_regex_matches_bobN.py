@@ -42,10 +42,14 @@ def test_is_orchestrator_alive_matches_bob14_run_all():
 
 
 def test_is_orchestrator_alive_matches_bob_run():
-    """is_orchestrator_alive returns True for legacy 'bob run' process."""
+    """is_orchestrator_alive returns True for a gen-N 'bobN run' process.
+
+    Spec (feature 4c1f1572) mandates regex ``bob[0-9]+ run`` — a digit is
+    required, so the orchestrator alias 'bob0'/'bob14'/etc. matches.
+    """
     with patch(
         "bob.orchestrator.liveness_probe._iter_candidate_pids",
-        return_value=_fake_process_list(["bob run --all"]),
+        return_value=_fake_process_list(["bob0 run --all"]),
     ):
         assert is_orchestrator_alive() is True
 
@@ -109,10 +113,14 @@ def test_is_orchestrator_alive_excludes_own_pid():
 
 
 def test_is_orchestrator_alive_matches_bob_run_variant():
-    """'bob run' (without gen suffix) also triggers is_orchestrator_alive=True."""
+    """A full-path gen-N binary 'bobN run' triggers is_orchestrator_alive=True.
+
+    Spec regex ``bob[0-9]+ run`` requires a digit; the gen-N alias is what
+    the editable install actually creates.
+    """
     with patch(
         "bob.orchestrator.liveness_probe._iter_candidate_pids",
-        return_value=_fake_process_list(["/usr/local/bin/bob run --all --fresh"]),
+        return_value=_fake_process_list(["/usr/local/bin/bob7 run --all --fresh"]),
     ):
         assert is_orchestrator_alive() is True
 

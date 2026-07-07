@@ -13,6 +13,11 @@ from __future__ import annotations
 import pytest
 
 from f_r7_412.behavior_contract import apply_design_by_contract
+from hippy.behavior_contract import (
+    ContractResult,
+    emit_contract_decorators,
+    verify_contracts,
+)
 
 
 class TestApplyDesignByContractSpec:
@@ -152,3 +157,81 @@ class TestApplyDesignByContractReturnShape:
         result = apply_design_by_contract({})
         spec = result["spec"]
         assert set(spec.keys()) == {"pre", "post", "inv", "raises"}
+
+
+class TestHippyEmitContractDecorators:
+    """hippy.behavior_contract.emit_contract_decorators codegen output."""
+
+    def test_pre_emits_require(self):
+        out = emit_contract_decorators({"pre": "x > 0"})
+        assert "@icontract.require" in out
+        assert "import icontract" in out
+
+    def test_post_emits_ensure(self):
+        out = emit_contract_decorators({"post": "result >= 0"})
+        assert "@icontract.ensure" in out
+
+    def test_inv_emits_invariant(self):
+        out = emit_contract_decorators({"inv": "self.count >= 0"})
+        assert "@icontract.invariant" in out
+
+    def test_raises_emits_comment(self):
+        out = emit_contract_decorators({"raises": ["ValueError", "TypeError"]})
+        assert "# raises: ValueError, TypeError" in out
+
+    def test_list_of_preconditions_each_emitted(self):
+        out = emit_contract_decorators({"pre": ["x > 0", "x < 100"]})
+        assert out.count("@icontract.require") == 2
+
+    def test_empty_returns_empty_string(self):
+        assert emit_contract_decorators({}) == ""
+
+
+class TestHippyVerifyContracts:
+    """hippy.behavior_contract.verify_contracts runs contracts, assigns blame."""
+
+    def test_pre_holds_returns_ok(self):
+        result = verify_contracts(lambda x: x + 1, {"pre": "x > 0"}, 5)
+        assert isinstance(result, ContractResult)
+        assert result.ok is True
+        assert result.value == 6
+
+    def test_pre_violation_charges_caller(self):
+        result = verify_contracts(lambda x: x + 1, {"pre": "x > 0"}, -3)
+        assert result.ok is False
+        assert result.violation == "pre"
+        assert result.blame == "caller"
+
+    def test_post_holds_returns_ok(self):
+        result = verify_contracts(lambda x: x * 2, {"post": "result > 0"}, 5)
+        assert result.ok is True
+        assert result.value == 10
+
+    def test_post_violation_charges_implementer(self):
+        result = verify_contracts(lambda x: -x, {"post": "result > 0"}, 5)
+        assert result.ok is False
+        assert result.violation == "post"
+        assert result.blame == "implementer"
+
+    def test_pre_checked_before_post(self):
+        # Invalid input should be caught by pre, blaming the caller, even though
+        # the (unreached) body would also violate post.
+        result = verify_contracts(
+            lambda x: -1, {"pre": "x > 0", "post": "result > 0"}, -5
+        )
+        assert result.violation == "pre"
+        assert result.blame == "caller"
+
+    def test_multi_arg_precondition(self):
+        result = verify_contracts(
+            lambda a, b: a + b, {"pre": "a > 0 and b > 0"}, 2, 3
+        )
+        assert result.ok is True
+        assert result.value == 5
+
+    def test_keyword_argument_precondition(self):
+        result = verify_contracts(
+            lambda a, b: a + b, {"pre": "b > 0"}, 1, b=-1
+        )
+        assert result.ok is False
+        assert result.blame == "caller"

@@ -16,12 +16,14 @@ from __future__ import annotations
 from bob.spec_quality.behavior_ac_parser import (  # noqa: F401
     BehaviorAC,
     accepts_synonym_conditional,
+    normalize_clause,
     parse_behavior_ac,
 )
 
 __all__ = [
     "BehaviorAC",
     "accepts_synonym_conditional",
+    "normalize_clause",
     "parse_behavior_ac",
     "spec_quality_behavior_ac_parser_must_accept_canonical_clause",
 ]

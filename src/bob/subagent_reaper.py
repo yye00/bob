@@ -87,6 +87,31 @@ def reap_subagent_on_terminal_state(feature_id: str) -> list[int]:
     return reap_subagent_for_feature(feature_id)
 
 
+def reap_subagent_on_terminal(feature_id: str) -> list[int]:
+    """Reap claude subagent process on feature terminal-state transition.
+
+    AC-required entry point (Function defined:
+    bob.subagent_reaper.reap_subagent_on_terminal). Delegates to
+    reap_subagent_on_terminal_state.
+
+    Parameters
+    ----------
+    feature_id:
+        UUID string of the feature that has entered a terminal state.
+
+    Returns
+    -------
+    list[int]
+        PIDs confirmed dead.  Empty list when no matching subagent was found.
+
+    Raises
+    ------
+    ValueError
+        When feature_id is None or not a string.
+    """
+    return reap_subagent_on_terminal_state(feature_id)
+
+
 def reap_orphan_subagents_backstop() -> list[tuple[str, int]]:
     """Backstop sweep alias — AC-required entry point for orphan subagent reaping.
 
@@ -162,6 +187,7 @@ __all__ = [
     "reap_orphan_subagents_backstop",
     "reap_stale_orphans",
     "reap_subagent_for_feature",
+    "reap_subagent_on_terminal",
     "reap_subagent_on_terminal_state",
     "sweep_orphan_subagents",
 ]

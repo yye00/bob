@@ -29,6 +29,7 @@ __all__ = [
     "is_lock_holder_alive",
     "safe_remove_lock_file",
     "safe_to_remove_lock",
+    "should_remove_lock",
     "should_remove_lock_file",
     "is_orchestrator_alive",
     "lock_holder_pid_alive",
@@ -88,6 +89,27 @@ def should_remove_lock_file(
     Delegates to bob.orchestrator.liveness_probe.safe_to_remove_lock.
 
     AC: Function defined: bob.liveness_probe.should_remove_lock_file
+    """
+    return safe_to_remove_lock(lock_path, db_path=db_path)
+
+
+def should_remove_lock(
+    lock_path: str | pathlib.Path,
+    db_path: pathlib.Path | None = None,
+) -> bool:
+    """Return True ONLY when ALL three signals agree no orchestrator is running.
+
+    The lock file MUST NOT be removed unless ALL three signals agree:
+      1. No process matching ``bob[0-9]+ run`` (pgrep signal)
+      2. The PID in .bob.lock is no longer alive (kill -0)
+      3. No feature row has status='executing' updated in last 60 s (DB signal)
+
+    AC-mandated name (feature 4c1f1572) for the three-signal gate that
+    determines whether it is safe to remove the orchestrator lock file.
+
+    Delegates to bob.orchestrator.liveness_probe.safe_to_remove_lock.
+
+    AC: Function defined: bob.liveness_probe.should_remove_lock
     """
     return safe_to_remove_lock(lock_path, db_path=db_path)
 

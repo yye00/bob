@@ -32,8 +32,10 @@ from bob.verification.mutation_gate import (
     MutationReport,
     MutmutMissingError,
     passes_gate,
-    persist_surviving_mutants,
     run_mutation_test,
+)
+from bob.verification.mutation_gate import (
+    persist_surviving_mutants as _persist_surviving_mutants,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,9 +45,32 @@ MUTATION_SCORE_THRESHOLD: float = 0.75
 __all__ = [
     "MUTATION_SCORE_THRESHOLD",
     "check_mutation_score",
+    "persist_surviving_mutants",
+    "run_mutation_gate",
     "run_mutation_tests",
     "validate_mutation_score",
 ]
+
+
+def persist_surviving_mutants(
+    report: MutationReport, workspace: str | Path
+) -> Path:
+    """Persist surviving mutants to ``runs/<feature>/mutation_report.json``.
+
+    Defined in this module (rather than re-exported) so the
+    ``bob.mutation_testing_gate.persist_surviving_mutants`` AC resolves to a
+    function whose ``__module__`` is this module. Delegates to the underlying
+    :func:`bob.verification.mutation_gate.persist_surviving_mutants`.
+
+    Args:
+        report:    The mutation report whose surviving mutants to persist.
+        workspace: Project workspace root; the report is written under
+                   ``runs/<feature_id>/mutation_report.json``.
+
+    Returns:
+        Path to the written ``mutation_report.json``.
+    """
+    return _persist_surviving_mutants(report, workspace)
 
 
 def validate_mutation_score(score: float, threshold: float | None = None) -> bool:
@@ -174,3 +199,28 @@ def run_mutation_tests(
         "partial": report.partial,
         "threshold": effective_threshold,
     }
+
+
+def run_mutation_gate(
+    feature_id: str,
+    src_files: list[str | Path],
+    test_dir: str | Path,
+    workspace: str | Path,
+    pytest_passed: bool,
+    *,
+    threshold: float | None = None,
+) -> dict[str, Any] | None:
+    """Run the mutmut post-impl quality gate.
+
+    AC-named entry point (``bob.mutation_testing_gate.run_mutation_gate``).
+    Delegates to :func:`run_mutation_tests`; see that function for the full
+    contract (skip conditions, return shape, and raised errors).
+    """
+    return run_mutation_tests(
+        feature_id,
+        src_files,
+        test_dir,
+        workspace,
+        pytest_passed,
+        threshold=threshold,
+    )

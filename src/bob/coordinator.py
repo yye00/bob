@@ -14,6 +14,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from bob.include_graph_disjoint_gate import (
+    check_disjoint_include_aware,
+    flag_high_fanout_header,
+)
+
 
 def merge_research_and_intent(
     research_notes: str,
@@ -82,4 +87,8 @@ def merge_research_and_intent(
     }
 
 
-__all__ = ["merge_research_and_intent"]
+__all__ = [
+    "merge_research_and_intent",
+    "check_disjoint_include_aware",
+    "flag_high_fanout_header",
+]

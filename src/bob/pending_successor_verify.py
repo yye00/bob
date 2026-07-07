@@ -755,6 +755,95 @@ def mark_pending_on_verification_ac(
         return False
 
 
+def _coerce_ac_list_strict(acceptance_criteria, *, caller: str) -> list[str]:
+    """Coerce *acceptance_criteria* to a list of strings, raising ValueError on bad types.
+
+    Unlike :func:`_parse_ac_list` (which returns None on failure), this variant raises
+    ``ValueError`` for any type that is not ``None``, ``list``, or ``str`` — used by the
+    strict AC-mandated entry points (ffad5c3d) that must not silently succeed.
+    """
+    if acceptance_criteria is None:
+        return []
+    # bool is a subclass of int; reject it explicitly before the isinstance(list/str) checks.
+    if isinstance(acceptance_criteria, bool) or not isinstance(
+        acceptance_criteria, (list, str)
+    ):
+        raise ValueError(
+            f"{caller}: acceptance_criteria must be a list, str, or None; "
+            f"got {type(acceptance_criteria).__name__}"
+        )
+    if isinstance(acceptance_criteria, list):
+        return [str(item) for item in acceptance_criteria]
+    # str: try JSON-decode; a non-list JSON payload or invalid JSON is treated as one AC.
+    try:
+        parsed = json.loads(acceptance_criteria)
+    except (ValueError, TypeError):
+        return [acceptance_criteria]
+    if not isinstance(parsed, list):
+        return [acceptance_criteria]
+    return [str(item) for item in parsed]
+
+
+def scan_acs_for_verifier_tokens(acceptance_criteria) -> bool:
+    """Return True when any AC in the list contains a verifier path-token (ffad5c3d).
+
+    Broadens detection to a target-file scan across the FULL AC list: each AC body is
+    checked via :func:`scan_ac_body_for_tokens`. Accepts a list of AC strings, a
+    JSON-encoded list, or None. Invalid types raise ``ValueError``.
+
+    Args:
+        acceptance_criteria: A list of AC strings, a JSON-encoded list, or None.
+
+    Returns:
+        True when at least one AC body contains a verifier path-token; False otherwise
+        (including for None and empty input).
+
+    Raises:
+        ValueError: When ``acceptance_criteria`` is not a list, str, or None.
+    """
+    ac_list = _coerce_ac_list_strict(
+        acceptance_criteria, caller="scan_acs_for_verifier_tokens"
+    )
+    return any(scan_ac_body_for_tokens(ac) for ac in ac_list)
+
+
+def should_defer_successor_verify(feature_name: str, acceptance_criteria) -> bool:
+    """Return True when a feature should defer to the successor gen (ffad5c3d).
+
+    Combined decision: a target-file scan across all ACs (via
+    :func:`scan_acs_for_verifier_tokens`) plus the title-fallback of
+    :func:`detect_verification_features`. Strict on input types — ``feature_name`` must
+    be a string and ``acceptance_criteria`` must be a list, str, or None.
+
+    Args:
+        feature_name:        The feature's name/title string.
+        acceptance_criteria: A list of AC strings, a JSON-encoded list, or None.
+
+    Returns:
+        True when the feature targets the verifier subsystem (path-token or
+        title-fallback match); False otherwise.
+
+    Raises:
+        ValueError: When ``feature_name`` is not a string, or ``acceptance_criteria``
+            is not a list, str, or None.
+    """
+    if not isinstance(feature_name, str):
+        raise ValueError(
+            f"should_defer_successor_verify: feature_name must be a string; "
+            f"got {type(feature_name).__name__}"
+        )
+    _coerce_ac_list_strict(
+        acceptance_criteria, caller="should_defer_successor_verify"
+    )
+    return detect_verification_features(feature_name, acceptance_criteria)
+
+
+# AC-mandated alias (feature 8309a5ab): the spec names the scanner
+# "scan_for_verifier_self_reference". It delegates to detect_verifier_self_reference,
+# which scans behavior: ACs for verifier-internal keywords, returns bool, and raises
+# ValueError on an unsupported acceptance_criteria type.
+scan_for_verifier_self_reference = detect_verifier_self_reference
+
 # AC-mandated alias: "Function defined: bob.pending_successor_verify.promote_pending_successor"
 promote_pending_successor = promote_from_successor_gen
 
@@ -874,6 +963,74 @@ def defer_verifier_self_extension(
         return False
 
 
+def scan_acs_for_verifier_tokens(acceptance_criteria) -> bool:
+    """Return True when ANY AC in the list targets a verifier file (F-R7-596).
+
+    Broadens F-R7-595's per-AC-body wording match to a whole-list target-file
+    scan: every AC string is checked for a verifier path-token via
+    ``scan_ac_body_for_tokens`` (``enhanced_verification``, or any path ending
+    in ``_verification.py`` / ``_verifier.py``). This catches structural and
+    integration ACs like ``File exists: src/bob/enhanced_verification.py`` even
+    when no behavior-AC names the verifier explicitly.
+
+    Args:
+        acceptance_criteria: A list of AC strings, a JSON-encoded list, or None.
+
+    Returns:
+        True when at least one AC contains a verifier path-token; False when the
+        list is empty/None or contains no such token.
+
+    Raises:
+        ValueError: When ``acceptance_criteria`` is not a list, str, or None.
+    """
+    if acceptance_criteria is not None and not isinstance(acceptance_criteria, (list, str)):
+        raise ValueError(
+            f"scan_acs_for_verifier_tokens: acceptance_criteria must be a list, "
+            f"str, or None; got {type(acceptance_criteria).__name__!r}"
+        )
+    ac_list = _parse_ac_list(acceptance_criteria)
+    if not ac_list:
+        return False
+    return any(scan_ac_body_for_tokens(ac) for ac in ac_list)
+
+
+def should_defer_successor_verify(feature_name, acceptance_criteria) -> bool:
+    """Return True when a feature should be deferred to the successor gen (F-R7-596).
+
+    The AC-mandated decision entry point for this broadened detector. Defers when
+    either:
+    1. Any AC targets a verifier file (``scan_acs_for_verifier_tokens``), OR
+    2. The title-fallback fires — the feature title contains ``'verifier'`` and at
+       least one behavior-AC references verification/AC/criterion semantics.
+
+    Both are covered by delegating to ``detect_verification_features``; the
+    stricter type validation here ensures invalid input raises rather than
+    silently returning False.
+
+    Args:
+        feature_name:        The feature's name/title string.
+        acceptance_criteria: A list of AC strings, a JSON-encoded list, or None.
+
+    Returns:
+        True when the feature should be deferred; False otherwise.
+
+    Raises:
+        ValueError: When ``feature_name`` is not a string, or
+                    ``acceptance_criteria`` is not a list, str, or None.
+    """
+    if not isinstance(feature_name, str):
+        raise ValueError(
+            f"should_defer_successor_verify: feature_name must be a str; "
+            f"got {type(feature_name).__name__!r}"
+        )
+    if acceptance_criteria is not None and not isinstance(acceptance_criteria, (list, str)):
+        raise ValueError(
+            f"should_defer_successor_verify: acceptance_criteria must be a list, "
+            f"str, or None; got {type(acceptance_criteria).__name__!r}"
+        )
+    return detect_verification_features(feature_name, acceptance_criteria)
+
+
 # AC-required aliases: the feature spec uses these names.
 # is_verifier_extension_module is an alias for is_verifier_extension_feature.
 # should_set_pending_successor_verify is an alias for set_pending_successor_verify.
@@ -904,6 +1061,9 @@ __all__ = [
     "scan_ac_body_for_tokens",
     "scan_ac_body_for_verification_tokens",
     "scan_ac_for_verification_tokens",
+    "scan_acs_for_verifier_tokens",
+    "should_defer_successor_verify",
+    "scan_for_verifier_self_reference",
     "set_pending_successor_verify",
     "should_set_pending_successor_verify",
     "should_defer_to_successor",

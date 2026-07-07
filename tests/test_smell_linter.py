@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from bob.smell_linter import lint_spec_for_smells, SmellFinding, detector_count
+from bob.smell_linter import (
+    lint_spec_for_smells,
+    run_smell_linter,
+    SMELL_DETECTORS,
+    SmellFinding,
+    detector_count,
+)
 
 
 class TestLintSpecForSmellsReturnShape:
@@ -144,3 +150,58 @@ class TestBoundaryViaSmellLinter:
     def test_unicode_no_crash(self):
         result = lint_spec_for_smells("日本語テスト")
         assert isinstance(result["findings"], list)
+
+
+class TestSmellDetectorsCatalog:
+    def test_smell_detectors_has_22_entries(self):
+        assert len(SMELL_DETECTORS) == 22
+
+    def test_smell_detectors_ids_are_s01_to_s22(self):
+        ids = {d.id for d in SMELL_DETECTORS}
+        expected = {f"S{i:02d}" for i in range(1, 23)}
+        assert ids == expected
+
+    def test_smell_detectors_severities_valid(self):
+        for d in SMELL_DETECTORS:
+            assert d.severity in ("E", "W", "I")
+
+
+class TestRunSmellLinter:
+    def test_clean_ac_returns_no_findings(self):
+        result = run_smell_linter("pytest: tests/test_foo.py")
+        assert result["findings"] == []
+        assert result["blocks_plan_create"] is False
+
+    def test_vague_ac_blocks_plan_create(self):
+        result = run_smell_linter("The system shall be fast and simple.")
+        assert result["blocks_plan_create"] is True
+        assert result["error_count"] > 0
+
+    def test_returns_same_shape_as_lint_spec(self):
+        result = run_smell_linter("pytest: tests/test_foo.py")
+        for key in (
+            "findings",
+            "blocks_plan_create",
+            "error_count",
+            "warning_count",
+            "info_count",
+            "detector_count",
+            "spacy_backed",
+        ):
+            assert key in result
+
+    def test_accepts_optional_args(self):
+        result = run_smell_linter(
+            "behavior: WHEN x THEN y",
+            peer_criteria=["pytest: tests/test_x.py"],
+            known_feature_ids=frozenset(["F-R7-410"]),
+        )
+        assert isinstance(result, dict)
+
+    def test_non_string_raises_value_error(self):
+        with pytest.raises(ValueError):
+            run_smell_linter(None)  # type: ignore[arg-type]
+
+    def test_empty_string_no_crash(self):
+        result = run_smell_linter("")
+        assert result["findings"] == []

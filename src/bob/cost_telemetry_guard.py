@@ -43,14 +43,22 @@ from bob.orchestrator.cost_telemetry_guard import (
     is_cost_telemetry_lost,
     apply_pessimistic_cost,
     emit_cost_telemetry_lost_event,
+    _read_threshold,
 )
 
 __all__ = [
     "enforce_minimum_cost_on_zero_report",
+    "enforce_budget_on_zero_cost",
+    "classify_cost_telemetry",
     "MinimumCostResult",
     "should_enforce_budget",
     "apply_zero_cost_safeguard",
 ]
+
+#: Classification labels returned by :func:`classify_cost_telemetry`.
+COST_TELEMETRY_NORMAL = "normal"
+COST_TELEMETRY_LOST = "telemetry_lost"
+COST_TELEMETRY_FREE_RETRY = "free_retry"
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +160,63 @@ def enforce_minimum_cost_on_zero_report(
         cost_to_charge=inner.cost_to_charge,
         telemetry_lost=inner.telemetry_lost,
     )
+
+
+def classify_cost_telemetry(
+    reported_cost: float | None,
+    work_events: int,
+) -> str:
+    """Classify a (reported_cost, work_events) pair into a telemetry verdict.
+
+    This is the pure decision function underlying the enforcement path. It
+    answers the question "what kind of zero-cost is this?" without applying
+    any charge or emitting logs.
+
+    Parameters
+    ----------
+    reported_cost:
+        Raw SDK cost (total_cost_usd). None and negative values are treated
+        as 0.0.
+    work_events:
+        Count of substantive progress events from progress.jsonl. Must be a
+        non-negative integer.
+
+    Returns
+    -------
+    str
+        - ``COST_TELEMETRY_NORMAL`` (``"normal"``) — cost > 0; telemetry was
+          delivered, no special handling required.
+        - ``COST_TELEMETRY_LOST`` (``"telemetry_lost"``) — cost == 0 AND
+          work_events > threshold; stream-json cost-delta events were dropped,
+          so the reported zero is a telemetry miss. Budget enforcement MUST be
+          applied via the per-feature ceiling.
+        - ``COST_TELEMETRY_FREE_RETRY`` (``"free_retry"``) — cost == 0 AND
+          work_events <= threshold; a genuine spawn-crash with little/no work,
+          eligible for the F-R7-478 free-retry path.
+
+    Raises
+    ------
+    ValueError
+        If ``work_events`` is not an int, is a bool, or is negative — invalid
+        input must not silently succeed.
+    """
+    if isinstance(work_events, bool) or not isinstance(work_events, int):
+        raise ValueError(
+            f"work_events must be a non-negative int, got {work_events!r}"
+        )
+    if work_events < 0:
+        raise ValueError(
+            f"work_events must be non-negative, got {work_events!r}"
+        )
+
+    cost = float(reported_cost) if reported_cost is not None else 0.0
+    if cost < 0.0:
+        cost = 0.0
+    if cost > 0.0:
+        return COST_TELEMETRY_NORMAL
+    if work_events > _read_threshold():
+        return COST_TELEMETRY_LOST
+    return COST_TELEMETRY_FREE_RETRY
 
 
 def should_enforce_budget(

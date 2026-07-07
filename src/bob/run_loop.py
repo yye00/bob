@@ -2242,6 +2242,30 @@ def drain_mcp_transient_summary(intercepted: int) -> dict[str, Any]:
     return summary
 
 
+def reconcile_from_disk(
+    project_id: str,
+    workspace: "pathlib.Path | None" = None,
+) -> int:
+    """Re-export of the orchestrator's disk reconciler (F-R7-612 companion).
+
+    Satisfies AC "Function defined: bob.run_loop.reconcile_from_disk". The
+    verification-fail promotion path (disk_reconciler_verify_fail_promotion)
+    reconciles a single feature against disk using the same AC-evaluation
+    logic the bulk reconciler uses; this thin wrapper exposes the bulk
+    reconciler under bob.run_loop so callers can invoke it without reaching
+    into bob.orchestrator directly.
+
+    Delegates to bob.orchestrator.disk_reconciler.reconcile_from_disk, which
+    scans all pending/failed features in the project and promotes any whose
+    ACs are already satisfied on disk. Returns the number of features promoted.
+    """
+    from bob.orchestrator.disk_reconciler import (
+        reconcile_from_disk as _reconcile_from_disk,
+    )
+
+    return _reconcile_from_disk(project_id, workspace)
+
+
 def disk_reconciler_promotion_check(
     project_id: str,
     feature_id: str,
@@ -4491,7 +4515,66 @@ def handle_shell_script_integration(
     return demote_shell_script_integration_ac(criterion, workspace)
 
 
+def classify_evaluator_mcp_transient(
+    verdict,
+    confidence,
+    is_error,
+    stderr,
+    feature_id=None,
+    retry_count=0,
+):
+    """Classify an evaluator-crash failure for MCP-transient exemption (F-R7-597).
+
+    Delegates to bob.evaluator_mcp_transient.classify_evaluator_failure. Returns a
+    dict with keys: classification, matched_token, event, feature_id,
+    retry_count_after. Raises ValueError if retry_count is not an int.
+    """
+    from bob.evaluator_mcp_transient import classify_evaluator_failure
+    return classify_evaluator_failure(
+        verdict=verdict,
+        confidence=confidence,
+        is_error=is_error,
+        stderr=stderr,
+        feature_id=feature_id,
+        retry_count=retry_count,
+    )
+
+
+def check_evaluator_mcp_transient_exemption(
+    verdict,
+    confidence,
+    is_error,
+    stderr,
+    feature_id=None,
+    retry_count=0,
+):
+    """Orchestrator entry point: decide whether an evaluator crash is exempt (F-R7-597).
+
+    Returns the classify_evaluator_mcp_transient result augmented with an ``action``
+    key: 'exempt' (mcp_transient → reset feature to ready), 'cap_reached'
+    (mcp_persistent → demote to needs_human), or 'not_exempt' (real failure).
+    """
+    result = classify_evaluator_mcp_transient(
+        verdict=verdict,
+        confidence=confidence,
+        is_error=is_error,
+        stderr=stderr,
+        feature_id=feature_id,
+        retry_count=retry_count,
+    )
+    classification = result["classification"]
+    if classification == "mcp_transient":
+        action = "exempt"
+    elif classification == "mcp_persistent":
+        action = "cap_reached"
+    else:
+        action = "not_exempt"
+    return {"action": action, **result}
+
+
 __all__ = [
+    "classify_evaluator_mcp_transient",
+    "check_evaluator_mcp_transient_exemption",
     "handle_terminal_transition",
     "classify_subagent_startup_crash",
     "check_worktree_artifacts",
@@ -4556,6 +4639,7 @@ __all__ = [
     "classify_mcp_transient_error",
     "classify_mcp_transient_before_hook",
     "drain_mcp_transient_summary",
+    "reconcile_from_disk",
     "disk_reconciler_promotion_check",
     "disk_reconciler_verify_fail_check",
     "disk_reconciler_verify_fail_promotion",

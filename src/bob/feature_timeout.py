@@ -165,6 +165,60 @@ def cancel_feature_process_tree(pid: int, *, sigterm_grace_seconds: float = 5.0)
     return kill_feature_process_tree(pid, sigterm_grace_seconds=sigterm_grace_seconds)
 
 
+def terminate_process_tree(pid: int, *, sigterm_grace_seconds: float = 5.0) -> bool:
+    """Terminate a process tree by pid (canonical AC-named entry point).
+
+    Sends SIGTERM then (after grace period) SIGKILL to *pid*.  Identical to
+    :func:`kill_feature_process_tree`; this is the name the feature acceptance
+    criteria reference.
+
+    Args:
+        pid: Root PID of the sub-agent to terminate.  Must be > 1.
+        sigterm_grace_seconds: Seconds to wait for clean exit before SIGKILL.
+
+    Returns:
+        ``True`` if the process is gone, ``False`` if SIGKILL did not remove it.
+
+    Raises:
+        ValueError: If *pid* is not an integer > 1, equals the current process,
+            or *sigterm_grace_seconds* is negative.
+    """
+    return kill_feature_process_tree(pid, sigterm_grace_seconds=sigterm_grace_seconds)
+
+
+async def execute_feature_with_timeout(
+    feature_id: str,
+    coro: Awaitable[T],
+    *,
+    timeout_seconds: float | None = None,
+) -> T:
+    """Execute a feature coroutine under a hard wall-clock timeout.
+
+    Canonical AC-named entry point. Delegates to
+    :func:`bob.timeout.enforce_wall_clock_timeout` so a single feature can never
+    hold an executing slot indefinitely.
+
+    Args:
+        feature_id: ID of the feature being executed.
+        coro: The awaitable running the feature's execution.
+        timeout_seconds: Override the timeout; reads
+            ``BOB_FEATURE_TIMEOUT_SECONDS`` when ``None``.
+
+    Returns:
+        The result of *coro* when it completes within the timeout.
+
+    Raises:
+        ValueError: When *feature_id* is empty or *timeout_seconds* is
+            explicitly passed as a non-positive value.
+        FeatureTimeoutError: When *coro* exceeds the wall-clock timeout.
+    """
+    from bob.timeout import enforce_wall_clock_timeout
+
+    return await enforce_wall_clock_timeout(
+        feature_id, coro, timeout_seconds=timeout_seconds
+    )
+
+
 def terminate_feature_process_tree(pid: int, *, sigterm_grace_seconds: float = 5.0) -> bool:
     """Terminate a feature's sub-agent process tree by pid.
 
@@ -192,7 +246,9 @@ __all__ = [
     "FeatureTimeoutManager",
     "cancel_feature_process_tree",
     "enforce_feature_timeout",
+    "execute_feature_with_timeout",
     "kill_feature_process_tree",
     "resolve_feature_timeout_seconds",
     "terminate_feature_process_tree",
+    "terminate_process_tree",
 ]

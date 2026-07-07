@@ -105,6 +105,40 @@ def _split_pred(pred: str) -> tuple[str, str]:
 # Public API
 # ---------------------------------------------------------------------------
 
+def normalize_clause(ac: str) -> str:
+    """Canonicalize a behavior AC string prior to parsing.
+
+    Collapses runs of whitespace to single spaces, lowercases the
+    ``behavior:`` prefix and the conditional keywords (``when``/``on``) so
+    that case variations do not defeat the parser, and strips leading/trailing
+    whitespace. The clause content itself is otherwise preserved verbatim.
+
+    Args:
+        ac: Raw AC string.
+
+    Returns:
+        The normalized clause string.
+
+    Raises:
+        ValueError: When *ac* is not a string or is empty/whitespace-only.
+    """
+    if not isinstance(ac, str):
+        raise ValueError(f"AC must be a string, got {type(ac).__name__}")
+
+    collapsed = re.sub(r"\s+", " ", ac).strip()
+    if not collapsed:
+        raise ValueError("AC string must not be empty")
+
+    # Lowercase the leading behavior: prefix.
+    collapsed = re.sub(
+        r"^behavior\s*:", "behavior:", collapsed, count=1, flags=re.IGNORECASE
+    )
+    # Lowercase standalone conditional keywords.
+    collapsed = re.sub(r"\bWHEN\b", "when", collapsed, flags=re.IGNORECASE)
+    collapsed = re.sub(r"\bON\b", "on", collapsed, flags=re.IGNORECASE)
+    return collapsed
+
+
 def accepts_synonym_conditional(ac: str) -> bool:
     """Return True when *ac* uses 'on <event>' as a synonym for 'when <condition>'.
 
@@ -151,10 +185,10 @@ def parse_behavior_ac(ac: str) -> BehaviorAC:
         ValueError: When *ac* is empty or does not start with ``behavior:``,
             or when neither a ``when`` nor ``on`` conditional clause is found.
     """
-    stripped = ac.strip()
-
-    if not stripped:
+    if not isinstance(ac, str) or not ac.strip():
         raise ValueError("AC string must not be empty")
+
+    stripped = normalize_clause(ac)
 
     if not re.match(r"^behavior\s*:", stripped, re.IGNORECASE):
         raise ValueError(

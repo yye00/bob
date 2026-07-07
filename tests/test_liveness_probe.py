@@ -48,10 +48,10 @@ class TestCheckOrchestratorRunning:
             assert check_orchestrator_running() is True
 
     def test_returns_true_for_bob_run(self):
-        """Detects legacy 'bob run' process."""
+        """Detects gen-N 'bobN run' process (spec regex requires a digit)."""
         with patch(
             "bob.orchestrator.liveness_probe._iter_candidate_pids",
-            return_value=[(999_002, "bob run --all")],
+            return_value=[(999_002, "bob2 run --all")],
         ):
             assert check_orchestrator_running() is True
 

@@ -17,7 +17,12 @@ import logging
 import pytest
 
 from bob.cost_telemetry_guard import (
+    COST_TELEMETRY_FREE_RETRY,
+    COST_TELEMETRY_LOST,
+    COST_TELEMETRY_NORMAL,
     MinimumCostResult,
+    classify_cost_telemetry,
+    enforce_budget_on_zero_cost,
     enforce_minimum_cost_on_zero_report,
 )
 
@@ -214,6 +219,69 @@ class TestEnforceMinimumCostLogging:
                 feature_id="free-retry-feature",
             )
         assert not any("cost_telemetry_lost" in r.message for r in caplog.records)
+
+
+class TestClassifyCostTelemetry:
+    """The pure classifier underlying the enforcement path."""
+
+    def test_nonzero_cost_is_normal(self):
+        assert classify_cost_telemetry(2.5, 176217) == COST_TELEMETRY_NORMAL
+
+    def test_zero_cost_high_work_is_telemetry_lost(self):
+        assert classify_cost_telemetry(0.0, 176217) == COST_TELEMETRY_LOST
+
+    def test_zero_cost_zero_work_is_free_retry(self):
+        assert classify_cost_telemetry(0.0, 0) == COST_TELEMETRY_FREE_RETRY
+
+    def test_none_cost_high_work_is_telemetry_lost(self):
+        assert classify_cost_telemetry(None, 500) == COST_TELEMETRY_LOST
+
+    def test_negative_cost_high_work_is_telemetry_lost(self):
+        assert classify_cost_telemetry(-0.001, 500) == COST_TELEMETRY_LOST
+
+    def test_at_threshold_is_free_retry(self):
+        assert classify_cost_telemetry(0.0, 100) == COST_TELEMETRY_FREE_RETRY
+
+    def test_one_above_threshold_is_telemetry_lost(self):
+        assert classify_cost_telemetry(0.0, 101) == COST_TELEMETRY_LOST
+
+    def test_invalid_work_events_type_raises(self):
+        with pytest.raises(ValueError):
+            classify_cost_telemetry(0.0, "many")  # type: ignore[arg-type]
+
+    def test_bool_work_events_raises(self):
+        with pytest.raises(ValueError):
+            classify_cost_telemetry(0.0, True)  # type: ignore[arg-type]
+
+    def test_negative_work_events_raises(self):
+        with pytest.raises(ValueError):
+            classify_cost_telemetry(0.0, -1)
+
+
+class TestEnforceBudgetOnZeroCostReexport:
+    """enforce_budget_on_zero_cost is re-exported by the bob façade (AC symbol)."""
+
+    def test_incident_scenario_applies_ceiling(self):
+        result = enforce_budget_on_zero_cost(
+            reported_cost=0.0,
+            work_events=176217,
+            per_feature_ceiling=CEILING,
+            feature_id=FEATURE_ID,
+            exit_code=1,
+            attempt_number=1,
+        )
+        assert result.telemetry_lost is True
+        assert result.cost_to_charge == pytest.approx(CEILING)
+
+    def test_free_retry_charges_zero(self):
+        result = enforce_budget_on_zero_cost(
+            reported_cost=0.0,
+            work_events=0,
+            per_feature_ceiling=CEILING,
+            feature_id=FEATURE_ID,
+        )
+        assert result.telemetry_lost is False
+        assert result.cost_to_charge == pytest.approx(0.0)
 
 
 class TestEnforceMinimumCostCeilingApplication:

@@ -34,6 +34,8 @@ __all__ = [
     "probe_vendor_capability",
     "reclassify_infeasible_passthrough",
     "parse_capability_claim",
+    "verify_library_capability",
+    "reclassify_absent_capability",
 ]
 
 # "<op> via <lib>", "backed by <lib>", "passthrough to <lib.symbol>"
@@ -227,3 +229,43 @@ def reclassify_infeasible_passthrough(
         probe_result.get("evidence", ""),
     )
     return result
+
+
+def verify_library_capability(claim: Any) -> Dict[str, Any]:
+    """Verify that a specific vendor library capability exists (AC entry point).
+
+    Thin alias for :func:`probe_vendor_capability`: parse a capability claim and
+    probe the real environment for the specific symbol/capability the feature's
+    prose asserts, recording concrete evidence.
+
+    Args:
+        claim: A claim string, or a dict ``{"library": str, "symbol": str|None}``.
+
+    Returns:
+        The probe-result dict from :func:`probe_vendor_capability`.
+
+    Raises:
+        ValueError: Propagated from :func:`probe_vendor_capability` on bad input.
+    """
+    return probe_vendor_capability(claim)
+
+
+def reclassify_absent_capability(
+    feature: Dict[str, Any],
+    probe_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Re-classify a feature whose claimed vendor capability is absent (AC entry).
+
+    Thin alias for :func:`reclassify_infeasible_passthrough`.
+
+    Args:
+        feature: A feature dict.
+        probe_result: A result dict from :func:`verify_library_capability`.
+
+    Returns:
+        The re-classified feature dict.
+
+    Raises:
+        ValueError: Propagated from :func:`reclassify_infeasible_passthrough`.
+    """
+    return reclassify_infeasible_passthrough(feature, probe_result)

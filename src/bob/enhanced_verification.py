@@ -1637,6 +1637,16 @@ def _check_criterion_with_details(
             **args,
         )
 
+    for _build_prefix in ("build:", "compile:", "link:"):
+        if stripped.lower().startswith(_build_prefix):
+            expression = stripped[len(_build_prefix):].strip()
+            kind = _build_prefix.rstrip(":")
+            from bob.build_verification import run_build_criterion
+            result = run_build_criterion(
+                workspace, expression, kind=kind, timeout=timeout
+            )
+            return result.passed, result.details
+
     if stripped.lower().startswith("test_coupling:"):
         from bob.test_coupling_detector import check_test_impl_coupling
         coupling_result = check_test_impl_coupling(workspace=workspace)
@@ -3590,6 +3600,42 @@ def verify_quoted_substring_ac(
     return verify_behavior_ac_with_substring_grep(criterion, workspace)
 
 
+def verify_behavior_quoted_substring(
+    criterion: str,
+    workspace: pathlib.Path,
+) -> bool | None:
+    """AC-named entry point for the F-R7-591 MUST-mention / MUST-NOT-use handler.
+
+    Satisfies the AC
+    ``Function defined: bob.enhanced_verification.verify_behavior_quoted_substring``.
+    Delegates to :func:`verify_quoted_substring_ac`.
+
+    Raises ``ValueError`` when *criterion* is not a string (invalid input must
+    not silently succeed). Returns ``None`` for a boundary input with no
+    quoted literals to match, and ``True`` when the MUST-mention literal is
+    present and the MUST-NOT-use literal is absent across ``src/**/*.py``.
+
+    Parameters
+    ----------
+    criterion:
+        Full AC criterion text containing MUST-mention / MUST-NOT-use clauses.
+    workspace:
+        Project root directory to search.
+
+    Returns
+    -------
+    bool | None
+        ``True`` if constraints are satisfied, ``None`` if no literals were
+        found or the constraints could not be confirmed.
+
+    Raises
+    ------
+    ValueError
+        When *criterion* is not a ``str`` instance.
+    """
+    return verify_quoted_substring_ac(criterion, workspace)
+
+
 def verify_substring_ac(
     criterion: str,
     workspace: pathlib.Path,
@@ -4184,9 +4230,23 @@ def _search_for_function(
         )
         extensions = ["*.py"]
     elif is_cpp:
-        # C++ function definition patterns
+        # C++: prefer a real clang-AST probe over the gameable ``name(`` regex.
+        # clang-query proves a genuine DEFINITION with a non-empty body against
+        # the preprocessed AST (namespaces/templates/overloads), and covers
+        # .cc/.cxx/.hip/.cu/.cuh via compile_commands.json. When clang tooling
+        # is unavailable it returns PASS-with-warning; only then do we fall back
+        # to the legacy textual scan below.
+        try:
+            from bob.clang_ast_resolution import probe_function_definition
+
+            probe = probe_function_definition(workspace, func_name)
+            if probe.available:
+                return probe.matched
+        except ValueError:
+            pass
         pattern = f"{func_name}\\("
-        extensions = ["*.cpp", "*.hpp", "*.h"]
+        extensions = ["*.cpp", "*.hpp", "*.h", "*.cc", "*.cxx",
+                      "*.hip", "*.cu", "*.cuh"]
     else:
         return True  # Unknown project type, soft pass
 
@@ -4228,8 +4288,19 @@ def _search_for_class(
         pattern = rf"(?:^|\n)\s*class\s+{escaped}\s*[\(:]"
         extensions = ["*.py"]
     elif is_cpp:
+        # C++: prefer a real clang-AST probe (see _search_for_function). Falls
+        # back to the textual scan only when clang tooling is unavailable.
+        try:
+            from bob.clang_ast_resolution import probe_class_definition
+
+            probe = probe_class_definition(workspace, class_name)
+            if probe.available:
+                return probe.matched
+        except ValueError:
+            pass
         pattern = rf"class\s+{re.escape(class_name)}\s*[\{{:]"
-        extensions = ["*.cpp", "*.hpp", "*.h"]
+        extensions = ["*.cpp", "*.hpp", "*.h", "*.cc", "*.cxx",
+                      "*.hip", "*.cu", "*.cuh"]
     else:
         return True  # Unknown project type, soft pass
 

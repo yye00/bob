@@ -22,6 +22,7 @@ def sweep_orphans_on_exit(project_id: str):  # noqa: F401 — integration 457df9
 from bob.orchestrator.stale_bytecode import should_relaunch_on_stale_bytecode  # noqa: F401 — feature fd401bd3
 from bob.orchestrator.stale_bytecode_guard import check_stale_bytecode  # noqa: F401 — feature 62309b12
 from bob.orchestrator.stale_bytecode_guard import check_stale_sources  # noqa: F401 — integration 74f24177
+from bob.orchestrator.stale_bytecode_guard import guard_at_relaunch  # noqa: F401 — feature 41206130
 from bob.orchestrator.periodic_resume import resume_scan  # noqa: F401 — feature e072706e
 from bob.timeout import enforce_wall_clock_timeout as execute_feature_with_timeout  # noqa: F401 — feature 55304189
 from bob.timeout import enforce_wall_clock_timeout as enforce_feature_timeout  # noqa: F401 — feature 23dee915
@@ -253,6 +254,10 @@ from bob.brownfield.survey import (  # noqa: F401 — BF-1 integration AC dab037
     index_repository,
     refresh_survey,
     compute_pagerank,
+)
+from bob.survey import (  # noqa: F401 — integration AC bd36773c (header/impl pairing + include blast-radius)
+    build_include_graph,
+    compute_blast_radius,
 )
 from bob.brownfield.patch_planner import (  # noqa: F401 — BF-7 integration AC be3df4dd
     plan_diff,

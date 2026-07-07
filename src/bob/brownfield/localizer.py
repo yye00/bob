@@ -452,6 +452,14 @@ def localize_and_persist(
 rank_symbols = rank_symbols_by_intent
 find_edit_sites = extract_edit_sites
 
+# Cross-TU coupled edit-site expansion (C++ substrate). Re-exported so callers
+# can go from a localized C++ symbol to the full linked group of header
+# declaration + definition + overrides that must move together.
+from bob.brownfield.coupled_edit_sites import (  # noqa: E402
+    derive_decl_end_line,
+    expand_coupled_edit_sites,
+)
+
 #: AC-required: bob.brownfield.localizer.localize_intent
 localize_intent = localize
 

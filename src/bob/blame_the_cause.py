@@ -44,10 +44,49 @@ __all__ = [
     "charge_failing_features",
     "charge_regression_cascade",
     "find_owning_feature",
+    "owner_of_failing_test",
     "preserve_innocent_status",
     "handle_unowned_failure",
     "OrphanTestError",
 ]
+
+
+def owner_of_failing_test(
+    failing_test: str,
+    all_features: list[Any],
+    *,
+    strict: bool = False,
+) -> str | None:
+    """Return the feature_id whose ``pytest:`` AC owns *failing_test*.
+
+    Walks the AC table looking for the feature whose ``pytest: <path>``
+    acceptance criterion matches *failing_test*. Only that feature is the
+    "cause" of the failure; features that merely ran during the same
+    verification but own no matching pytest AC are not returned.
+
+    Args:
+        failing_test: A pytest node-id, e.g. ``"tests/test_foo.py::test_bar"``.
+        all_features: Sequence of feature dicts or objects exposing ``id`` and
+            ``acceptance_criteria`` fields.
+        strict: When True, raises ``OrphanTestError`` if no owner is found.
+
+    Returns:
+        The owning feature_id string, or ``None`` when no feature owns the
+        test (and ``strict`` is False).
+
+    Raises:
+        ValueError: If ``failing_test`` is not a non-empty string.
+        OrphanTestError: If ``strict=True`` and no owner is found.
+    """
+    if not isinstance(failing_test, str) or not failing_test.strip():
+        raise ValueError(
+            f"failing_test must be a non-empty string; got {failing_test!r}"
+        )
+    return find_owner_feature(
+        failing_test=failing_test,
+        all_features=all_features,
+        strict=strict,
+    )
 
 
 def find_owning_feature(

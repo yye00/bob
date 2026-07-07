@@ -48,6 +48,7 @@ __all__ = [
     "has_ownership_evidence",
     "detect_regression_with_ownership",
     "detect_regression_with_evidence",
+    "detect_regression",
     "file_regression_unattributed",
 ]
 
@@ -533,6 +534,40 @@ def detect_regression_with_evidence(
         ValueError: When *test_to_feature_map* or *ownership_map* is not a dict.
         ValueError: When *breaking_files* is not a set or frozenset.
         TypeError: When any required argument is None.
+    """
+    return detect_regression_with_ownership(
+        before_results=before_results,
+        after_results=after_results,
+        test_to_feature_map=test_to_feature_map,
+        ownership_map=ownership_map,
+        breaking_files=breaking_files,
+        transitive_deps=transitive_deps,
+        max_transitive_depth=max_transitive_depth,
+        _update_feature_fn=_update_feature_fn,
+        _emit_event_fn=_emit_event_fn,
+    )
+
+
+def detect_regression(
+    *,
+    before_results: dict[str, bool],
+    after_results: dict[str, bool],
+    test_to_feature_map: dict[str, str],
+    ownership_map: dict[str, set[str]],
+    breaking_files: set[str],
+    transitive_deps: dict[str, set[str]] | None = None,
+    max_transitive_depth: int = _DEFAULT_MAX_TRANSITIVE_DEPTH,
+    _update_feature_fn: Callable[[str, str], None] | None = None,
+    _emit_event_fn: Callable[..., None] | None = None,
+) -> dict[str, Any]:
+    """Ownership-evidenced regression detection — AC-required entry point.
+
+    Public name for ownership-evidenced regression detection. A feature is
+    demoted to ``regression`` only when its own (or transitively depended-upon)
+    files appear in the breaking commit's diff; otherwise a
+    ``regression_unattributed`` event is filed and the demotion is rejected.
+
+    See ``detect_regression_with_ownership`` for the full contract.
     """
     return detect_regression_with_ownership(
         before_results=before_results,

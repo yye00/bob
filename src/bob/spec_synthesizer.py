@@ -867,6 +867,13 @@ def _apply_llm_postprocessing(
     # permanently gate-blocking the feature. Drop any integration target not under
     # a canonical package. (Env-gated: unset = unchanged behavior.)
     out = _enforce_canonical_integration(out)
+    # FINAL (feature d482fa32): canonicalize corrupted path ACs — strip a
+    # spurious leading `/` or `file.`/`file:` prefix, collapse `<pkg>/src/<pkg>`
+    # duplication, and drop an AC that then duplicates a clean sibling. A bogus
+    # path that can never resolve is a synthesis defect to repair, not a feature
+    # to NH at attempt 5 (bob96 147/149: F-R7-603, F-R7-626).
+    from bob.ac_path_normalizer import normalize_path_acs as _normalize_path_acs
+    out = _normalize_path_acs(out)
     return out
 
 

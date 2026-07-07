@@ -11,6 +11,17 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from hippy.feature_splitter import (  # noqa: F401 — integration: hippy.spec_extractor
+    SplitRecommendation,
+    SubFeature,
+    pin_canonical_package,
+    recommend_split,
+)
+from hippy.scope_resolver import (  # noqa: F401 — integration: hippy.spec_extractor
+    flag_unbounded_scope,
+    resolve_scope_enumeration,
+)
+
 _WHITESPACE_RE = re.compile(r"\s+")
 
 

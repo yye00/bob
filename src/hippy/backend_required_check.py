@@ -25,17 +25,28 @@ Classification consults the title first (unambiguous), then falls back to the
 fuller description blob only when the title gives no signal — so an incidental
 compute word in a harness feature's body does not mislabel it.
 
+Feature 7cd64ec1 hardens the *file-scanning* half of the gate (F-R7-639): the
+check MUST scope its source scan to the feature's OWN recently-modified files
+(not the cumulative ``src/`` tree) AND FAIL on simulation-admission markers
+even when a real backend reference is also present. That file-level logic lives
+in :mod:`hippy.verifier`; this module re-exports it under the AC-named
+:func:`check_backend_required` / :func:`detect_simulation_admission` symbols so
+callers have one import surface.
+
 Public API::
 
     from hippy.backend_required_check import (
         is_harness_feature,
         backend_required_check,
+        check_backend_required,
+        detect_simulation_admission,
     )
 """
 
 from __future__ import annotations
 
-from typing import Optional
+import pathlib
+from typing import Iterable, Optional
 
 # Harness / test-infrastructure / bookkeeping markers. A feature carrying any
 # of these legitimately writes no device code even when it mentions GPU
@@ -146,3 +157,86 @@ def backend_required_check(
             "incidental GPU-keyword mentions do not require backend usage."
         ),
     }
+
+
+def has_real_call_site(source: str) -> bool:
+    """Return True iff *source* contains a real backend CALL site.
+
+    The import-but-simulate cheat (``import hipblas  # noqa: F401`` plus a
+    docstring "dispatches to hipblasXgemm" while the code path is pure-Python
+    CPU math) defeats import-only detection. A bare import or a prose mention
+    of a backend symbol is NOT a call site — only a call-shaped occurrence
+    (symbol immediately followed by ``(``) counts. Delegates to
+    :func:`hippy.checks.backend_required_call_site.has_real_call_site`.
+
+    Raises:
+        ValueError: When *source* is not a ``str`` — invalid input must not
+            silently succeed.
+    """
+    from hippy.checks.backend_required_call_site import (
+        has_real_call_site as _impl,
+    )
+
+    return _impl(source)
+
+
+def has_simulation_marker(source: str) -> bool:
+    """Return True iff *source* admits it is a simulation / CPU fallback.
+
+    Matches the import-but-simulate tells ("simulate hip", "on a live gpu",
+    "cpu fallback", "pure-python compute", "emulate", …) case-insensitively.
+    Delegates to
+    :func:`hippy.checks.backend_required_call_site.has_simulation_marker`.
+
+    Raises:
+        ValueError: When *source* is not a ``str``.
+    """
+    from hippy.checks.backend_required_call_site import (
+        has_simulation_marker as _impl,
+    )
+
+    return _impl(source)
+
+
+def detect_simulation_admission(text: str) -> bool:
+    """Return True when *text* admits a pure-Python simulation of GPU/HIP work.
+
+    A simulation admission ("simulated device memory", "in a real GPU ... here
+    it does not", "would wrap a hipStream", ...) marks a fake regardless of
+    whether the same text also references the real backend. Delegates to the
+    scoped implementation in :mod:`hippy.verifier`.
+
+    Raises:
+        ValueError: When *text* is not a ``str`` — invalid input must not
+            silently succeed.
+    """
+    from hippy.verifier import has_simulation_admission
+
+    return has_simulation_admission(text)
+
+
+def check_backend_required(
+    files: Iterable[pathlib.Path],
+    feature_start_time: Optional[float] = None,
+    is_harness: bool = False,
+) -> dict:
+    """Check a compute feature's OWN modified files for real HIP backend use.
+
+    Scopes the scan to the feature's recently-modified files (keyed on
+    *feature_start_time*, with a full-scan fallback when the window is empty)
+    and FAILS when any file admits a simulation OR none reference the real
+    backend. Harness/test-infra features (``is_harness=True``) are exempt.
+    Delegates to :func:`hippy.verifier.backend_required_check`.
+
+    Returns:
+        ``{"passed": bool, "reason": str, "scanned": list[str]}``.
+
+    Raises:
+        ValueError: When *files* is ``None`` or not iterable — invalid input
+            must not silently succeed.
+    """
+    from hippy.verifier import backend_required_check as _scoped_check
+
+    return _scoped_check(
+        files, feature_start_time=feature_start_time, is_harness=is_harness
+    )

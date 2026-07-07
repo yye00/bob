@@ -44,8 +44,15 @@ from bob.linter_22_smells import (
     spacy_backed_detectors,
 )
 
+# SMELL_DETECTORS: the full 22-detector catalogue (Femmer/Smella + 2025 LLM
+# extensions). Exposed under the AC-mandated name so callers can enumerate the
+# detector set without reaching into bob.linter_22_smells directly.
+SMELL_DETECTORS: list[SmellDefinition] = SMELL_CATALOG
+
 __all__ = [
     "lint_spec_for_smells",
+    "run_smell_linter",
+    "SMELL_DETECTORS",
     "detect_smells",
     "get_severity",
     "SmellFinding",
@@ -139,6 +146,28 @@ def lint_spec_for_smells(
         "detector_count": detector_count(),
         "spacy_backed": spacy_backed_detectors(),
     }
+
+
+def run_smell_linter(
+    text: str,
+    peer_criteria: list[str] | None = None,
+    known_feature_ids: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    """Run the full 22-detector smell linter against an acceptance criterion.
+
+    Canonical AC-named entry point. Alias of :func:`lint_spec_for_smells` — the
+    orchestrator and ``bob plan --create`` gate call this to run every detector
+    in :data:`SMELL_DETECTORS` and decide whether E-severity smells block plan
+    creation.
+
+    See :func:`lint_spec_for_smells` for the full parameter and return-value
+    documentation. Raises ``ValueError`` when ``text`` is not a ``str``.
+    """
+    return lint_spec_for_smells(
+        text,
+        peer_criteria=peer_criteria,
+        known_feature_ids=known_feature_ids,
+    )
 
 
 def get_severity(smell_id: str) -> str:

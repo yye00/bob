@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from bob.convergence_checker import check_convergence
+from bob.convergence_checker import check_convergence, query_features
 
 
 def _make_db(path: Path, rows: list[tuple[str, str]], status: str = "completed") -> None:
@@ -120,6 +120,54 @@ class TestCheckConvergenceUsesStdlibSqlite3:
                     has_sqlite3 = True
 
         assert has_sqlite3, "convergence_checker must import stdlib sqlite3"
+
+
+class TestQueryFeatures:
+    """query_features returns completed feature NAMES (not UUIDs) via stdlib sqlite3."""
+
+    def test_returns_completed_names_not_uuids(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "g.db"
+            _make_db(d, [("uuid-1", "feat-alpha"), ("uuid-2", "feat-beta")])
+            names = query_features(d)
+        assert names == {"feat-alpha", "feat-beta"}
+
+    def test_excludes_non_completed(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "g.db"
+            _make_db(d, [("uuid-1", "done")])
+            conn = sqlite3.connect(str(d))
+            conn.execute("INSERT INTO features VALUES (?, ?, ?)", ("uuid-2", "wip", "executing"))
+            conn.commit()
+            conn.close()
+            names = query_features(d)
+        assert names == {"done"}
+
+    def test_empty_db_returns_empty_set(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "g.db"
+            _make_db(d, [])
+            names = query_features(d)
+        assert names == set()
+        assert isinstance(names, set)
+
+    def test_missing_db_returns_empty_set(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "missing.db"
+            names = query_features(d)
+        assert names == set()
+
+    def test_none_path_raises_value_error(self):
+        with pytest.raises(ValueError):
+            query_features(None)
+
+    def test_empty_string_path_raises_value_error(self):
+        with pytest.raises(ValueError):
+            query_features("")
+
+    def test_wrong_type_raises_value_error(self):
+        with pytest.raises(ValueError):
+            query_features(42)
 
 
 class TestCheckConvergenceReturnType:

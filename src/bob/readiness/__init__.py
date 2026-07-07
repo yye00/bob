@@ -103,6 +103,80 @@ def derive_readiness_score(
     return (impl + spec + test) / 3.0
 
 
+def rederive_readiness_score(
+    *,
+    conf_impl_correctness: float,
+    conf_spec_understanding: float,
+    conf_test_quality: float,
+    previous_readiness_score: float | None = None,
+) -> float:
+    """Recompute readiness live from the CURRENT confidence components.
+
+    This is the anti-ratchet entry point. On every refinement attempt the
+    readiness_score MUST be *rederived* from the feature's current confidence
+    components — it is never carried forward as a stored, decaying value. That
+    prevents the monotonic ``0.85→0.70→0.55→0.40`` slide that silently steered
+    every flaky-but-recoverable feature into ``needs_human``.
+
+    The confidence components themselves may decay (they are signal);
+    ``readiness_score`` merely aggregates them at read time as their mean.
+
+    Parameters
+    ----------
+    conf_impl_correctness, conf_spec_understanding, conf_test_quality:
+        The feature's live confidence components in ``[0.0, 1.0]``.
+    previous_readiness_score:
+        The stale, possibly-decayed prior readiness value. It is accepted for
+        call-site symmetry and validated, but is INTENTIONALLY IGNORED in the
+        computation — a decayed prior must never drag down a fresh recompute.
+
+    Returns
+    -------
+    float
+        ``mean(conf_impl_correctness, conf_spec_understanding, conf_test_quality)``.
+
+    Raises
+    ------
+    ValueError
+        If any component (or ``previous_readiness_score`` when supplied) is not
+        a finite float in ``[0.0, 1.0]``.
+    """
+    if previous_readiness_score is not None:
+        _validate_component("previous_readiness_score", previous_readiness_score)
+
+    return derive_readiness_score(
+        conf_impl_correctness=conf_impl_correctness,
+        conf_spec_understanding=conf_spec_understanding,
+        conf_test_quality=conf_test_quality,
+    )
+
+
+def assess_feature_confidence(feature_id: str) -> dict[str, float]:
+    """Assess a feature's confidence components and derive its readiness.
+
+    Package-level entry point satisfying AC
+    'Function defined: bob.readiness.assess_feature_confidence'. Delegates to
+    the canonical :func:`bob.db.assess_feature_confidence`, which derives
+    readiness from the demonstrated ``spec_quality_score`` composite (falling
+    back to the AC-count heuristic only when no composite exists yet).
+
+    Parameters
+    ----------
+    feature_id:
+        UUID of the feature to assess.
+
+    Returns
+    -------
+    dict[str, float]
+        Keys: ``conf_spec_understanding``, ``conf_impl_correctness``,
+        ``conf_test_adequacy``, ``readiness_score``. A missing feature yields
+        an all-zero dict rather than raising.
+    """
+    from bob.db import assess_feature_confidence as _db_assess
+
+    return _db_assess(feature_id)
+
+
 def compute_readiness_score(
     *,
     conf_impl_correctness: float,

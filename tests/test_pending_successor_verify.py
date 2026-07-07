@@ -352,6 +352,68 @@ class TestRunLoopIntegration:
 
 
 # ---------------------------------------------------------------------------
+# AC (8309a5ab): scan_for_verifier_self_reference / defer_to_successor
+# ---------------------------------------------------------------------------
+
+
+class TestScanForVerifierSelfReference:
+    def test_defined_and_callable(self):
+        from bob.pending_successor_verify import scan_for_verifier_self_reference
+        assert callable(scan_for_verifier_self_reference)
+
+    def test_in_all(self):
+        from bob.pending_successor_verify import __all__
+        assert "scan_for_verifier_self_reference" in __all__
+
+    def test_returns_false_for_none(self):
+        from bob.pending_successor_verify import scan_for_verifier_self_reference
+        assert scan_for_verifier_self_reference(None) is False
+
+    def test_returns_false_for_empty_list(self):
+        from bob.pending_successor_verify import scan_for_verifier_self_reference
+        assert scan_for_verifier_self_reference([]) is False
+
+    def test_returns_true_for_behavior_ac_referencing_enhanced_verification(self):
+        from bob.pending_successor_verify import scan_for_verifier_self_reference
+        acs = ["behavior: enhanced_verification must demote prose AC failures"]
+        assert scan_for_verifier_self_reference(acs) is True
+
+    def test_returns_false_for_non_behavior_ac(self):
+        from bob.pending_successor_verify import scan_for_verifier_self_reference
+        acs = ["File exists: src/bob/enhanced_verification.py"]
+        assert scan_for_verifier_self_reference(acs) is False
+
+    def test_raises_value_error_for_int(self):
+        from bob.pending_successor_verify import scan_for_verifier_self_reference
+        with pytest.raises(ValueError):
+            scan_for_verifier_self_reference(42)
+
+
+class TestDeferToSuccessorAC8309:
+    def test_defined_and_callable(self):
+        from bob.pending_successor_verify import defer_to_successor
+        assert callable(defer_to_successor)
+
+    def test_defers_when_behavior_ac_references_verifier(self, tmp_path):
+        from bob.pending_successor_verify import defer_to_successor
+        acs = ["behavior: enhanced_verification must handle the new pattern"]
+        with patch("bob.pending_successor_verify.db") as mock_db:
+            result = defer_to_successor("feat-8309", "verifier feature", acs)
+        assert result is True
+        mock_db.update_feature.assert_called_once_with(
+            "feat-8309", status="pending_successor_verify"
+        )
+
+    def test_no_defer_for_non_verifier_feature(self):
+        from bob.pending_successor_verify import defer_to_successor
+        acs = ["File exists: src/bob/regular.py", "pytest: tests/test_regular.py"]
+        with patch("bob.pending_successor_verify.db") as mock_db:
+            result = defer_to_successor("feat-x", "regular feature", acs)
+        assert result is False
+        mock_db.update_feature.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # AC (6032ec54): scan_ac_body_for_tokens
 # ---------------------------------------------------------------------------
 
@@ -691,3 +753,111 @@ class TestClassifyVerifierExtensionFailure:
         from bob.run_loop import classify_verifier_extension_failure
         with pytest.raises(ValueError):
             classify_verifier_extension_failure(True, None, True)
+
+
+# ---------------------------------------------------------------------------
+# AC (ffad5c3d): scan_acs_for_verifier_tokens
+# ---------------------------------------------------------------------------
+
+
+class TestScanAcsForVerifierTokens:
+    """Broaden detection to a target-file scan across the full AC list (F-R7-596)."""
+
+    def test_returns_false_for_empty_list(self):
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        assert scan_acs_for_verifier_tokens([]) is False
+
+    def test_returns_false_for_none(self):
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        assert scan_acs_for_verifier_tokens(None) is False
+
+    def test_returns_true_when_any_ac_has_enhanced_verification(self):
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        acs = [
+            "File exists: src/bob/enhanced_verification.py",
+            "pytest: tests/test_x.py",
+        ]
+        assert scan_acs_for_verifier_tokens(acs) is True
+
+    def test_returns_true_for_verification_py_suffix(self):
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        assert scan_acs_for_verifier_tokens(["File exists: src/bob/my_verification.py"]) is True
+
+    def test_returns_true_for_verifier_py_suffix(self):
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        assert scan_acs_for_verifier_tokens(["File exists: src/bob/artifact_verifier.py"]) is True
+
+    def test_returns_false_for_unrelated_acs(self):
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        acs = ["File exists: src/bob/foo.py", "pytest: tests/test_foo.py"]
+        assert scan_acs_for_verifier_tokens(acs) is False
+
+    def test_accepts_json_encoded_list(self):
+        import json
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        acs = json.dumps(["integration: bob.enhanced_verification"])
+        assert scan_acs_for_verifier_tokens(acs) is True
+
+    def test_returns_bool(self):
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        assert isinstance(scan_acs_for_verifier_tokens([]), bool)
+
+    def test_non_list_non_str_raises_value_error(self):
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        with pytest.raises(ValueError):
+            scan_acs_for_verifier_tokens(42)
+
+    def test_dict_raises_value_error(self):
+        from bob.pending_successor_verify import scan_acs_for_verifier_tokens
+        with pytest.raises(ValueError, match="dict"):
+            scan_acs_for_verifier_tokens({"a": "b"})
+
+
+# ---------------------------------------------------------------------------
+# AC (ffad5c3d): should_defer_successor_verify
+# ---------------------------------------------------------------------------
+
+
+class TestShouldDeferSuccessorVerify:
+    """Combined target-file-scan + title-fallback deferral decision (F-R7-596)."""
+
+    def test_returns_false_for_empty_acs(self):
+        from bob.pending_successor_verify import should_defer_successor_verify
+        assert should_defer_successor_verify("some feature", []) is False
+
+    def test_returns_false_for_none_acs(self):
+        from bob.pending_successor_verify import should_defer_successor_verify
+        assert should_defer_successor_verify("some feature", None) is False
+
+    def test_returns_true_when_ac_targets_enhanced_verification(self):
+        from bob.pending_successor_verify import should_defer_successor_verify
+        acs = ["File exists: src/bob/enhanced_verification.py"]
+        assert should_defer_successor_verify("some feature", acs) is True
+
+    def test_title_fallback_catches_d34c40f0(self):
+        from bob.pending_successor_verify import should_defer_successor_verify
+        name = "AC artifact-existence verifier — refuse to pass AC when referenced files are missing"
+        acs = [
+            "behavior: verifier MUST refuse to pass an AC when the file it references does not exist",
+            "pytest: tests/test_ac_artifact_verifier.py",
+        ]
+        assert should_defer_successor_verify(name, acs) is True
+
+    def test_returns_false_for_unrelated_feature(self):
+        from bob.pending_successor_verify import should_defer_successor_verify
+        acs = ["File exists: src/bob/foo.py", "pytest: tests/test_foo.py"]
+        assert should_defer_successor_verify("plain feature", acs) is False
+
+    def test_returns_bool(self):
+        from bob.pending_successor_verify import should_defer_successor_verify
+        assert isinstance(should_defer_successor_verify("x", []), bool)
+
+    def test_non_str_name_raises_value_error(self):
+        from bob.pending_successor_verify import should_defer_successor_verify
+        with pytest.raises(ValueError):
+            should_defer_successor_verify(42, [])
+
+    def test_invalid_acs_type_raises_value_error(self):
+        from bob.pending_successor_verify import should_defer_successor_verify
+        with pytest.raises(ValueError):
+            should_defer_successor_verify("x", 99)

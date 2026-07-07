@@ -25,8 +25,36 @@ def _validate_db_path(path: Union[str, Path], name: str) -> None:
         raise ValueError(f"{name} must be a str or Path, got {type(path).__name__}")
 
 
-def _completed_names(db_path: Union[str, Path]) -> set[str]:
-    """Return completed feature names using stdlib sqlite3."""
+def query_features(db_path: Union[str, Path]) -> set[str]:
+    """Return the set of completed feature NAMES from a generation database.
+
+    Uses stdlib sqlite3 (never shells out to the sqlite3 CLI). Compares by
+    ``name`` — the stable spec identity — not by ``id`` (a UUID minted fresh
+    on every ``bob init``). A missing database file returns an empty set so
+    callers can treat "not yet created" as "no completed features" rather
+    than crashing.
+
+    Parameters
+    ----------
+    db_path:
+        Path to a generation SQLite database.
+
+    Returns
+    -------
+    set[str]
+        Names of features whose status is ``completed`` (empty if none, or
+        if the database file does not exist).
+
+    Raises
+    ------
+    ValueError
+        If ``db_path`` is None, an empty string, or not a str/Path.
+    """
+    _validate_db_path(db_path, "db_path")
+
+    if not Path(db_path).exists():
+        return set()
+
     conn = sqlite3.connect(str(db_path))
     try:
         rows = conn.execute(
@@ -35,6 +63,11 @@ def _completed_names(db_path: Union[str, Path]) -> set[str]:
     finally:
         conn.close()
     return {row[0] for row in rows}
+
+
+def _completed_names(db_path: Union[str, Path]) -> set[str]:
+    """Return completed feature names using stdlib sqlite3."""
+    return query_features(db_path)
 
 
 def check_convergence(

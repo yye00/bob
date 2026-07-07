@@ -231,6 +231,46 @@ def write_spec_findings(
     )
 
 
+def record_finding(
+    spec_hash: str,
+    slot_id: str,
+    defect_type: str,
+    *,
+    feature_id: str = "",
+    name: str = "",
+    rationale: str = "",
+    suggested_fix: str = "",
+    severity: str = "warning",
+    run_id: str | None = None,
+    findings_path: Path | None = None,
+    metrics_path: Path | None = None,
+) -> dict[str, Any]:
+    """Record a single spec-critic finding in the persistent registry.
+
+    Canonical entry point required by the F-R7-450 AC
+    (``bob.spec_findings_registry.record_finding``). Delegates to
+    :func:`write_findings`; parameters and return value match exactly.
+
+    Keyed by (spec_hash, slot_id, defect_type). On re-run with the same
+    composite key, the finding is flagged as REGRESSION and severity is
+    escalated one level. The halt-gate fires when critic_repeat_rate > 0.30
+    over the last 3 distinct run_ids.
+    """
+    return write_findings(
+        spec_hash=spec_hash,
+        slot_id=slot_id,
+        defect_type=defect_type,
+        feature_id=feature_id,
+        name=name,
+        rationale=rationale,
+        suggested_fix=suggested_fix,
+        severity=severity,
+        run_id=run_id,
+        findings_path=findings_path,
+        metrics_path=metrics_path,
+    )
+
+
 def record_findings(
     spec_hash: str,
     slot_id: str,
@@ -273,6 +313,7 @@ def record_findings(
 
 __all__ = [
     "load_findings",
+    "record_finding",
     "record_findings",
     "write_findings",
     "write_spec_findings",

@@ -158,6 +158,36 @@ def generate_hypothesis_test(prop: "PropertyAC", *, seed: int = 0) -> str:
     return emit_hypothesis_test(prop, seed=seed)
 
 
+def emit_key_example_test(
+    examples: "list[KeyExample] | KeyExample | None",
+    *,
+    test_name: str = "test_key_examples",
+    seed: int = 0,
+) -> str:
+    """Emit a parametrized pytest test from one or more key-examples.
+
+    Delegates to :func:`~bob.spec_quality.example_grammar.emit_parametrize_test`.
+    Each :class:`~bob.spec_quality.example_grammar.KeyExample` becomes one
+    ``@pytest.mark.parametrize`` case. The generated test pins ``seed=0`` for
+    reproducibility.
+
+    Args:
+        examples:  A single :class:`KeyExample`, a list of them, or ``None``.
+                   ``None`` and empty lists yield an empty string (no test).
+        test_name: Name for the generated test function.
+        seed:      Seed recorded in the emitted source (default ``0``).
+
+    Returns:
+        Python source code string for the parametrize test, or ``""`` when
+        there are no examples to emit.
+    """
+    if examples is None:
+        return ""
+    if isinstance(examples, KeyExample):
+        examples = [examples]
+    return emit_parametrize_test(examples, test_name=test_name, seed=seed)
+
+
 def generate_parametrized_pytest(
     examples: "list[KeyExample]",
     *,
@@ -186,6 +216,7 @@ __all__ = [
     "PropertyAC",
     "emit_hypothesis_test",
     "emit_hypothesis_tests",
+    "emit_key_example_test",
     "generate_hypothesis_test",
     "generate_parametrized_pytest",
     "parse_key_example_ac",

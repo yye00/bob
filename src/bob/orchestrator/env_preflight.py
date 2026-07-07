@@ -545,6 +545,23 @@ def persist_applied_workarounds(
 # ---------------------------------------------------------------------------
 
 
+def run_toolchain_preflight(
+    context: Optional[str] = None,
+    *,
+    halt: bool = True,
+) -> Any:
+    """Run the ROCm/HIP toolchain preflight (version + arch pins).
+
+    Thin bridge into :mod:`bob.toolchain_preflight` so the env-preflight stage
+    can enforce ROCm/HIP toolchain compatibility alongside the bare CLI/Python
+    dep enumeration. Parses version/arch pins from a PEAS CONTEXT block and
+    HALTS (``halt=True``) on mismatch before an expensive HIP build.
+    """
+    from bob.toolchain_preflight import check_toolchain_preflight
+
+    return check_toolchain_preflight(context, halt=halt)
+
+
 def run_preflight(
     ac_list: List[str],
     round_num: int = 0,

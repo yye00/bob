@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "write_atomic",
+    "atomic_write_findings",
+    "load_findings_or_quarantine",
     "write_atomic_yaml",
     "write_spec_findings_atomic",
     "write_findings_atomically",
@@ -70,6 +72,28 @@ def write_atomic(data: dict[str, Any], path: Path | str) -> None:
         fh.flush()
         os.fsync(fh.fileno())
     os.rename(tmp, p)
+
+
+def atomic_write_findings(data: dict[str, Any], path: Path | str) -> None:
+    """AC-required entry point: bob.spec_findings_writer.atomic_write_findings.
+
+    Write *data* to *path* as YAML using the atomic tmp+fsync+rename sequence.
+    A mid-write SIGTERM/SIGKILL leaves only ``<path>.tmp`` — the target is never
+    a partial write that would corrupt YAML parsing.  Delegates to write_atomic.
+    """
+    write_atomic(data, path)
+
+
+def load_findings_or_quarantine(path: Path | str) -> dict[str, Any]:
+    """AC-required entry point: bob.spec_findings_writer.load_findings_or_quarantine.
+
+    Load spec_findings YAML, recovering from corruption.  On yaml.YAMLError
+    (including ScannerError from a partial write), the corrupt file is quarantined
+    to ``<path>.corrupt.<unix_ts>``, a structured ``spec_findings_corrupt`` event
+    is logged, and {} is returned so bob boot continues instead of crash-looping.
+    Delegates to load_with_corruption_recovery.
+    """
+    return load_with_corruption_recovery(path)
 
 
 def write_atomic_yaml(data: dict[str, Any], path: Path | str) -> None:

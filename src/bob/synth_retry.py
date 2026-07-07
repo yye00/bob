@@ -206,7 +206,55 @@ async def synthesize_with_retry(
     return None
 
 
+async def synthesize_for_feature(
+    *,
+    project_id: str,
+    title: str,
+    description: str,
+    project_context: str = "",
+    workspace: object = None,
+    retry_feedback: str | None = None,
+    **kwargs: Any,
+) -> list[str] | None:
+    """Retry-aware entry-point mirroring ``bob.spec_synthesizer.synthesize_for_feature``.
+
+    The underlying synthesizer already wraps its LLM spawn in the aggressive
+    retry loop (``BOB_SYNTH_MAX_ATTEMPTS`` attempts with exponential backoff).
+    This re-export lives in ``bob.synth_retry`` so callers can depend on the
+    retry-hardened synthesizer by that name.
+
+    Returns ``list[str]`` of synthesized ACs on success, or ``None`` when all
+    retry attempts are exhausted (caller should fall back to deterministic ACs).
+    """
+    from bob.spec_synthesizer import synthesize_for_feature as _synthesize
+
+    return await _synthesize(
+        project_id=project_id,
+        title=title,
+        description=description,
+        project_context=project_context,
+        workspace=workspace,
+        retry_feedback=retry_feedback,
+        **kwargs,
+    )
+
+
+async def score_gate_loop(*args: Any, **kwargs: Any) -> Any:
+    """Retry-aware re-synthesis loop mirroring ``bob.spec_synthesizer.score_gate_loop``.
+
+    Re-synthesizes acceptance criteria until the composite spec-quality score
+    clears the gate threshold, applying the same transient-upstream retry
+    protection as :func:`synthesize_for_feature`. Re-exported here so the score
+    gate loop is reachable via the retry-hardened ``bob.synth_retry`` surface.
+    """
+    from bob.spec_synthesizer import score_gate_loop as _score_gate_loop
+
+    return await _score_gate_loop(*args, **kwargs)
+
+
 __all__ = [
     "retry_with_backoff",
     "synthesize_with_retry",
+    "synthesize_for_feature",
+    "score_gate_loop",
 ]

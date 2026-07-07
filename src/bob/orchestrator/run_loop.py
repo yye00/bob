@@ -773,6 +773,40 @@ def run_loop(
     return asyncio.run(loop.run())
 
 
+def _run_orchestration_loop(
+    project_id: str,
+    max_cost: float | None = None,
+    fresh: bool = False,
+    target_feature_id: str | None = None,
+    force_unlock: bool = False,
+    max_concurrent_features: int = 1,
+) -> "LoopTermination":
+    """Synchronous orchestration-loop entry point.
+
+    Delegates to :func:`bob.cli._run_orchestration_loop`, which resolves the
+    project workspace from the DB before constructing the loop. Exposed here so
+    the loop can be driven from ``bob.orchestrator.run_loop`` without importing
+    the Click CLI layer at call sites. The import is lazy to avoid the
+    ``cli → run_loop`` import cycle at module load time.
+
+    Raises:
+        ValueError: if ``project_id`` is empty/blank.
+    """
+    if not isinstance(project_id, str) or not project_id.strip():
+        raise ValueError("project_id must be a non-empty string")
+
+    from bob.cli import _run_orchestration_loop as _cli_run_orchestration_loop
+
+    return _cli_run_orchestration_loop(
+        project_id,
+        max_cost=max_cost,
+        fresh=fresh,
+        target_feature_id=target_feature_id,
+        force_unlock=force_unlock,
+        max_concurrent_features=max_concurrent_features,
+    )
+
+
 # R10-015: Maximum number of free retries granted to a feature whose
 # sub-agent died at process spawn time (duration_ms < 100, num_turns == 0).
 # These transient failures should not consume the feature's

@@ -47,6 +47,7 @@ from spec_synthesis import (
 from bob.spec_synthesizer import (
     _ensure_boundary_and_error_coverage as _ensure_bec,
     deterministic_fallback as _deterministic_fallback,
+    _ensure_described_files_covered as _ensure_described_files_covered,
 )
 from bob.spec_quality.example_grammar import (
     KeyExample,
@@ -79,6 +80,7 @@ __all__ = [
     "run_clarification_loop",
     "ensure_boundary_and_error_coverage",
     "deterministic_fallback",
+    "emit_file_exists_acs_for_described_paths",
     "emit_plan_ready_event",
     "parse_property_ac",
     "parse_key_example_ac",
@@ -287,6 +289,14 @@ def ensure_boundary_and_error_coverage(
     return _ensure_bec(criteria, title=title)
 
 
+# AC-named alias: the boundary/error injector is canonically named
+# ``_ensure_boundary_and_error_coverage`` in bob.spec_synthesizer. Expose it under
+# that exact name here so ``bob.spec_synthesis._ensure_boundary_and_error_coverage``
+# resolves. Detection uses the scorer's \b word-boundary regexes on prose ACs only,
+# never naive slug substring matching.
+_ensure_boundary_and_error_coverage = ensure_boundary_and_error_coverage
+
+
 def deterministic_fallback(
     feature_name: str,
     feature_description: str = "",
@@ -328,6 +338,71 @@ def deterministic_fallback(
         of stop-words.
     """
     return _deterministic_fallback(feature_name, feature_description, **kwargs)
+
+
+def emit_file_exists_acs_for_described_paths(
+    acceptance_criteria: list[str],
+    description: str,
+) -> list[str]:
+    """Emit a ``File exists: <path>`` AC for every concrete ``.py`` path the
+    description names but the criteria don't already cover.
+
+    contract_completeness treats every concrete ``.py`` path named in a feature
+    description as an API surface that must be covered by an AC. When a PEAS
+    prose feature names e.g. ``src/bob/brownfield/survey.py`` but synthesis
+    derived a differently-slugged filename, the described path is uncovered →
+    contract_completeness=0 → composite 0.0 (a weighted geometric mean with one
+    zeroed sub-metric). Emitting a ``File exists:`` AC for the named path makes
+    the contract legitimately complete: the implementation must create exactly
+    the file the spec named.
+
+    This is the canonical, directly-testable entry-point required by feature
+    0ffd06f6. It delegates to
+    :func:`bob.spec_synthesizer._ensure_described_files_covered`, which is
+    applied by both the LLM synthesis path and the deterministic fallback so
+    EITHER route yields file-covered ACs.
+
+    Boundary conditions:
+    - Descriptions with no concrete ``.py`` paths are unaffected — the original
+      criteria are returned unchanged (as a fresh list).
+    - Duplicate paths are not double-added (each path is emitted at most once,
+      and paths already covered by an existing AC are skipped).
+    - Bare filenames without a directory component (e.g. ``foo.py``) are skipped
+      because they are ambiguous.
+
+    Parameters
+    ----------
+    acceptance_criteria:
+        Current list of AC strings (may be empty).
+    description:
+        Free-form feature description that may name concrete ``.py`` paths.
+
+    Returns
+    -------
+    list[str]
+        Augmented criteria list with ``File exists:`` ACs appended for any
+        uncovered concrete ``.py`` paths named in the description.
+
+    Raises
+    ------
+    ValueError
+        If ``acceptance_criteria`` is not a list or contains non-string items,
+        or if ``description`` is not a string.
+    """
+    if not isinstance(acceptance_criteria, list):
+        raise ValueError(
+            f"acceptance_criteria must be a list, got {type(acceptance_criteria).__name__}"
+        )
+    for item in acceptance_criteria:
+        if not isinstance(item, str):
+            raise ValueError(
+                f"acceptance_criteria items must be strings, got {type(item).__name__}"
+            )
+    if not isinstance(description, str):
+        raise ValueError(
+            f"description must be a string, got {type(description).__name__}"
+        )
+    return _ensure_described_files_covered(acceptance_criteria, description)
 
 
 def emit_plan_ready_event(

@@ -13,6 +13,7 @@ from bob.spec_quality.section_selector import (  # noqa: F401  # Self-Discover i
 from bob.spec_quality.behavior_ac_parser import (  # noqa: F401  # F-654aea21 integration
     parse_behavior_ac,
     accepts_synonym_conditional,
+    normalize_clause,
     BehaviorAC,
 )
 from bob.spec_quality.quality_score import (  # noqa: F401  # eb57333a integration wiring

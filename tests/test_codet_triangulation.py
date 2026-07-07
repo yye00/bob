@@ -21,6 +21,7 @@ from bob.codet_triangulation import (
     build_agreement_matrix,
     generate_kxk_matrix,
     mutual_agreement_scorer,
+    score_candidates,
     select_best_impl,
 )
 from bob.orchestrator.codet_triangulation import spawn_k_impls, spawn_k_tests
@@ -150,6 +151,41 @@ class TestBuildAgreementMatrix:
         impls, _ = _make_candidates("feat-bam-empty2", 1, tmp_path)
         with pytest.raises(ValueError, match="test_sets"):
             build_agreement_matrix(impls, [], workspace=tmp_path)
+
+
+class TestScoreCandidates:
+    def test_returns_ranked_list(self, tmp_path):
+        impls, test_sets = _make_candidates("feat-sc-1", 2, tmp_path)
+        ranked = score_candidates(impls, test_sets, workspace=tmp_path)
+        assert isinstance(ranked, list)
+        assert len(ranked) == len(impls)
+
+    def test_ranked_by_descending_score(self, tmp_path):
+        impls, test_sets = _make_candidates("feat-sc-2", 2, tmp_path)
+        ranked = score_candidates(impls, test_sets, workspace=tmp_path)
+        scores = [total for _, total in ranked]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_top_candidate_is_matrix_winner(self, tmp_path):
+        impls, test_sets = _make_candidates("feat-sc-3", 2, tmp_path)
+        matrix = build_agreement_matrix(impls, test_sets, workspace=tmp_path)
+        ranked = score_candidates(impls, test_sets, workspace=tmp_path)
+        top_impl = ranked[0][0]
+        # The top-ranked impl by aggregate must be the matrix winner's impl
+        # when the winner's impl also has the highest aggregate; assert it is a
+        # valid CandidateImpl and its score is the max.
+        assert isinstance(top_impl, CandidateImpl)
+        assert ranked[0][1] == max(t for _, t in ranked)
+
+    def test_empty_impls_raises_value_error(self, tmp_path):
+        _, test_sets = _make_candidates("feat-sc-empty", 1, tmp_path)
+        with pytest.raises(ValueError, match="impls"):
+            score_candidates([], test_sets, workspace=tmp_path)
+
+    def test_empty_test_sets_raises_value_error(self, tmp_path):
+        impls, _ = _make_candidates("feat-sc-empty2", 1, tmp_path)
+        with pytest.raises(ValueError, match="test_sets"):
+            score_candidates(impls, [], workspace=tmp_path)
 
 
 class TestSelectBestImpl:

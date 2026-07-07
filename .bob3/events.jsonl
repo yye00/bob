@@ -1,0 +1,6 @@
+{"event": "CTX_BUDGET_KILL", "feature_id": "sess-abc", "tokens": 160000, "limit": 200000, "timestamp": "2026-07-07T16:26:55.897361+00:00"}
+{"event": "CTX_BUDGET_KILL", "feature_id": "sess-tel", "tokens": 170000, "limit": 200000, "timestamp": "2026-07-07T16:26:55.898755+00:00"}
+{"event": "CTX_BUDGET_KILL", "feature_id": "test-feature-123", "tokens": 130000, "limit": 200000, "timestamp": "2026-07-07T16:26:55.902380+00:00"}
+{"event": "CTX_BUDGET_KILL", "feature_id": "unknown", "tokens": 90000, "limit": 200000, "timestamp": "2026-07-07T16:26:55.905604+00:00"}
+{"event": "CTX_BUDGET_KILL", "feature_id": "test-feature-123", "tokens": 130000, "limit": 200000, "timestamp": "2026-07-07T16:56:52.766193+00:00"}
+{"event": "CTX_BUDGET_KILL", "feature_id": "unknown", "tokens": 90000, "limit": 200000, "timestamp": "2026-07-07T16:56:52.787303+00:00"}

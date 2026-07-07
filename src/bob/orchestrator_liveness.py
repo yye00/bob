@@ -14,11 +14,11 @@ a second orchestrator — two orchestrators briefly raced on the same SQLite DB.
 
 Fix contract
 ------------
-1. The process probe MUST use the ``bob[0-9]*`` regex so gen-N aliases
-   (``bob14``, ``bob59``) as well as the legacy ``bob run`` form all match.
+1. The process probe MUST use the ``bob[0-9]+`` regex so gen-N aliases
+   (``bob14``, ``bob59``) match; a bare ``bob run`` (no digit) must NOT match.
 2. ``.bob.lock`` MUST NOT be removed unless ALL THREE signals agree that no
    orchestrator is alive:
-     a. no process matching ``bob[0-9]* run`` (pgrep/regex signal)
+     a. no process matching ``bob[0-9]+ run`` (pgrep/regex signal)
      b. the PID recorded in ``.bob.lock`` is not alive (``kill -0``)
      c. the DB has no ``executing`` feature rows updated within the last 60 s
 """
@@ -31,10 +31,10 @@ from bob.orchestrator.liveness_probe import is_orchestrator_alive, safe_to_remov
 
 
 def is_orchestrator_running() -> bool:
-    """Return True if any ``bob[0-9]* run`` (incl. gen-N alias) process is alive.
+    """Return True if any ``bob[0-9]+ run`` (gen-N alias) process is alive.
 
     Scans /proc for live processes whose cmdline matches the orchestrator
-    pattern, covering both the legacy ``bob run`` form and gen-N binary aliases
+    pattern, covering gen-N binary aliases
     such as ``bob14 run --all``. Excludes the current process, its ancestry,
     and shell/timeout wrappers that merely quote a ``bobN run`` command.
 
@@ -50,7 +50,7 @@ def should_remove_lock(
     """Return True ONLY when ALL three signals agree no orchestrator is running.
 
     The ``.bob.lock`` file MUST NOT be removed unless ALL of the following hold:
-      1. is_orchestrator_running() is False (no ``bob[0-9]* run`` process)
+      1. is_orchestrator_running() is False (no ``bob[0-9]+ run`` process)
       2. the PID in ``.bob.lock`` is not alive (``kill -0``)
       3. the DB has no ``executing`` rows updated within the last 60 s
 

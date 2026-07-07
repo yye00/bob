@@ -29,10 +29,13 @@ from bob.orchestrator.probe_ancestry import collect_ancestor_pids, is_shell_wrap
 
 logger = logging.getLogger(__name__)
 
-# Regex matches: 'bob run', 'bob14 run', '/path/to/bob14 run', etc.
-# The generation digits are optional so both the legacy 'bob run' form and the
-# gen-N binary alias 'bobN run' (e.g. bob14) are detected.
-_ORCHESTRATOR_PATTERN = re.compile(r"(?:^|[\s/])bob[0-9]*\s+run(?:\s|$)")
+# Regex matches: 'bob14 run', '/path/to/bob59 run', etc.
+# Per spec (feature 4c1f1572) the generation digits are REQUIRED — the
+# orchestrator CLI is installed as the gen-N alias 'bobN' (e.g. bob14). A
+# bare 'bob run' (no digit) must NOT match: matching it was the original
+# defect where a naive 'pgrep bob run' both missed the real 'bobN run'
+# process and false-matched unrelated invocations.
+_ORCHESTRATOR_PATTERN = re.compile(r"(?:^|[\s/])bob[0-9]+\s+run(?:\s|$)")
 
 # How many seconds of executing-row recency counts as "live".
 _EXECUTING_RECENCY_SECONDS = 60

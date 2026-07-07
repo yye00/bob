@@ -111,7 +111,7 @@ def test_orchestrator_liveness_probe_must_match_bob_0_9_regex_honor_bob_lock_hol
 
         # --- Sub-test 5: gen-N regex covers various aliases ---
         for alias, bob_cmd in [
-            ("bob", "bob run --all"),
+            ("bob0", "bob0 run --all"),
             ("bob14", "bob14 run --all"),
             ("bob59", "bob59 run --all"),
             ("bob100", "/home/u/.venv/bin/bob100 run"),
@@ -219,7 +219,7 @@ class TestSignalIndependence:
             with (
                 patch(
                     "bob.orchestrator.liveness_probe._iter_candidate_pids",
-                    return_value=[(5555, "bob run")],
+                    return_value=[(5555, "bob14 run")],
                 ),
                 patch(
                     "bob.orchestrator.liveness_probe._has_recent_executing_rows",

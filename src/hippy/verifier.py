@@ -35,10 +35,21 @@ import re
 import time
 from typing import Iterable
 
+from hippy.baseline_gate import (  # noqa: F401 — integration: stable baseline gate
+    BaselineResult,
+    BaselineUnstableError,
+    capture_baseline,
+    collects_cleanly,
+)
+
 __all__ = [
     "backend_required_check",
     "has_simulation_admission",
     "scope_to_modified_files",
+    "capture_baseline",
+    "collects_cleanly",
+    "BaselineResult",
+    "BaselineUnstableError",
 ]
 
 

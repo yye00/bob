@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from bob.sticky_completed_gate import is_completion_persisted, prevent_status_downgrade
+from bob.scoped_incremental_build import (
+    attribute_new_warnings_vs_baseline,
+    incremental_build_targets,
+)
 
 
 def plan_yaml_gate(
@@ -56,4 +60,6 @@ __all__ = [
     "is_completion_persisted",
     "prevent_status_downgrade",
     "plan_yaml_gate",
+    "incremental_build_targets",
+    "attribute_new_warnings_vs_baseline",
 ]

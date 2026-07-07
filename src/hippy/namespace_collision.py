@@ -29,8 +29,11 @@ from pathlib import Path
 from typing import Iterable
 
 __all__ = [
+    "check_namespace_collision",
     "check_namespace_collisions",
+    "find_shadowed_distributions",
     "collision_message",
+    "assert_no_namespace_collisions",
 ]
 
 # Default import-names that a Python scientific/GPU project depends on and which
@@ -111,6 +114,27 @@ def check_namespace_collisions(
         if name in dep_names:
             collisions.add(name)
     return sorted(collisions)
+
+
+# AC-named canonical entry points (feature 5594fc4c). ``check_namespace_collision``
+# (singular) is the verification-checklist name; ``find_shadowed_distributions`` is
+# the discovery name used by the spec synthesizer / conftest. Both delegate to the
+# validated :func:`check_namespace_collisions` implementation.
+check_namespace_collision = check_namespace_collisions
+
+
+def find_shadowed_distributions(
+    src_dir,
+    dependencies: Iterable[str] | None = DEFAULT_SHADOW_NAMES,
+) -> list[str]:
+    """Return the sorted dependency import-names shadowed by modules in *src_dir*.
+
+    Alias of :func:`check_namespace_collisions` with the discovery-oriented name
+    the spec synthesizer and root conftest use. Same contract: returns a sorted
+    list of colliding names (empty when clean), raises ``ValueError`` on invalid
+    input.
+    """
+    return check_namespace_collisions(src_dir, dependencies=dependencies)
 
 
 def collision_message(collisions: Iterable[str]) -> str:
