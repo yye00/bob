@@ -25,6 +25,7 @@ Integration point: bob.orchestrator.run_loop
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 
 from bob.db import (
@@ -38,6 +39,74 @@ logger = logging.getLogger(__name__)
 
 # Columns used to SELECT the claimed row right after the UPDATE.
 _SELECT_COLS = ", ".join(f"f.{c}" for c in _FEATURE_COLUMNS)
+
+# Environment variable that, when set to a float in [0,1], REPLACES the
+# per-risk readiness thresholds with a single floor for all risk categories.
+READINESS_THRESHOLD_ENV = "BOB_READINESS_THRESHOLD"
+
+# Per-risk readiness floors used when no valid override is present. These
+# mirror the features_ready view.
+_PER_RISK_THRESHOLDS = {
+    "low": 0.70,
+    "medium": 0.80,
+    "high": 0.90,
+    "critical": 0.95,
+}
+_DEFAULT_THRESHOLD = 0.80
+
+
+def parse_readiness_threshold(raw: str) -> float:
+    """Strictly parse a readiness-threshold string into a float in [0, 1].
+
+    Unlike :func:`resolve_readiness_override`, this does NOT silently swallow
+    bad input — it is the error-path entry point.
+
+    Raises:
+        ValueError: If ``raw`` is not a string, is empty/whitespace-only,
+            is not a finite number, or falls outside ``[0.0, 1.0]``.
+    """
+    if not isinstance(raw, str):
+        raise ValueError(
+            f"readiness threshold must be a string, got {type(raw).__name__}"
+        )
+    stripped = raw.strip()
+    if not stripped:
+        raise ValueError("readiness threshold is empty")
+    try:
+        value = float(stripped)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"readiness threshold {raw!r} is not a number") from exc
+    # Reject NaN / inf — comparisons against them silently break gating.
+    if value != value or value in (float("inf"), float("-inf")):
+        raise ValueError(f"readiness threshold {raw!r} is not finite")
+    if not (0.0 <= value <= 1.0):
+        raise ValueError(f"readiness threshold {value} is out of range [0.0, 1.0]")
+    return value
+
+
+def resolve_readiness_override(env: dict | None = None) -> float | None:
+    """Lazily resolve the optional readiness-threshold override from the env.
+
+    This is the lenient claim-path resolver: an unset, empty, or malformed
+    value returns ``None`` (fall back to the per-risk defaults) rather than
+    raising. Valid values are within ``[0.0, 1.0]``.
+
+    Args:
+        env: Optional mapping to read from instead of ``os.environ`` (for
+            testing). Defaults to ``os.environ``.
+
+    Returns:
+        A float in ``[0.0, 1.0]`` when a valid override is present, else
+        ``None``.
+    """
+    source = os.environ if env is None else env
+    raw = source.get(READINESS_THRESHOLD_ENV, "")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return parse_readiness_threshold(raw)
+    except ValueError:
+        return None
 
 
 def claim_next_ready_feature(
@@ -77,16 +146,7 @@ def claim_next_ready_feature(
     # spec_quality_score is absent (None) and readiness falls back to a low
     # AC-count heuristic, leaving genuinely-ready features below the 0.80 gate
     # and collapsing concurrency. Dependency gating is unaffected.
-    _readiness_override = None
-    try:
-        import os as _os
-        _rv = _os.environ.get("BOB_READINESS_THRESHOLD", "").strip()
-        if _rv:
-            _f = float(_rv)
-            if 0.0 <= _f <= 1.0:
-                _readiness_override = _f
-    except (ValueError, TypeError):
-        _readiness_override = None
+    _readiness_override = resolve_readiness_override()
     if _readiness_override is not None:
         _readiness_clause = f"AND f.readiness_score >= {_readiness_override}"
     else:

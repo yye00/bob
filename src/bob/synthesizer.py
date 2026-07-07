@@ -51,6 +51,11 @@ from bob.synthesizer_boundary_error_ac_injector import (
     extract_criterion_text_from_object_format,
     inject_boundary_and_error_acs as _inject_boundary_and_error_acs_new,
 )
+from bob.skip_ratio_gate import (
+    classify_skip_reason,
+    emit_skip_ratio_bound,
+    gates_on_suite_metric,
+)
 
 # Canonical aliases: ACs for this feature require both names.
 inject_boundary_error_criteria = inject_boundary_and_error_acs
@@ -62,9 +67,12 @@ __all__ = [
     "build_retry_feedback_prompt",
     "deterministic_fallback",
     "deterministic_fallback_spec",
+    "classify_skip_reason",
     "detect_integration_targets",
+    "emit_skip_ratio_bound",
     "ensure_integration_criterion",
     "emit_file_exists_acs",
+    "gates_on_suite_metric",
     "extract_criterion_text_from_object_format",
     "find_placeholder_features",
     "inject_boundary_and_error_acs",

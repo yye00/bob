@@ -16,6 +16,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from bob.capability_probe import (  # noqa: F401 — integration: bob.spec_extractor
+    parse_capability_claim,
+    probe_vendor_capability,
+    reclassify_infeasible_passthrough,
+)
+from bob.feature_splitter import (  # noqa: F401 — integration: bob.spec_extractor
+    SplitRecommendation,
+    SubFeature,
+    pin_canonical_package,
+    recommend_split,
+)
 from bob.scope_enumeration_linter import (  # noqa: F401 — integration: bob.spec_extractor
     ScopeEnumerationResult,
     check_scope_enumeration,
@@ -233,4 +244,11 @@ __all__ = [
     "ScopeEnumerationResult",
     "check_scope_enumeration",
     "has_unbounded_scope_word",
+    "recommend_split",
+    "pin_canonical_package",
+    "SplitRecommendation",
+    "SubFeature",
+    "probe_vendor_capability",
+    "reclassify_infeasible_passthrough",
+    "parse_capability_claim",
 ]

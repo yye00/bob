@@ -1555,7 +1555,7 @@ def should_emit_function_defined_ac(symbol: str, description: str) -> bool:
     if not description.strip():
         return False
     import re as _re
-    return bool(_re.search(r"\b" + _re.escape(symbol) + r"\b", description))
+    return bool(_re.search(r"\b" + _re.escape(symbol) + r"\b", description, _re.IGNORECASE))
 
 
 # F-af78c082: public alias matching AC "Function defined: bob.spec_synthesizer.should_emit_function_ac"

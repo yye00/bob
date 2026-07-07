@@ -20,3 +20,8 @@ from hippy.orchestrator import (  # noqa: F401 — integration: hippy.orchestrat
     apply_bootstrap_bypass,
     gate_allows_execution,
 )
+
+from hippy.spec_synthesis import (  # noqa: F401 — integration: hippy.spec_synthesis
+    _ensure_boundary_and_error_coverage,
+    inject_boundary_and_error_acs,
+)

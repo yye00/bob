@@ -136,7 +136,17 @@ def parse_depends_on(description: str, *, self_slot: str | None = None) -> list[
     the referenced slot IDs in first-seen order. A feature never depends on
     itself (``self_slot`` is filtered out). Returns an empty list when the
     description names no dependencies.
+
+    ``None`` and the empty string are treated as "no dependencies" and yield
+    ``[]`` (boundary). Any other non-string input raises ``ValueError`` rather
+    than silently returning a result (error path).
     """
+    if description is None:
+        return []
+    if not isinstance(description, str):
+        raise ValueError(
+            f"description must be a str (or None), got {type(description).__name__}"
+        )
     if not description:
         return []
     found: list[str] = []

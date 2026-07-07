@@ -214,6 +214,7 @@ from bob.orchestrator.claude_executor import (
     ExecutionResult,
     SpawnResult,
     build_sub_agent_options,
+    resolve_sub_agent_max_turns,
     parse_evaluator_verdict,
     spawn_evaluator_agent,
     spawn_rca_agent,
@@ -4337,11 +4338,13 @@ class OrchestrationLoop:
             # F-R7-633: dispatch on the model at this feature's escalation tier
             # (tier 0 = first ladder entry, sonnet). Bumped when attempts exhaust.
             model=_resolve_escalated_model(getattr(feature, "model_tier", 0)),
-            # honor BOB_SUB_AGENT_MAX_TURNS env override (default 25). A large
-            # L4 feature (linalg/sparse vendor wiring) needs more than 25 turns
-            # to converge in ONE window; too-small a budget causes max_turns
-            # exhaustion mis-read as a transport crash and an infinite rebuild.
-            max_turns=DEFAULT_SUB_AGENT_MAX_TURNS,
+            # honor BOB_SUB_AGENT_MAX_TURNS env override (default 25), resolved
+            # LIVE at the call site so a per-run override set after import is
+            # honored (define-vs-honor gap). A large L4 feature (linalg/sparse
+            # vendor wiring) needs more than 25 turns to converge in ONE window;
+            # too-small a budget causes max_turns exhaustion mis-read as a
+            # transport crash and an infinite rebuild.
+            max_turns=resolve_sub_agent_max_turns(),
         )
 
         # Spawn the sub-agent, bounded by a wall-clock timeout so a stuck

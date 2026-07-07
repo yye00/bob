@@ -88,11 +88,41 @@ MODEL_ALIASES: dict[str, str] = {
 VALID_MODEL_IDS: frozenset[str] = frozenset(MODEL_ALIASES.values()) | _CANONICAL_ANTHROPIC_IDS
 
 DEFAULT_SUB_AGENT_MODEL = "sonnet"
-import os as _os_maxturns
+DEFAULT_SUB_AGENT_MAX_TURNS_FALLBACK = 25
+
+
+def resolve_sub_agent_max_turns() -> int:
+    """Resolve the sub-agent turn budget from ``BOB_SUB_AGENT_MAX_TURNS`` live.
+
+    Read at CALL TIME, not import time, so a per-run override set after this
+    module is imported is honored (the define-vs-honor gap: a value defined at
+    import cannot be tuned per run). Unset / empty / whitespace falls back to
+    the default. Any other malformed value (non-integer, zero, negative) raises
+    ``ValueError`` rather than silently reverting to the default and masking a
+    misconfiguration that would otherwise wedge a run.
+    """
+    raw = os.environ.get("BOB_SUB_AGENT_MAX_TURNS")
+    if raw is None or not raw.strip():
+        return DEFAULT_SUB_AGENT_MAX_TURNS_FALLBACK
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"BOB_SUB_AGENT_MAX_TURNS must be a positive integer, got {raw!r}"
+        )
+    if value < 1:
+        raise ValueError(
+            f"BOB_SUB_AGENT_MAX_TURNS must be >= 1, got {value}"
+        )
+    return value
+
+
+# Backwards-compatible module-level snapshot (resolved once at import). Prefer
+# ``resolve_sub_agent_max_turns()`` for live, per-run honoring.
 try:
-    DEFAULT_SUB_AGENT_MAX_TURNS = int(_os_maxturns.environ.get("BOB_SUB_AGENT_MAX_TURNS", "25"))
-except (TypeError, ValueError):
-    DEFAULT_SUB_AGENT_MAX_TURNS = 25
+    DEFAULT_SUB_AGENT_MAX_TURNS = resolve_sub_agent_max_turns()
+except ValueError:
+    DEFAULT_SUB_AGENT_MAX_TURNS = DEFAULT_SUB_AGENT_MAX_TURNS_FALLBACK
 DEFAULT_SUB_AGENT_PERMISSION_MODE = "bypassPermissions"
 
 # ---------------------------------------------------------------------------
@@ -245,7 +275,7 @@ def build_sub_agent_options(
     if resolved_model is not None:
         kwargs["model"] = resolved_model
 
-    kwargs["max_turns"] = max_turns if max_turns is not None else DEFAULT_SUB_AGENT_MAX_TURNS
+    kwargs["max_turns"] = max_turns if max_turns is not None else resolve_sub_agent_max_turns()
 
     if system_prompt is not None:
         kwargs["system_prompt"] = system_prompt

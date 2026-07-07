@@ -47,6 +47,7 @@ from bob.synthesize import (
     synthesize_with_score_gate,
 )
 from bob.spec_synthesizer import (
+    _ensure_boundary_and_error_coverage,
     should_emit_function_ac,
     synthesize_with_retry,
 )
@@ -117,6 +118,7 @@ inject_missing_coverage = inject_boundary_and_error_acs
 
 __all__ = [
     "ScoreGateReport",
+    "_ensure_boundary_and_error_coverage",
     "build_retry_feedback_prompt",
     "deterministic_fallback",
     "deterministic_fallback_spec",

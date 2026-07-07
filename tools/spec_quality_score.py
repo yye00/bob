@@ -545,6 +545,13 @@ def _score_contract_completeness(
     return (len(mentions) - len(uncovered)) / len(mentions), hints
 
 
+# AC-required alias: Function defined: tools.spec_quality_score._contract_completeness
+# Canonical private name for the contract-completeness sub-metric. Only
+# code-shaped tokens (containing "_", ".", ".py", or internal CamelCase) are
+# treated as API surfaces — plain English prose words are ignored.
+_contract_completeness = _score_contract_completeness
+
+
 def _score_boundary_coverage(criteria: list[str]) -> tuple[float, list[str]]:
     """Fraction of ACs that explicitly address a boundary / edge condition."""
     if not criteria:

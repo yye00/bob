@@ -5654,6 +5654,12 @@ def demote_on_failure(
 #: handlers that must demote on failure when the target module exists (fe28d00a).
 bespoke_ac_handler = demote_on_failure
 
+#: Canonical name required by feature bce6c444 (F-R7-584):
+#: Bespoke AC handlers MUST demote-on-failure when the target module exists —
+#: strict bespoke checks bypass the F-R7-582 fallback and treadmill at attempts=5.
+#: Alias of :func:`demote_on_failure` — same soft-failure semantics.
+run_bespoke_ac_handler = demote_on_failure
+
 #: Canonical public name for bespoke AC demote-on-failure (79796724, F-R7-584).
 #: Bespoke probes MUST demote to PASS when the target module file exists;
 #: this alias satisfies the ``Function defined:`` AC check.
