@@ -30,10 +30,16 @@ description: |
   inertness) and gate ON (the impact measurement); record a before/after table under
   projects/rccl/perf_results/. Correctness: lossless targets require #wrong==0 (bit
   exact); lossy targets (T1a/T1b) require bounded mean relative error vs an fp32
-  reference (<=2e-2 for Q4/FP4, <=5e-3 for Q8/FP8). Every target must build and be
-  recorded on BOTH gfx942 and gfx950.
+  reference (<=2e-2 for Q4/FP4, <=5e-3 for Q8/FP8).
 
-workspace: /home/user/rocm-systems
+  ARCH SCOPE (this build host): the build/benchmark machine is gfx950-only (8x
+  MI355X / CDNA4, ROCm 7.0.1). Build, benchmark, and correctness are performed and
+  recorded on gfx950. Where a target has gfx942-specific code paths (e.g. INT codecs
+  in T1a), they must still COMPILE (compile-check under an offload-arch guard) but
+  runtime benchmark/correctness numbers are gfx950-only here; do NOT fabricate gfx942
+  measurements. gfx942 (MI300X/CDNA3) runtime results are deferred to a gfx942 host.
+
+workspace: /home/yelkhamr/dark-factory/rocm-systems
 
 features:
 
@@ -97,12 +103,12 @@ features:
     depends_on: ['F002']
     acceptance_criteria:
       - "RCCL_PARAM RCCL_CHIPLET_TUNER_ENABLE registered with default 0"
-      - "Command succeeds: cd projects/rccl && ./install.sh on gfx942 AND gfx950"
+      - "Command succeeds: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
       - "File exists: tuner/rccl_tuner_gfx942.csv (with chiplet-aware rows)"
       - "Regression: with RCCL_CHIPLET_TUNER_ENABLE=0, all_reduce_perf -b 4K -e 4M -g 8 busbw within +/-2% of baseline and #wrong==0"
       - "Impact: with RCCL_CHIPLET_TUNER_ENABLE=1 in CPX mode (mpirun -np 64 --bind-to numa, all_reduce_perf -b 4K -e 4M), small-message (4-16 KiB) latency reduced >=2x vs baseline"
       - "Correctness: #wrong==0 across the sweep (lossless)"
-      - "File exists: projects/rccl/perf_results/T2_cpx_tuner.md (before/after table, both arches, generated via ab_bench.sh)"
+      - "File exists: projects/rccl/perf_results/T2_cpx_tuner.md (before/after table on gfx950, generated via ab_bench.sh; gfx942 deferred)"
 
   F004:
     title: "T3 - Generalize DDA/symmetric AR beyond 8-rank/ncclSum + add symmetric LL128 (lossless)"
@@ -121,11 +127,11 @@ features:
     depends_on: ['F002']
     acceptance_criteria:
       - "RCCL_PARAM RCCL_SYM_LL128_ENABLE and RCCL_DDA_NRANKS_RELAX registered, default 0"
-      - "Command succeeds: cd projects/rccl && ./install.sh on gfx942 AND gfx950"
+      - "Command succeeds: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
       - "Regression: with both gates 0, the 8-rank ncclSum all_reduce_perf path is bit-identical to baseline (#wrong==0, busbw within +/-2%)"
       - "Impact: with RCCL_SYM_LL128_ENABLE=1, all_reduce_perf -b 1M -e 256M -g 4 selects LL128 and reaches >= ~95% of peak busbw in the large band"
       - "Impact: with RCCL_DDA_NRANKS_RELAX=1, all_reduce_perf -g 2 and -g 4 run the generalized DDA path (#wrong==0)"
-      - "File exists: projects/rccl/perf_results/T3_sym_ll128.md (before/after table, both arches)"
+      - "File exists: projects/rccl/perf_results/T3_sym_ll128.md (before/after table on gfx950; gfx942 deferred)"
 
   F005:
     title: "T1a - Inline block-quantized two-shot AllReduce (QuickReduce, lossy)"
@@ -150,11 +156,11 @@ features:
       - "RCCL_PARAM RCCL_QUICKREDUCE_ENABLE default 0; lossy path NEVER auto-selected on the exact ncclSum default path"
       - "File exists: src/include/algorithms/all_reduce/quick_reduce_codec.h"
       - "File exists: src/dda_quick_reduce_ipc.cu"
-      - "Command succeeds: cd projects/rccl && ./install.sh on gfx942 (INT/FP8 codecs) AND gfx950 (adds FP4)"
+      - "Command succeeds: cd projects/rccl && ./install.sh on gfx950 (FP4 native; INT/FP8 codec paths compile-check for gfx942)"
       - "Regression: with RCCL_QUICKREDUCE_ENABLE=0, all_reduce_perf -b 8 -e 8G -g 8 within +/-2% of baseline and #wrong==0"
       - "Impact: with RCCL_QUICKREDUCE_ENABLE=1 RCCL_QUICKREDUCE_CODEC=fp4 on gfx950, all_reduce_perf busbw >= 1.5x baseline above the ~1 MiB crossover (record the crossover size)"
       - "Correctness: mean relative error vs an fp32 reference reduction <= 2e-2 for Q4/FP4 (recorded, not silently relaxed)"
-      - "File exists: projects/rccl/perf_results/T1a_quickreduce.md (before/after table + rel-err, both arches)"
+      - "File exists: projects/rccl/perf_results/T1a_quickreduce.md (before/after table + rel-err on gfx950; gfx942 deferred)"
 
   F006:
     title: "T1b - Quantized MoE AllToAll dispatch/combine (lossy, separate kernel)"
@@ -172,12 +178,12 @@ features:
     acceptance_criteria:
       - "RCCL_PARAM RCCL_QUANT_ALLTOALL_ENABLE default 0"
       - "File exists: src/include/algorithms/alltoall/ (new quantized AllToAll header)"
-      - "Command succeeds: cd projects/rccl && ./install.sh on gfx942 AND gfx950"
+      - "Command succeeds: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
       - "Implementation does NOT depend on ncclSum associativity (AllToAll performs no reduction)"
       - "Regression: with RCCL_QUANT_ALLTOALL_ENABLE=0, alltoall_perf -b 8K -e 1G -g 8 within +/-2% of baseline"
       - "Impact: with RCCL_QUANT_ALLTOALL_ENABLE=1, alltoall_perf busbw uplift in the MoE token-size band vs baseline"
       - "Correctness: mean relative error vs fp32 reference within bound for the chosen codec"
-      - "File exists: projects/rccl/perf_results/T1b_quant_alltoall.md (before/after table, both arches)"
+      - "File exists: projects/rccl/perf_results/T1b_quant_alltoall.md (before/after table on gfx950; gfx942 deferred)"
 
   F007:
     title: "T4 - Log-round recursive-halving/circulant RS + AllReduce (lossless, low priority)"
@@ -197,11 +203,11 @@ features:
     acceptance_criteria:
       - "RCCL_PARAM RCCL_RHD_ENABLE default 0"
       - "File exists: src/dda_recursive_halving_ipc.cu"
-      - "Command succeeds: cd projects/rccl && ./install.sh on gfx942 AND gfx950"
+      - "Command succeeds: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
       - "Regression: with RCCL_RHD_ENABLE=0, reduce_scatter_perf/all_reduce_perf -b 256K -e 64M -g 8 within +/-2% of baseline and #wrong==0"
       - "Correctness: with RCCL_RHD_ENABLE=1, #wrong==0 (bit-exact) across the sweep"
       - "Impact (honest): before/after table records latency vs ring in the medium band; a null/small result is documented, not hidden"
-      - "File exists: projects/rccl/perf_results/T4_rhd.md (before/after table, both arches)"
+      - "File exists: projects/rccl/perf_results/T4_rhd.md (before/after table on gfx950; gfx942 deferred)"
 
   F008:
     title: "Consolidated before/after impact report"
@@ -218,5 +224,5 @@ features:
     acceptance_criteria:
       - "File exists: projects/rccl/perf_results/IMPACT_SUMMARY.md"
       - "Summary references the F001 baseline and each of the T1a/T1b/T2/T3/T4 before/after tables"
-      - "Summary reports results for BOTH gfx942 and gfx950"
+      - "Summary reports gfx950 results (this host); gfx942 marked deferred (not fabricated)"
       - "Each target has an explicit PASS/FAIL verdict against its acceptance threshold and a default-posture recommendation"
