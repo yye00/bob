@@ -39,9 +39,40 @@ description: |
   runtime benchmark/correctness numbers are gfx950-only here; do NOT fabricate gfx942
   measurements. gfx942 (MI300X/CDNA3) runtime results are deferred to a gfx942 host.
 
+  PROJECT HYDRATION (first feature, F000): the workspace is populated by a FRESH FULL
+  clone of the upstream ROCm/rocm-systems monorepo (git clone
+  https://github.com/ROCm/rocm-systems.git into the workspace dir) - a full clone, not
+  a shallow one, so git history/blame and all branches are available for brownfield
+  localization. This clone is how the project directory is hydrated before any build or
+  edit; F001 and every target depend on it. If the workspace already contains a
+  rocm-systems checkout, F000 verifies it is a full (non-shallow) clone of the correct
+  upstream and re-hydrates if not.
+
 workspace: /home/yelkhamr/dark-factory/rocm-systems
 
 features:
+
+  F000:
+    title: "Hydrate workspace via fresh full upstream clone of rocm-systems"
+    description: |
+      Populate the workspace with a FRESH FULL clone of the upstream monorepo
+      (git clone https://github.com/ROCm/rocm-systems.git) so projects/rccl and
+      projects/rccl-tests and their full git history are present before any build.
+      Use a full clone (NOT --depth 1): brownfield localization, git blame, and
+      cross-commit reasoning need the history. If a rocm-systems checkout already
+      exists in the workspace, verify it is a non-shallow clone of the correct
+      upstream remote (git rev-parse --is-shallow-repository == false and the origin
+      URL is ROCm/rocm-systems); if it is shallow, wrong-remote, or missing, (re)clone
+      it. This is the hydration step every other feature depends on.
+    priority: critical
+    depends_on: []
+    acceptance_criteria:
+      - "Command succeeds: git -C . rev-parse --is-inside-work-tree (workspace is a git checkout)"
+      - "Command succeeds: test \"$(git -C . rev-parse --is-shallow-repository)\" = false (full clone, not shallow)"
+      - "Command succeeds: git -C . remote get-url origin | grep -q ROCm/rocm-systems (correct upstream)"
+      - "File exists: projects/rccl/install.sh"
+      - "File exists: projects/rccl-tests/install.sh"
+      - "File exists: projects/rccl/src/collectives.cc"
 
   F001:
     title: "Baseline build + rccl-tests BEFORE capture"
@@ -54,7 +85,7 @@ features:
       AllGather, and AllToAll across the full size range so each target has a matching
       baseline. This is the "BEFORE" half of the before/after impact measurement.
     priority: critical
-    depends_on: []
+    depends_on: ['F000']
     acceptance_criteria:
       - "Command succeeds: cd projects/rccl && ./install.sh (librccl.so built)"
       - "Command succeeds: cd projects/rccl-tests && ./install.sh (perf binaries built)"
