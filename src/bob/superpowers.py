@@ -1824,10 +1824,21 @@ def run_verification_checklist(
         except Exception:
             pass
 
-    _feature_acs_list = (
-        [ln.strip() for ln in str(acceptance_criteria).splitlines() if ln.strip()]
-        if acceptance_criteria else None
-    )
+    _feature_acs_list = None
+    if acceptance_criteria:
+        _ac_raw = str(acceptance_criteria).strip()
+        if _ac_raw.startswith("["):
+            try:
+                import json as _json
+                _parsed = _json.loads(_ac_raw)
+                if isinstance(_parsed, list):
+                    _feature_acs_list = [str(x).strip() for x in _parsed if str(x).strip()]
+            except Exception:
+                _feature_acs_list = None
+        if _feature_acs_list is None:
+            _feature_acs_list = [
+                ln.strip() for ln in _ac_raw.splitlines() if ln.strip()
+            ]
     tests_pass_check = _check_tests_pass(
         ws, src_dir, test_dir,
         pre_snapshot=pre_snapshot,

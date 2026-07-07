@@ -4464,6 +4464,7 @@ class OrchestrationLoop:
             try:
                 verification_result = run_verification_checklist(
                     workspace=self.workspace,
+                    feature_id=feature.id,
                     acceptance_criteria=feature.acceptance_criteria,
                     # Prepend the feature NAME so the GPU/harness classifier sees
                     # the clean, unambiguous title (the description prose contains

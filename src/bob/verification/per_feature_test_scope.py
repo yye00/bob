@@ -77,9 +77,18 @@ def collect_feature_test_paths(
         stripped = ac.strip()
         if stripped.lower().startswith("pytest:"):
             expr = stripped[len("pytest:"):].strip()
-            # Strip node-id suffix (::ClassName::test_method)
-            test_path = expr.split("::")[0].strip()
-            if test_path:
+            # Extract ONLY the valid path token. AC synthesizers frequently
+            # append descriptive prose after the path, e.g.
+            #   ``pytest: tests/test_x.py — invalid input raises ValueError``
+            # or ``tests/test_x.py::test_case boundary description``. Match the
+            # leading ``<path>.py`` plus an optional ``::nodeid`` chain and
+            # discard everything after it, so a real, collectable path reaches
+            # pytest instead of a prose-polluted non-path.
+            m = re.match(r"([\w./\-]+\.py(?:::[\w\[\]\-]+)*)", expr)
+            test_path = m.group(1) if m else expr.split("::")[0].split()[0].strip()
+            # keep only the file portion for scoping (drop ::nodeid)
+            test_path = test_path.split("::")[0].strip()
+            if test_path.endswith(".py"):
                 paths.add(test_path)
 
     # Add the feature's own subtree if it exists.
