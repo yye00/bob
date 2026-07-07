@@ -491,6 +491,9 @@ def rank_symbols_in_file(
 #: AC-required: bob.brownfield.localizer.check_disjoint_write_surfaces
 check_disjoint_write_surfaces = check_disjoint
 
+#: AC-required: bob.brownfield.localizer.check_disjointness
+check_disjointness = check_disjoint
+
 
 def rank_files(
     symbols: list[dict[Any, Any]],
