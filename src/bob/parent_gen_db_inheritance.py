@@ -315,6 +315,29 @@ def inherit_parent_status(
     )
 
 
+def match_by_spec_slot(
+    parent_db_path: str | pathlib.Path,
+) -> dict[str, ParentFeatureRow]:
+    """Return qualifying parent features indexed by spec_slot (F-R7-400).
+
+    Matches every completed/needs_human/regression parent feature to its
+    ``spec_slot`` so callers can look up the parent row for a given child
+    slot. This is the matching half of parent-gen DB inheritance: the child
+    feature's ``spec_slot`` is the join key against the parent generation.
+
+    Args:
+        parent_db_path: Path to bob_N's bob.db.
+
+    Returns:
+        {spec_slot: ParentFeatureRow} mapping. Empty when no qualifying rows.
+
+    Raises:
+        FileNotFoundError: If parent_db_path does not exist.
+        ValueError: If parent_db_path is None or empty.
+    """
+    return read_parent_features(parent_db_path)
+
+
 def _fetch_evidence_hash(
     db_path: pathlib.Path,
     feature_id: str,
