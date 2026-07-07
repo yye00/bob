@@ -32,6 +32,13 @@ from bob.orchestrator.plan_gate import (
     write_plan_artifact,
 )
 
+# integration: bob.spec_critic — plan.yaml edits re-run the F-R7-450 spec critic
+from bob.spec_critic import critique_feature as critique_spec  # noqa: F401 — integration: bob.spec_critic
+
+# AC-required canonical names (aliases onto the orchestrator implementation).
+write_plan_yaml = write_plan_artifact
+is_plan_approved = is_approved
+
 __all__ = [
     "check_plan_approval",
     "check_plan_approved",
@@ -40,6 +47,9 @@ __all__ = [
     "lint_acceptance_criteria",
     "trigger_spec_critic_on_edit",
     "validate_plan_approval",
+    "write_plan_yaml",
+    "is_plan_approved",
+    "critique_spec",
     "ImplementerBlockedError",
     "PlanArtifactMissingError",
     "approve_plan",

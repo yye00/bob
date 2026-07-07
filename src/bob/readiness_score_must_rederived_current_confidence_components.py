@@ -48,6 +48,8 @@ from bob.run_loop import seed_readiness_at_iteration_start
 
 __all__ = [
     "readiness_score_must_rederived_current_confidence_components",
+    "rederive_readiness_score",
+    "seed_ready_features_readiness",
     "derive_readiness_score",
     "calculate_readiness_live",
     "seed_readiness_at_iteration_start",
@@ -95,3 +97,54 @@ def readiness_score_must_rederived_current_confidence_components(
         conf_spec_understanding=conf_spec_understanding,
         conf_test_quality=conf_test_quality,
     )
+
+
+def rederive_readiness_score(
+    *,
+    conf_impl_correctness: float,
+    conf_spec_understanding: float,
+    conf_test_quality: float,
+) -> float:
+    """Rederive readiness live from current confidence components.
+
+    Satisfies AC 'Function defined:
+    bob.readiness_score_must_rederived_current_confidence_components.rederive_readiness_score'.
+
+    Delegates to
+    :func:`readiness_score_must_rederived_current_confidence_components`, which
+    computes ``mean(impl, spec, test)`` from the live confidence values. The
+    persisted ``readiness_score`` column is intentionally bypassed so a prior
+    failure ratchet cannot suppress a recovered feature.
+
+    Raises
+    ------
+    ValueError
+        If any component is not a finite float in [0.0, 1.0].
+    """
+    return readiness_score_must_rederived_current_confidence_components(
+        conf_impl_correctness=conf_impl_correctness,
+        conf_spec_understanding=conf_spec_understanding,
+        conf_test_quality=conf_test_quality,
+    )
+
+
+def seed_ready_features_readiness(project_id: str) -> int:
+    """Seed ``readiness_score`` for every ready feature still sitting at 0.0.
+
+    Satisfies AC 'Function defined:
+    bob.readiness_score_must_rederived_current_confidence_components.seed_ready_features_readiness'.
+
+    Runs at the TOP of each orchestrator iteration, BEFORE the concurrent claim
+    batch, breaking the chicken-and-egg deadlock where a fresh feature at 0.0
+    could never be claimed and therefore never assessed. Touches only rows with
+    ``status='ready' AND readiness_score == 0.0``, so it is cheap to run every
+    iteration.
+
+    Delegates to :func:`bob.run_loop.seed_readiness_at_iteration_start`.
+
+    Returns
+    -------
+    int
+        Number of features whose ``readiness_score`` was updated.
+    """
+    return seed_readiness_at_iteration_start(project_id)

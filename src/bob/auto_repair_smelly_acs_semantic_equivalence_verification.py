@@ -48,6 +48,7 @@ __all__ = [
     "suggest_rewrite",
     "verify_semantic_equivalence",
     "apply_repairs",
+    "auto_apply_repairs",
     "repair_feature_acs",
     "respect_opt_out",
     "compute_auto_repair_rate",
@@ -57,6 +58,55 @@ __all__ = [
     "EquivalenceJudgeUnavailableError",
     "RewriteRejectedError",
 ]
+
+
+def auto_apply_repairs(
+    findings: list[SmellFinding],
+    feature_id: str,
+    repairs_log: Path | None = None,
+    auto_repair: bool = True,
+) -> list[dict[str, Any]]:
+    """Auto-apply ERROR-severity rewrites that pass semantic-equivalence.
+
+    For each ERROR-severity finding, a rewrite is suggested and fed to the
+    equivalence judge alongside the original; only rewrites the judge confirms
+    impose the same observable constraint are applied and logged. WARN/INFO
+    findings are never auto-applied. When ``auto_repair`` is False (per-feature
+    opt-out) no rewrites are applied and an empty list is returned.
+
+    Parameters
+    ----------
+    findings:
+        Smell findings to consider for repair.
+    feature_id:
+        Identifier for the feature whose ACs are being repaired.
+    repairs_log:
+        Path to append repair records. Defaults to ``repairs.log`` in the
+        workspace root.
+    auto_repair:
+        Per-feature opt-out. When False, returns an empty list.
+
+    Returns
+    -------
+    list[dict]
+        Applied repair records (original, rewrite, rationale, smell_id, …).
+
+    Raises
+    ------
+    ValueError
+        If ``feature_id`` is not a string or ``findings`` is not a list.
+    """
+    if not isinstance(feature_id, str):
+        raise ValueError(f"feature_id must be a string, got {type(feature_id).__name__}")
+    if not isinstance(findings, list):
+        raise ValueError(f"findings must be a list, got {type(findings).__name__}")
+
+    return apply_repairs(
+        findings=findings,
+        feature_id=feature_id,
+        repairs_log=repairs_log,
+        auto_repair=auto_repair,
+    )
 
 
 def auto_repair_smelly_acs_semantic_equivalence_verification(

@@ -11,6 +11,69 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from pytest_snapshot_maxfail import enforce_maxfail_zero, MAXFAIL_ZERO
 
+from bob.snapshot import (
+    enforce_maxfail_zero as bob_enforce_maxfail_zero,
+    run_pytest_snapshot,
+    PytestSnapshotResult,
+)
+
+
+class TestRunPytestSnapshot:
+    """run_pytest_snapshot enforces --maxfail=0 and returns a structured result."""
+
+    def _fake_runner(self, argv):
+        # Record the argv the snapshot actually invoked and return a
+        # deterministic fake completed-process shape.
+        self.recorded_argv = list(argv)
+
+        class _Completed:
+            returncode = 0
+            stdout = "5 passed"
+            stderr = ""
+
+        return _Completed()
+
+    def test_injects_maxfail_zero_into_runner_argv(self):
+        run_pytest_snapshot(["pytest", "-n", "auto", "tests/"], runner=self._fake_runner)
+        assert self.recorded_argv[0] == "pytest"
+        assert self.recorded_argv[1] == "--maxfail=0"
+
+    def test_strips_existing_maxfail_before_running(self):
+        run_pytest_snapshot(["pytest", "--maxfail=25", "tests/"], runner=self._fake_runner)
+        assert "--maxfail=25" not in self.recorded_argv
+        assert self.recorded_argv.count("--maxfail=0") == 1
+
+    def test_returns_snapshot_result(self):
+        result = run_pytest_snapshot(["pytest", "tests/"], runner=self._fake_runner)
+        assert isinstance(result, PytestSnapshotResult)
+        assert result.returncode == 0
+        assert result.stdout == "5 passed"
+        assert result.argv == ["pytest", "--maxfail=0", "tests/"]
+
+    def test_empty_argv_boundary_returns_result(self):
+        result = run_pytest_snapshot([], runner=self._fake_runner)
+        assert isinstance(result, PytestSnapshotResult)
+        assert result.argv == ["--maxfail=0"]
+
+    def test_invalid_argv_raises_value_error(self):
+        with pytest.raises(ValueError, match="list"):
+            run_pytest_snapshot(None, runner=self._fake_runner)  # type: ignore[arg-type]
+
+    def test_non_string_element_raises_value_error(self):
+        with pytest.raises(ValueError, match="str"):
+            run_pytest_snapshot(["pytest", 7], runner=self._fake_runner)  # type: ignore[list-item]
+
+    def test_invalid_runner_raises_value_error(self):
+        with pytest.raises(ValueError, match="runner"):
+            run_pytest_snapshot(["pytest"], runner="not callable")  # type: ignore[arg-type]
+
+    def test_bob_enforce_maxfail_zero_matches(self):
+        assert bob_enforce_maxfail_zero(["pytest", "tests/"]) == [
+            "pytest",
+            "--maxfail=0",
+            "tests/",
+        ]
+
 
 class TestEnforceMaxfailZeroBasic:
     """Basic injection and stripping behavior."""

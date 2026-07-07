@@ -277,6 +277,50 @@ def test_compute_critic_repeat_rate_zero_for_no_regressions(tmp_path):
     assert rate == 0.0
 
 
+def test_record_findings_canonical_entrypoint_exists():
+    """AC requires bob.spec_findings_registry.record_findings to be defined."""
+    from bob import spec_findings_registry as reg
+
+    assert hasattr(reg, "record_findings")
+    assert callable(reg.record_findings)
+
+
+def test_record_findings_records_and_detects_regression(tmp_path):
+    """record_findings behaves like write_findings (keyed + regression)."""
+    from bob.spec_findings_registry import record_findings, detect_regression as dr
+
+    findings_path = tmp_path / "spec_findings.yaml"
+    metrics_path = tmp_path / "metrics.yaml"
+
+    r1 = record_findings(
+        spec_hash="rec001",
+        slot_id="AC-0",
+        defect_type="ambiguity",
+        run_id="run-1",
+        findings_path=findings_path,
+        metrics_path=metrics_path,
+    )
+    assert r1["is_regression"] is False
+    assert r1["occurrence_count"] == 1
+
+    r2 = record_findings(
+        spec_hash="rec001",
+        slot_id="AC-0",
+        defect_type="ambiguity",
+        run_id="run-2",
+        findings_path=findings_path,
+        metrics_path=metrics_path,
+    )
+    assert r2["is_regression"] is True
+    assert r2["severity"] == "error"
+    assert dr(
+        spec_hash="rec001",
+        slot_id="AC-0",
+        defect_type="ambiguity",
+        findings_path=findings_path,
+    ) is True
+
+
 def test_findings_composite_key_format(tmp_path):
     findings_path = tmp_path / "spec_findings.yaml"
     metrics_path = tmp_path / "metrics.yaml"

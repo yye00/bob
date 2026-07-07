@@ -15,9 +15,15 @@ from bob.orchestrator.rca_attempt_budget import (
     classify_verification_failure,
     should_grant_fresh_attempt,
 )
+from bob.startup_crash_exempt import (
+    count_persisted_artifacts,
+    is_startup_crash_exempt,
+)
 
 __all__ = [
     "Classification",
     "classify_verification_failure",
+    "count_persisted_artifacts",
+    "is_startup_crash_exempt",
     "should_grant_fresh_attempt",
 ]

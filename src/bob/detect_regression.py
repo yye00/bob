@@ -36,8 +36,10 @@ from bob.regression_ownership import (  # noqa: F401 — integration c68b3042
     detect_regression_with_evidence as _detect_regression_with_evidence_ownership,
 )
 from bob.ownership_evidenced_regression import (  # noqa: F401 — integration 50afa15a
+    detect_regression_with_evidence,
     detect_regression_with_ownership,
     file_touched_in_commit,
+    has_ownership_evidence,
 )
 from regression_attribution.detect_regression import (  # noqa: F401 — feature eb9e8e9b
     require_test_ownership_evidence,

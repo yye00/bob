@@ -16,6 +16,7 @@ import pytest
 
 from bob.test_writer import (
     EmittedTest,
+    build_pass_coverage_filter,
     filter_by_compilation,
     filter_by_coverage,
     filter_by_stub_pass,
@@ -167,3 +168,43 @@ class TestFilterByCoverage:
     def test_non_list_raises_value_error(self):
         with pytest.raises(ValueError, match="emitted_tests"):
             filter_by_coverage(42)  # type: ignore[arg-type]
+
+
+class TestBuildPassCoverageFilter:
+    """The TestGen-LLM Build/Pass/Coverage triple filter combined into one pass."""
+
+    def _make_emitted(self, tmp_path: Path, source: str, idx: int = 0) -> EmittedTest:
+        feat_dir = tmp_path / "tests" / "feat-bpc"
+        feat_dir.mkdir(parents=True, exist_ok=True)
+        path = feat_dir / f"test_ac_{idx}.py"
+        path.write_text(source, encoding="utf-8")
+        return EmittedTest(
+            ac_index=idx,
+            ac_id=f"ac_{idx}",
+            ac_text="some AC",
+            test_path=path,
+            feature_id="feat-bpc",
+        )
+
+    def test_keeps_test_passing_all_three_checks(self, tmp_path):
+        # compiles, fails on stub (pytest.fail), references non-pytest symbol
+        source = "import pathlib\nimport pytest\ndef test_x():\n    pytest.fail('nope')\n"
+        et = self._make_emitted(tmp_path, source)
+        assert build_pass_coverage_filter([et]) == [et]
+
+    def test_rejects_uncompilable_test(self, tmp_path):
+        source = "def broken(:\n    pass\n"
+        et = self._make_emitted(tmp_path, source)
+        assert build_pass_coverage_filter([et]) == []
+
+    def test_rejects_test_passing_on_stub(self, tmp_path):
+        source = "def test_x():\n    assert True\n"
+        et = self._make_emitted(tmp_path, source)
+        assert build_pass_coverage_filter([et]) == []
+
+    def test_empty_list_returns_empty_list(self, tmp_path):
+        assert build_pass_coverage_filter([]) == []
+
+    def test_non_list_raises_value_error(self):
+        with pytest.raises(ValueError, match="emitted_tests"):
+            build_pass_coverage_filter(42)  # type: ignore[arg-type]

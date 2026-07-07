@@ -34,6 +34,7 @@ from bob.prose_connector_registry import (
     get_connectors as _get_all_prose_connectors,
     get_policy_verb_connectors as _get_policy_verb_connectors,
     is_feature_hash_reference,
+    prose_connector_registry,
     prose_connector_registry as _descriptive_prose_registry,
 )
 from bob.verification.structural_prefix_match import (
@@ -43,6 +44,9 @@ from bob.verification.structural_prefix_match import (
 from bob.boundary_error_coverage import (  # noqa: F401 — integration 68da75c8
     detect_coverage_with_word_boundaries,
     filter_prose_acs,
+)
+from bob.spec_quality.spec_extractor import (  # noqa: F401 — ec65822c
+    VERIFIER_EXTENSION_MODULES,
 )
 
 logger = logging.getLogger(__name__)
@@ -3092,16 +3096,8 @@ def _check_criterion(
     # PASS when at least one .py contains the MUST-mention literal AND no .py
     # contains the MUST-NOT-use literal. Mirror F-R7-582/583/589/590 pattern.
     try:
-        _must, _forbid = extract_quoted_literals(criterion)
-        if _must is not None or _forbid is not None:
-            _substr_result = verify_substring_presence(_must, _forbid, workspace)
-            if _substr_result is True:
-                logger.warning(
-                    "behavior-AC quoted-substring demoted to PASS (F-R7-591 hot-fix): "
-                    "criterion=%r must=%r forbid=%r",
-                    criterion[:200], _must, _forbid,
-                )
-                return True
+        if check_behavior_quoted_substring(criterion, workspace) is True:
+            return True
     except Exception:
         logger.debug("F-R7-591 quoted-substring fallback raised; falling through", exc_info=True)
 
@@ -3449,6 +3445,68 @@ def verify_behavior_ac_with_substring_grep(
     if must_mention is None and must_not_use is None:
         return None
     return verify_substring_presence(must_mention, must_not_use, workspace)
+
+
+def check_behavior_quoted_substring(
+    criterion: str,
+    workspace: pathlib.Path,
+) -> bool | None:
+    """Verify a behavior AC that asserts quoted-literal presence/absence.
+
+    Canonical handler required by AC
+    ``Function defined: enhanced_verification.check_behavior_quoted_substring``.
+
+    Some behavior ACs assert that a literal string is present and/or absent in
+    the source with NO function identifier, ``F-RX-YYY`` token, or module path
+    for the standard fuzzy / policy / structural fallbacks to latch onto —
+    e.g. the F-R7-586 ALL_BLOCKED rename::
+
+        "behavior: the CLI termination message for ALL_BLOCKED MUST mention
+         'Queue drained' and MUST NOT use the phrase
+         'All remaining features are blocked'"
+
+    The implementation IS correct (the literal is in the source, just not as an
+    identifier) yet the verifier hard-failed it. This handler extracts the
+    MUST-mention and MUST-NOT-use quoted literals and greps
+    ``workspace/src/**/*.py``:
+
+    * ``True``  — must-string present (or unspecified) AND forbid-string absent
+      (or unspecified).
+    * ``None``  — no literals found, or the must-string is absent; the caller
+      should fall through to the next verification strategy.
+
+    Parameters
+    ----------
+    criterion:
+        Full AC criterion text (behavior or structural).
+    workspace:
+        Project root directory.
+
+    Returns
+    -------
+    bool | None
+        ``True`` if constraints are satisfied, ``None`` otherwise.
+
+    Raises
+    ------
+    ValueError
+        When *criterion* is not a ``str`` instance — the caller passed the
+        wrong type and must not silently succeed.
+    """
+    if not isinstance(criterion, str):
+        raise ValueError(
+            f"check_behavior_quoted_substring: criterion must be a str, "
+            f"got {type(criterion).__name__!r}"
+        )
+    result = verify_behavior_ac_with_substring_grep(criterion, workspace)
+    if result is True:
+        logger.warning(
+            "BEHAVIOR_QUOTED_SUBSTRING_DEMOTED (F-R7-591): behavior AC verified "
+            "via workspace-wide substring grep (no function identifier present); "
+            "criterion=%r",
+            criterion[:160],
+        )
+    return result
 
 
 def verify_behavior_ac_with_string_matching(
@@ -5877,6 +5935,79 @@ def detect_pending_successor_verify(
     )
 
 
+def scan_ac_for_verifier_tokens(acceptance_criteria) -> bool:
+    """Return True when any AC body contains a verifier path-token (F-R7-596).
+
+    Broadened AC-body scan that catches verifier-self-extension features whose
+    AC text names the verifier subsystem by path rather than by the narrow
+    F-R7-595 keywords.  Each AC body is scanned for:
+
+    1. The exact substring ``enhanced_verification`` (matches both the bare
+       symbol and the full ``src/bob/enhanced_verification.py`` path).
+    2. Any file path ending in ``_verification.py`` or ``_verifier.py``.
+
+    Delegates to
+    :func:`bob.pending_successor_verify_broaden_detection_target_file_scan.scan_ac_body_for_tokens`
+    so the token set stays in one place.
+
+    Args:
+        acceptance_criteria: A list of AC strings, a JSON-encoded list, or None.
+
+    Returns:
+        True when at least one AC body contains a verifier path-token; False
+        otherwise (including on ``None``, empty input, or a JSON parse error).
+    """
+    from bob.pending_successor_verify_broaden_detection_target_file_scan import (
+        _parse_ac_list,
+        scan_ac_body_for_tokens,
+    )
+
+    ac_list = _parse_ac_list(acceptance_criteria)
+    if not ac_list:
+        return False
+    return any(scan_ac_body_for_tokens(ac) for ac in ac_list)
+
+
+def mark_pending_successor_verify(
+    feature_id: str,
+    feature_name: str,
+    acceptance_criteria,
+) -> bool:
+    """Pre-dispatch gate: defer a verifier-targeting feature to successor-gen (F-R7-596).
+
+    Called before any subagent fires.  When the broadened detector flags the
+    feature as targeting the verifier subsystem (AC body path-token scan or
+    title-fallback), the feature is marked ``pending_successor_verify`` in the
+    DB so the current gen's verifier never runs against code it cannot yet check
+    (the self-reference treadmill).  The successor gen's bootstrap merge
+    re-readies the row for verification against its own patched verifier.
+
+    Detector-only: this function can only add a defer; it never un-defers or
+    closes a feature.  False-positives push a feature one gen forward with no
+    closure regression.
+
+    Delegates to
+    :func:`bob.pending_successor_verify.mark_pending_successor_verify`.
+
+    Args:
+        feature_id:           UUID of the feature to potentially defer.
+        feature_name:         The feature's name/title string.
+        acceptance_criteria:  A list of AC strings, a JSON-encoded list, or None.
+
+    Returns:
+        True when the feature was marked ``pending_successor_verify`` (subagent
+        dispatch should be skipped).  False when the feature does not target the
+        verifier subsystem, or on DB error.
+    """
+    from bob.pending_successor_verify import (
+        mark_pending_successor_verify as _mark_pending_successor_verify,
+    )
+
+    return _mark_pending_successor_verify(
+        feature_id, feature_name, acceptance_criteria
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API: structural_ac_fuzzy_fallback (f9fb9511 / F-R7-ebae5ed8)
 # ---------------------------------------------------------------------------
@@ -6044,7 +6175,7 @@ def verify_structural_ac(
     if fn_match:
         dotted = fn_match.group(1).strip()
         symbol = dotted.rsplit(".", 1)[-1]
-        if _search_for_function(ws, symbol):
+        if _search_for_function(ws, symbol, is_python=True, is_cpp=False):
             return (True, f"function_defined: {symbol!r} found")
         expected_module = dotted.rsplit(".", 1)[0] if "." in dotted else dotted
         if fuzzy_function_lookup(workspace=ws, symbol_name=symbol, expected_module_path=expected_module):
@@ -6056,7 +6187,7 @@ def verify_structural_ac(
     if cls_match:
         dotted = cls_match.group(1).strip()
         symbol = dotted.rsplit(".", 1)[-1]
-        if _search_for_function(ws, symbol, is_class=True):
+        if _search_for_function(ws, symbol, is_python=True, is_cpp=False):
             return (True, f"class_defined: {symbol!r} found")
         expected_module = dotted.rsplit(".", 1)[0] if "." in dotted else dotted
         if fuzzy_function_lookup(workspace=ws, symbol_name=symbol, expected_module_path=expected_module, is_class=True):

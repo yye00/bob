@@ -83,3 +83,27 @@ def test_multiple_malformed_acs_all_raise():
     for ac in malformed:
         with pytest.raises(ValueError, match="when"):
             parse_behavior(ac)
+
+
+def test_ac_grammar_parse_missing_when_raises():
+    """ac_grammar.behavior_ears.parse_behavior_criterion raises on malformed input."""
+    from ac_grammar.behavior_ears import parse_behavior_criterion
+
+    with pytest.raises(ValueError):
+        parse_behavior_criterion("behavior: parser returns value")
+
+
+def test_ac_grammar_check_behavior_non_behavior_string_raises():
+    """check_behavior given a non-behavior string must raise ValueError, not succeed."""
+    from ac_grammar.behavior_ears import check_behavior
+
+    with pytest.raises(ValueError):
+        check_behavior("pytest: tests/test_foo.py")
+
+
+def test_ac_grammar_check_behavior_wrong_type_raises():
+    """check_behavior given a non-criterion, non-string value raises ValueError."""
+    from ac_grammar.behavior_ears import check_behavior
+
+    with pytest.raises(ValueError):
+        check_behavior(12345)

@@ -14,7 +14,12 @@ import time
 
 import pytest
 
-from bob.orchestrator.stale_bytecode_guard import check_freshness, record_start_time
+from bob.orchestrator.stale_bytecode_guard import (
+    check_freshness,
+    guard_relaunch_on_stale_bytecode,
+    orchestrator_sources_changed_since,
+    record_start_time,
+)
 
 
 @pytest.fixture()
@@ -151,3 +156,113 @@ class TestCheckFreshness:
         with caplog.at_level(logging.WARNING, logger="bob.orchestrator.stale_bytecode_guard"):
             check_freshness(workspace, start_time)
         assert any("run_loop.py" in r.message for r in caplog.records)
+
+
+class TestOrchestratorSourcesChangedSince:
+    def test_true_when_file_newer_than_start(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        (orch_dir / "run_loop.py").write_text("# new code")
+        start_time = time.time() - 60
+        assert orchestrator_sources_changed_since(workspace, start_time) is True
+
+    def test_false_when_all_files_older(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        py_file = orch_dir / "run_loop.py"
+        py_file.write_text("# old")
+        old_mtime = time.time() - 60
+        os.utime(py_file, (old_mtime, old_mtime))
+        start_time = time.time() - 30
+        assert orchestrator_sources_changed_since(workspace, start_time) is False
+
+    def test_false_when_no_orch_dir(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        orch_dir.rmdir()
+        assert orchestrator_sources_changed_since(workspace, time.time()) is False
+
+    def test_returns_bool_type(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        result = orchestrator_sources_changed_since(workspace, time.time())
+        assert isinstance(result, bool)
+
+    def test_resolves_start_time_from_lock_file(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        (orch_dir / "run_loop.py").write_text("# new")
+        lock_file.write_text(json.dumps({"pid": 1, "started_at": time.time() - 60}))
+        assert orchestrator_sources_changed_since(workspace, lock_file=lock_file) is True
+
+    def test_invalid_workspace_raises_value_error(self):
+        with pytest.raises(ValueError, match="workspace must be a pathlib.Path"):
+            orchestrator_sources_changed_since("/some/path", time.time())
+
+    def test_no_start_time_and_no_lock_raises_value_error(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        with pytest.raises(ValueError):
+            orchestrator_sources_changed_since(workspace)
+
+
+class TestGuardRelaunchOnStaleBytecode:
+    def test_no_relaunch_when_not_stale(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        py_file = orch_dir / "run_loop.py"
+        py_file.write_text("# old")
+        old_mtime = time.time() - 60
+        os.utime(py_file, (old_mtime, old_mtime))
+        called = []
+        result = guard_relaunch_on_stale_bytecode(
+            workspace,
+            start_time=time.time() - 30,
+            relaunch=lambda: called.append(True),
+        )
+        assert result is False
+        assert called == []
+
+    def test_relaunch_invoked_when_stale(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        (orch_dir / "run_loop.py").write_text("# new code")
+        called = []
+        result = guard_relaunch_on_stale_bytecode(
+            workspace,
+            start_time=time.time() - 60,
+            relaunch=lambda: called.append(True),
+        )
+        assert result is True
+        assert called == [True]
+
+    def test_returns_bool(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        result = guard_relaunch_on_stale_bytecode(
+            workspace, start_time=time.time(), relaunch=lambda: None
+        )
+        assert isinstance(result, bool)
+
+    def test_resolves_start_time_from_lock_file(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        (orch_dir / "run_loop.py").write_text("# new")
+        lock_file.write_text(json.dumps({"pid": 1, "started_at": time.time() - 60}))
+        called = []
+        result = guard_relaunch_on_stale_bytecode(
+            workspace, lock_file=lock_file, relaunch=lambda: called.append(True)
+        )
+        assert result is True
+        assert called == [True]
+
+    def test_invalid_workspace_raises_value_error(self):
+        with pytest.raises(ValueError, match="workspace must be a pathlib.Path"):
+            guard_relaunch_on_stale_bytecode("/x", start_time=time.time())
+
+    def test_non_callable_relaunch_raises_value_error(self, tmp_workspace):
+        workspace, orch_dir, lock_file = tmp_workspace
+        with pytest.raises(ValueError, match="relaunch must be callable"):
+            guard_relaunch_on_stale_bytecode(
+                workspace, start_time=time.time(), relaunch="not-callable"
+            )
+
+    def test_logs_warning_when_relaunching(self, tmp_workspace, caplog):
+        import logging
+        workspace, orch_dir, lock_file = tmp_workspace
+        (orch_dir / "run_loop.py").write_text("# new")
+        with caplog.at_level(logging.WARNING, logger="bob.orchestrator.stale_bytecode_guard"):
+            guard_relaunch_on_stale_bytecode(
+                workspace, start_time=time.time() - 60, relaunch=lambda: None
+            )
+        assert any("relaunch" in r.message.lower() for r in caplog.records)

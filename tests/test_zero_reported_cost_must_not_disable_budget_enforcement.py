@@ -16,6 +16,7 @@ import pytest
 
 from bob.zero_reported_cost_must_not_disable_budget_enforcement import (
     ZeroCostEnforcementResult,
+    apply_cost_telemetry_lost_ceiling,
     zero_reported_cost_must_not_disable_budget_enforcement,
 )
 
@@ -229,3 +230,70 @@ class TestReturnType:
             feature_id=FEATURE_ID,
         )
         assert result.cost_to_charge == pytest.approx(ceiling)
+
+
+class TestApplyCostTelemetryLostCeiling:
+    """AC-mandated entry point: apply_cost_telemetry_lost_ceiling."""
+
+    def test_zero_cost_high_work_applies_ceiling(self):
+        result = apply_cost_telemetry_lost_ceiling(
+            reported_cost=0.0,
+            work_events=176217,
+            per_feature_ceiling=CEILING,
+            feature_id=FEATURE_ID,
+            exit_code=1,
+            attempt_number=1,
+        )
+        assert isinstance(result, ZeroCostEnforcementResult)
+        assert result.telemetry_lost is True
+        assert result.cost_to_charge == pytest.approx(CEILING)
+
+    def test_zero_cost_zero_work_free_retry(self):
+        result = apply_cost_telemetry_lost_ceiling(
+            reported_cost=0.0,
+            work_events=0,
+            per_feature_ceiling=CEILING,
+            feature_id=FEATURE_ID,
+        )
+        assert result.telemetry_lost is False
+        assert result.cost_to_charge == pytest.approx(0.0)
+
+    def test_nonzero_cost_returned_unmodified(self):
+        result = apply_cost_telemetry_lost_ceiling(
+            reported_cost=2.5,
+            work_events=500,
+            per_feature_ceiling=CEILING,
+            feature_id=FEATURE_ID,
+        )
+        assert result.telemetry_lost is False
+        assert result.cost_to_charge == pytest.approx(2.5)
+
+    def test_invalid_ceiling_raises_value_error(self):
+        with pytest.raises(ValueError, match="per_feature_ceiling"):
+            apply_cost_telemetry_lost_ceiling(
+                reported_cost=0.0,
+                work_events=500,
+                per_feature_ceiling=0.0,
+                feature_id=FEATURE_ID,
+            )
+
+    def test_negative_ceiling_raises_value_error(self):
+        with pytest.raises(ValueError, match="per_feature_ceiling"):
+            apply_cost_telemetry_lost_ceiling(
+                reported_cost=0.0,
+                work_events=500,
+                per_feature_ceiling=-1.0,
+                feature_id=FEATURE_ID,
+            )
+
+    def test_emits_warn_log_when_lost(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            apply_cost_telemetry_lost_ceiling(
+                reported_cost=0.0,
+                work_events=176217,
+                per_feature_ceiling=CEILING,
+                feature_id="test-9b2e1060",
+                exit_code=1,
+                attempt_number=2,
+            )
+        assert any("cost_telemetry_lost" in r.message for r in caplog.records)

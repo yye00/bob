@@ -28,7 +28,9 @@ from bob.research_retry import (  # noqa: F401
 )
 from bob.orchestrator.path_finding_retry import (
     FailureClass,
+    classify_failure as _classify_failure,
     inject_into_implementer_prompt as _inject_into_implementer_prompt,
+    research_strategies as _research_strategies,
     should_trigger,
     spawns_research_subagent,
 )
@@ -66,6 +68,74 @@ def spawn_research_for_failure(
     return spawns_research_subagent()
 
 
+def research_alternative_strategies(
+    failure_info: Any,
+    limit: int = 2,
+) -> list[dict[str, Any]]:
+    """Surface 1-2 alternative strategies tailored to a classified failure.
+
+    Accepts either a ``failure_info`` dict (which is classified via
+    ``classify_failure``), a raw ``FailureClass`` enum, or its string value.
+    Returns strategy dicts (title/description/priority/failure_class) ordered by
+    priority. An ``unknown`` (unclassifiable) failure yields an empty list — a
+    well-defined result rather than a raised error.
+
+    Args:
+        failure_info: A failure descriptor dict, a ``FailureClass``, or its
+                      string value.
+        limit: Maximum number of strategies to return (default 2, per the
+               feature spec of 1-2 alternatives).
+
+    Returns:
+        A list of strategy dicts, at most ``limit`` long. Empty for unknown
+        failures.
+
+    Raises:
+        ValueError: If ``failure_info`` is None, or a dict with an invalid
+                    explicit ``failure_class``, or ``limit`` < 1.
+    """
+    if failure_info is None:
+        raise ValueError(
+            "research_alternative_strategies: failure_info must not be None"
+        )
+    if not isinstance(limit, int) or limit < 1:
+        raise ValueError(
+            f"research_alternative_strategies: limit must be a positive int; "
+            f"got {limit!r}"
+        )
+
+    if isinstance(failure_info, FailureClass):
+        failure_class = failure_info
+    elif isinstance(failure_info, str):
+        try:
+            failure_class = FailureClass(failure_info)
+        except ValueError:
+            raise ValueError(
+                f"research_alternative_strategies: {failure_info!r} is not a "
+                f"valid failure class; valid values are "
+                f"{[fc.value for fc in FailureClass]}"
+            )
+    elif isinstance(failure_info, dict):
+        failure_class = _classify_failure(failure_info)
+    else:
+        raise ValueError(
+            "research_alternative_strategies: failure_info must be a dict, "
+            f"FailureClass, or str; got {type(failure_info).__name__!r}"
+        )
+
+    strategies = _research_strategies(failure_class)
+    ordered = sorted(strategies, key=lambda s: getattr(s, "priority", 1))
+    return [
+        {
+            "title": s.title,
+            "description": s.description,
+            "priority": s.priority,
+            "failure_class": s.failure_class.value,
+        }
+        for s in ordered[:limit]
+    ]
+
+
 def inject_strategies_into_prompt(
     base_prompt: str,
     strategies: Any,
@@ -83,6 +153,7 @@ __all__ = [
     "classify_failure",
     "inject_strategies",
     "inject_strategies_into_prompt",
+    "research_alternative_strategies",
     "research_augmented_retry",
     "spawn_research_agent",
     "spawn_research_for_failure",

@@ -35,6 +35,7 @@ from bob.orchestrator.cost_telemetry_guard import (
 
 __all__ = [
     "zero_reported_cost_must_not_disable_budget_enforcement",
+    "apply_cost_telemetry_lost_ceiling",
     "ZeroCostEnforcementResult",
 ]
 
@@ -123,4 +124,69 @@ def zero_reported_cost_must_not_disable_budget_enforcement(
     return ZeroCostEnforcementResult(
         cost_to_charge=inner.cost_to_charge,
         telemetry_lost=inner.telemetry_lost,
+    )
+
+
+def apply_cost_telemetry_lost_ceiling(
+    reported_cost: float | None,
+    work_events: int,
+    per_feature_ceiling: float,
+    feature_id: str,
+    exit_code: int | None = None,
+    attempt_number: int = 1,
+) -> ZeroCostEnforcementResult:
+    """Apply the per-feature ceiling when zero cost signals stream-json telemetry loss.
+
+    AC-mandated entry point. This is the strict variant of
+    :func:`zero_reported_cost_must_not_disable_budget_enforcement`: it validates
+    that ``per_feature_ceiling`` is a usable positive charge BEFORE deciding
+    anything, so a caller cannot silently pass an invalid ceiling that would
+    later collapse budget enforcement back to a no-op.
+
+    The orchestrator MUST call this instead of interpreting ``cost == 0`` as
+    "no budget to enforce". When cost is zero AND ``work_events`` exceed the
+    threshold, the cost is treated as UNKNOWN-but-nonzero and the ceiling is
+    charged as if the sub-agent had consumed the full ceiling for that attempt.
+
+    Parameters
+    ----------
+    reported_cost:
+        Raw SDK cost (total_cost_usd). None and negative values coerced to 0.0.
+    work_events:
+        Count of substantive progress events from progress.jsonl.
+    per_feature_ceiling:
+        Per-feature max-cost ceiling. Must be positive (> 0); raises ValueError
+        otherwise — budget enforcement cannot operate without a positive ceiling.
+    feature_id:
+        Feature UUID for structured logging.
+    exit_code:
+        Sub-agent exit code (None if unknown).
+    attempt_number:
+        Current refinement attempt number (1-based), for structured logging.
+
+    Returns
+    -------
+    ZeroCostEnforcementResult
+        ``.cost_to_charge`` — amount to record against the budget.
+        ``.telemetry_lost`` — True when the pessimistic ceiling was applied.
+
+    Raises
+    ------
+    ValueError
+        When ``per_feature_ceiling`` is <= 0.
+    """
+    if not isinstance(per_feature_ceiling, (int, float)) or per_feature_ceiling <= 0:
+        raise ValueError(
+            f"apply_cost_telemetry_lost_ceiling: per_feature_ceiling must be a "
+            f"positive number, got {per_feature_ceiling!r}. Budget enforcement "
+            f"requires a positive ceiling — a zero or negative ceiling would "
+            f"re-enable the runaway-burn failure mode this guard prevents."
+        )
+    return zero_reported_cost_must_not_disable_budget_enforcement(
+        reported_cost=reported_cost,
+        work_events=work_events,
+        per_feature_ceiling=per_feature_ceiling,
+        feature_id=feature_id,
+        exit_code=exit_code,
+        attempt_number=attempt_number,
     )

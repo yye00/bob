@@ -262,6 +262,60 @@ def researcher_prompt_template(
     )
 
 
+def run_researcher(
+    *,
+    feature_id: str,
+    path_glob: str,
+    symbol_shortlist: list[str],
+    survey_sha: str = "",
+    workspace: Path | str | None = None,
+) -> dict[str, Any]:
+    """Run the research phase for a feature (hide-the-ticket protocol).
+
+    Builds a researcher dispatch payload containing ONLY the path glob and
+    symbol shortlist — never the ticket/intent text — checks the research
+    cache to avoid redundant re-surveys, and returns the payload the
+    coordinator uses to dispatch (or skip) the researcher sub-agent.
+
+    Args:
+        feature_id:       UUID of the feature being researched.
+        path_glob:        Subsystem path glob from the localizer.
+        symbol_shortlist: Symbol names from survey.db to focus on.
+        survey_sha:       SHA of the survey.db snapshot (cache key).
+        workspace:        Project root; defaults to Path(".").
+
+    Returns:
+        dict with keys role, prompt, output_path, cache_hit, feature_id.
+
+    Raises:
+        ValueError: If feature_id or path_glob is an empty string.
+        TypeError:  If symbol_shortlist is not a list.
+    """
+    if not feature_id:
+        raise ValueError("feature_id must be a non-empty string")
+    if not path_glob:
+        raise ValueError("path_glob must be a non-empty string")
+    if not isinstance(symbol_shortlist, list):
+        raise TypeError(
+            f"symbol_shortlist must be a list, got {type(symbol_shortlist).__name__!r}"
+        )
+
+    root = Path(workspace).resolve() if workspace else Path(".").resolve()
+    notes_path = research_notes_path(feature_id, root)
+
+    cache_hit = False
+    if survey_sha and path_glob:
+        cache_hit = should_skip_research(feature_id, survey_sha, path_glob, root)
+
+    return {
+        "role": RESEARCHER,
+        "prompt": build_researcher_prompt(path_glob, symbol_shortlist),
+        "output_path": str(notes_path),
+        "cache_hit": cache_hit,
+        "feature_id": feature_id,
+    }
+
+
 __all__ = [
     "Role",
     "RESEARCHER",
@@ -275,4 +329,5 @@ __all__ = [
     "research_notes_path",
     "should_skip_research",
     "build_researcher_prompt",
+    "run_researcher",
 ]

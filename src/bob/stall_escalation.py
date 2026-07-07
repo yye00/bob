@@ -27,7 +27,11 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_ESCALATION_COUNT = 5
 
-__all__ = ["escalate_stall_observation", "write_stall_attention_marker"]
+__all__ = [
+    "escalate_stall_observation",
+    "escalate_stall_to_attention",
+    "write_stall_attention_marker",
+]
 
 
 def _read_escalation_threshold() -> int:
@@ -140,3 +144,7 @@ def escalate_stall_observation(
         "observation_count": observation_count,
         "marker_path": str(marker_path.resolve()),
     }
+
+
+# Canonical name matching the needs_human_attention sentinel acceptance criterion.
+escalate_stall_to_attention = escalate_stall_observation

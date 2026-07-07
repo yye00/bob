@@ -586,3 +586,108 @@ class TestOrchestratorIntegration6032:
         import bob.pending_successor_verify as psv
         assert callable(psv.detect_verification_features)
         assert callable(psv.scan_ac_body_for_tokens)
+
+
+# ---------------------------------------------------------------------------
+# AC (ec65822c): bob.enhanced_verification.VERIFIER_EXTENSION_MODULES
+# ---------------------------------------------------------------------------
+
+
+class TestEnhancedVerificationExtensionModules:
+    """The verifier module must re-export the canonical extension-module list."""
+
+    def test_enhanced_verification_exports_constant(self):
+        from bob.enhanced_verification import VERIFIER_EXTENSION_MODULES
+        assert isinstance(VERIFIER_EXTENSION_MODULES, tuple)
+        assert len(VERIFIER_EXTENSION_MODULES) > 0
+
+    def test_enhanced_verification_constant_matches_canonical(self):
+        from bob.enhanced_verification import VERIFIER_EXTENSION_MODULES as EV_MODS
+        from bob.spec_quality.spec_extractor import VERIFIER_EXTENSION_MODULES as SE_MODS
+        assert EV_MODS == SE_MODS
+
+    def test_includes_enhanced_verification_self(self):
+        from bob.enhanced_verification import VERIFIER_EXTENSION_MODULES
+        assert any("enhanced_verification.py" in m for m in VERIFIER_EXTENSION_MODULES)
+
+
+# ---------------------------------------------------------------------------
+# AC (ec65822c): bob.run_loop.classify_verifier_extension_failure
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyVerifierExtensionFailure:
+    """The run_loop must classify AC failures of verifier-extension features."""
+
+    def test_function_defined_and_callable(self):
+        from bob.run_loop import classify_verifier_extension_failure
+        assert callable(classify_verifier_extension_failure)
+
+    def test_in_run_loop_all(self):
+        import bob.run_loop as rl
+        assert "classify_verifier_extension_failure" in rl.__all__
+
+    def test_signature(self):
+        import inspect
+        from bob.run_loop import classify_verifier_extension_failure
+        params = list(inspect.signature(classify_verifier_extension_failure).parameters)
+        assert "feature_id" in params
+        assert "workspace" in params
+        assert "structural_ac_passed" in params
+
+    def test_needs_human_when_structural_ac_not_passed(self, tmp_path):
+        from bob.run_loop import classify_verifier_extension_failure
+        src_bob = tmp_path / "src" / "bob"
+        src_bob.mkdir(parents=True)
+        (src_bob / "enhanced_verification.py").write_text("# verifier")
+        result = classify_verifier_extension_failure(
+            "feat-1", tmp_path, structural_ac_passed=False
+        )
+        assert result == "needs_human"
+
+    def test_needs_human_when_not_verifier_extension(self, tmp_path):
+        from bob.run_loop import classify_verifier_extension_failure
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "regular_module.py").write_text("# not a verifier")
+        result = classify_verifier_extension_failure(
+            "feat-2", tmp_path, structural_ac_passed=True
+        )
+        assert result == "needs_human"
+
+    def test_needs_human_when_workspace_none(self):
+        from bob.run_loop import classify_verifier_extension_failure
+        result = classify_verifier_extension_failure(
+            "feat-3", None, structural_ac_passed=True
+        )
+        assert result == "needs_human"
+
+    def test_defers_when_both_conditions_met(self, tmp_path):
+        from bob.run_loop import classify_verifier_extension_failure
+        src_bob = tmp_path / "src" / "bob"
+        src_bob.mkdir(parents=True)
+        (src_bob / "enhanced_verification.py").write_text("# verifier")
+        result = classify_verifier_extension_failure(
+            "feat-4", tmp_path, structural_ac_passed=True
+        )
+        assert result == "pending_successor_verify"
+
+    def test_empty_feature_id_raises_value_error(self):
+        from bob.run_loop import classify_verifier_extension_failure
+        with pytest.raises(ValueError, match="feature_id"):
+            classify_verifier_extension_failure("", None, True)
+
+    def test_none_feature_id_raises_value_error(self):
+        from bob.run_loop import classify_verifier_extension_failure
+        with pytest.raises(ValueError, match="feature_id"):
+            classify_verifier_extension_failure(None, None, True)
+
+    def test_non_string_feature_id_raises_value_error(self):
+        from bob.run_loop import classify_verifier_extension_failure
+        with pytest.raises(ValueError):
+            classify_verifier_extension_failure(42, None, True)
+
+    def test_bool_feature_id_raises_value_error(self):
+        from bob.run_loop import classify_verifier_extension_failure
+        with pytest.raises(ValueError):
+            classify_verifier_extension_failure(True, None, True)

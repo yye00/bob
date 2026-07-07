@@ -11,5 +11,8 @@ from __future__ import annotations
 from orchestrator.periodic_resume_scan import (  # noqa: F401
     promote_interrupted_rows as _promote_interrupted_rows,
 )
+from orchestrator.stuck_executing_reaper import (  # noqa: F401
+    reap_stuck_executing,
+)
 
-__all__ = ["_promote_interrupted_rows"]
+__all__ = ["_promote_interrupted_rows", "reap_stuck_executing"]

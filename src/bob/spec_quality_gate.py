@@ -31,6 +31,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Union
 
+from bob.composite_spec_quality_score import (
+    spec_quality_gate,
+    spec_quality_score,
+)
 from bob.spec_quality_allowlist import is_permanent_forward_carry, load_allowlist_patterns
 from bob.spec_quality_score import (
     compute_quality_score,
@@ -58,6 +62,8 @@ __all__ = [
     "load_allowlist",
     "load_allowlist_patterns",
     "should_bypass_quality_threshold",
+    "spec_quality_gate",
+    "spec_quality_score",
 ]
 
 

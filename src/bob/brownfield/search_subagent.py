@@ -426,6 +426,62 @@ def spawn_locator_task(
     )
 
 
+def locate_candidates(
+    intent: dict[str, Any],
+    *,
+    workspace: Optional[Path] = None,
+    keywords: Optional[list[str]] = None,
+    localizer_symbols: Optional[list[dict[str, Any]]] = None,
+    max_candidates: int = MAX_CANDIDATES,
+) -> list[dict[str, Any]]:
+    """Locate 3-5 candidate code spans for a feature (WarpGrep v2 entry point).
+
+    This is the AC-required public entry point for the search sub-agent
+    pattern. It spawns the locator sub-agent (grep → candidates), whose
+    transcript is discarded, and returns the candidates in the schema
+    format: list[{path, start_line, end_line, confidence, rationale_snippet}].
+
+    When ``localizer_symbols`` is supplied and exceeds the overflow threshold
+    (>20 symbols), this bypasses the localizer entirely and relies on the
+    search sub-agent — the whole point of the WarpGrep pattern. When the
+    localizer result is within the threshold, the search sub-agent is still
+    run (it is complementary), but callers may prefer the localizer result.
+
+    Args:
+        intent: Feature intent dict with 'capability', 'target_subsystem',
+                and 'keywords' fields.
+        workspace: Repository root. Defaults to cwd.
+        keywords: Optional override keyword list.
+        localizer_symbols: Optional localizer output used only to decide
+                whether the localizer overflowed (informational).
+        max_candidates: Maximum number of candidates to return.
+
+    Returns:
+        List of candidate dicts (schema-shaped). Empty list if no matches.
+
+    Raises:
+        ValueError: If intent is not a dict.
+    """
+    if not isinstance(intent, dict):
+        raise ValueError(f"intent must be a dict, got {type(intent)!r}")
+
+    if localizer_symbols is not None and not should_use_search_subagent(localizer_symbols):
+        logger.debug(
+            "locate_candidates: localizer returned %d symbol(s) (<= threshold %d); "
+            "running search sub-agent as a complement",
+            len(localizer_symbols),
+            LOCALIZER_OVERFLOW_THRESHOLD,
+        )
+
+    results = spawn_search_subagent(
+        intent,
+        workspace=workspace,
+        keywords=keywords,
+        max_candidates=max_candidates,
+    )
+    return [r.to_dict() for r in results]
+
+
 def filter_candidates_by_confidence(
     candidates: list[SearchResult],
     *,

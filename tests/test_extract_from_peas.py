@@ -237,3 +237,38 @@ class TestRoundTrip:
         parsed = parse_peas_markdown(peas)
         stubs = emit_stub_features(parsed)
         assert stubs[0]["acceptance_criteria"] == [TBD_PLACEHOLDER]
+
+
+class TestExtractFromPeasEntryPoint:
+    """The canonical AC-required entry-point ``extract_from_peas``."""
+
+    async def _fake_synth(self, *, project_id, title, description, workspace):
+        return ["pytest: tests/test_x.py", f"File exists: src/{title}.py"]
+
+    def test_function_defined(self):
+        from bob.extract_from_peas import extract_from_peas
+
+        assert callable(extract_from_peas)
+
+    def test_runs_full_pipeline_and_writes_out(self, tmp_path):
+        from bob.extract_from_peas import extract_from_peas
+
+        peas = tmp_path / "peas.md"
+        peas.write_text(
+            "## Alpha\nTier: Core  |  Priority: high  |  Slot: F-R7-900\nAlpha does a thing.\n",
+            encoding="utf-8",
+        )
+        out = tmp_path / "features.yaml"
+        summary = extract_from_peas(
+            peas, out_path=out, _synthesize_fn=self._fake_synth
+        )
+        assert summary["extracted"] == 1
+        assert out.exists()
+        reloaded = yaml.safe_load(out.read_text())
+        assert reloaded["features"][0]["key"] == "F-R7-900"
+
+    def test_missing_file_raises_value_error(self, tmp_path):
+        from bob.extract_from_peas import extract_from_peas
+
+        with pytest.raises(ValueError):
+            extract_from_peas(tmp_path / "nope.md")

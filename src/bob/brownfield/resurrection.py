@@ -345,6 +345,46 @@ def detect_resurrection_signals(
     return signals
 
 
+def detect_partial_work(
+    workspace_root: str,
+    touches: list[str],
+    feature_keywords: list[str],
+    repo: str = "",
+    github_token: Optional[str] = None,
+    pr_lookback_days: int = 90,
+    branch_diverge_days: int = 30,
+    todo_cluster_min_size: int = 3,
+) -> list[ResurrectionSignal]:
+    """Detect abandoned partial work for a "new" feature (BF-5 public entry point).
+
+    This is the canonical detect side of the detect→report flow: run all
+    Tier-1 resurrection signals and return any that fire.  The returned list
+    feeds directly into write_resurrection_report.
+
+    Args mirror detect_resurrection_signals.
+
+    Raises:
+        TypeError: If workspace_root is None or touches is not a list.
+        ValueError: If numeric parameters are out of valid range.
+
+    Returns:
+        List of ResurrectionSignal that fired.  Empty list means no partial
+        work was detected.
+    """
+    if workspace_root is None:
+        raise TypeError("workspace_root must not be None")
+    return detect_resurrection_signals(
+        workspace_root=workspace_root,
+        touches=touches,
+        feature_keywords=feature_keywords,
+        repo=repo,
+        github_token=github_token,
+        pr_lookback_days=pr_lookback_days,
+        branch_diverge_days=branch_diverge_days,
+        todo_cluster_min_size=todo_cluster_min_size,
+    )
+
+
 def write_resurrection_report(
     feature_id: str,
     signals: list[ResurrectionSignal],
@@ -595,6 +635,36 @@ def get_graveyard_signal(
 
 # AC alias: F-R7-611 requires bob.brownfield.resurrection.signal_graveyard_prs
 signal_graveyard_prs = get_graveyard_signal
+
+
+def graveyard_signal(
+    repo: str,
+    feature_keywords: list[str],
+    lookback_days: int = 90,
+    github_token: Optional[str] = None,
+) -> list[ResurrectionSignal]:
+    """Canonical Signal-A (GitHub-graveyard) entry point (be676e0d).
+
+    BF-5 scope reduction: only the stale-PR / closed-unmerged search is
+    unique to bob; Signal-B and Signal-C are covered by Claude Code
+    session-resume + Plan Mode. This is the public name the sidecar spec
+    pins for the graveyard check; it delegates to get_graveyard_signal.
+
+    Args:
+        repo: GitHub repo slug, e.g. 'owner/repo'.
+        feature_keywords: Keywords from feature.capability for PR/body matching.
+        lookback_days: How old a draft PR must be to fire (default: 90).
+        github_token: Optional GitHub token for authenticated access.
+
+    Returns:
+        List of ResurrectionSignal with signal_kind='stale_pr'.
+    """
+    return get_graveyard_signal(
+        repo=repo,
+        feature_keywords=feature_keywords,
+        lookback_days=lookback_days,
+        github_token=github_token,
+    )
 
 
 def filter_signals_by_config(

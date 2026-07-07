@@ -39,6 +39,7 @@ from bob.spec_quality.ambiguity_linter import (
     AmbiguityIssue,
     FeatureLintResult,
     SpecLintReport,
+    is_ambiguous_criterion,
 )
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
     "LintIssue",
     "LintReport",
     "SpecLintReport",
+    "is_ambiguous_criterion",
     "lint_acceptance_criteria",
     "lint_and_repair",
     "lint_feature",

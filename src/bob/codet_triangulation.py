@@ -32,10 +32,17 @@ from bob.orchestrator.codet_triangulation import (
     triple_filter,
 )
 
+# integration: bob.synthesizer — CodeT triangulation is invoked by the
+# synthesizer's KxK code-test candidate scoring pass.
+import bob.synthesizer  # noqa: F401
+
 __all__ = [
     "generate_kxk_matrix",
     "generate_k_candidates",
     "mutual_agreement_scorer",
+    # AC-required functions (F-R7-454 / CodeT KxK triangulation)
+    "build_agreement_matrix",
+    "select_best_impl",
     # AC-required aliases
     "score_mutual_agreement",
     "score_kxk_matrix",
@@ -158,6 +165,70 @@ def mutual_agreement_scorer(
     raise RuntimeError(
         f"Cell for impl[{impl.index}] x test[{test_set.index}] not found in matrix"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-required functions (F-R7-454): build_agreement_matrix / select_best_impl
+# ---------------------------------------------------------------------------
+
+
+def build_agreement_matrix(
+    impls: Sequence[CandidateImpl],
+    test_sets: Sequence[CandidateTestSet],
+    workspace: str | Path | None = None,
+) -> ScoredMatrix:
+    """Build the KxK mutual-agreement matrix (CodeT, ICLR 2023).
+
+    Runs every candidate implementation against every candidate test set and
+    scores each cell by mutual agreement:
+
+        score = passing_tests * (unique_fail_count + 1)
+
+    where ``unique_fail_count`` is the number of OTHER implementations that
+    fail the test set — a proxy for the test set's discriminative power. The
+    winning cell (highest score) is the (impl, test) pair the KxK triangulation
+    endorses, replacing the single-test-writer rubber-stamp failure mode.
+
+    Args:
+        impls: Candidate implementations. Must be non-empty.
+        test_sets: Candidate test sets. Must be non-empty.
+        workspace: Project root directory (defaults to cwd).
+
+    Returns:
+        ScoredMatrix with all K*K cells scored and the winner identified.
+
+    Raises:
+        ValueError: If either ``impls`` or ``test_sets`` is empty.
+    """
+    return generate_kxk_matrix(impls, test_sets, workspace=workspace)
+
+
+def select_best_impl(
+    impls: Sequence[CandidateImpl],
+    test_sets: Sequence[CandidateTestSet],
+    workspace: str | Path | None = None,
+) -> CandidateImpl:
+    """Select the winning implementation from the KxK agreement matrix.
+
+    Builds the mutual-agreement matrix and returns the ``CandidateImpl``
+    sitting in the highest-scoring cell. This is the implementation the CodeT
+    triangulation endorses across the full candidate test population, rather
+    than one that merely passes a single (possibly bad) test writer's pass.
+
+    Args:
+        impls: Candidate implementations. Must be non-empty.
+        test_sets: Candidate test sets. Must be non-empty.
+        workspace: Project root directory (defaults to cwd).
+
+    Returns:
+        The winning ``CandidateImpl``.
+
+    Raises:
+        ValueError: If either ``impls`` or ``test_sets`` is empty.
+    """
+    impls_list = list(impls)
+    matrix = build_agreement_matrix(impls_list, test_sets, workspace=workspace)
+    return impls_list[matrix.winner_impl_index]
 
 
 # ---------------------------------------------------------------------------

@@ -188,6 +188,7 @@ from bob.blame_cascade import charge_failing_test_to_feature  # noqa: F401 — i
 from bob.blame_cascade import charge_to_owning_feature  # noqa: F401 — integration 65236321
 from bob.blame_cascade import charge_breaking_feature  # noqa: F401 — integration 7da96f66
 from bob.blame_cascade import charge_breaking_features  # noqa: F401 — integration 82c7f621
+from bob.blame_cause_cascade import charge_breaking_feature as charge_breaking_feature_cause_cascade  # noqa: F401 — integration b6bfd8c2
 from bob.blame_the_cause import charge_failing_feature  # noqa: F401 — integration c5c2c05e
 from bob.blame_the_cause import charge_failing_features as charge_failing_features_blame_the_cause  # noqa: F401 — integration 0c5f8168
 from bob.blame_the_cause import charge_regression_cascade  # noqa: F401 — integration 43bfef8a
@@ -196,6 +197,7 @@ from bob.sticky_completed_gate import is_completion_persisted, prevent_status_do
 from bob.subagent_verification import forbid_pytest_stdout_redirection  # noqa: F401 — integration 772bd0b9
 from bob.environment_capability import probe_dependencies as probe_env_dependencies, discover_workaround  # noqa: F401 — integration 86baf307
 from bob.environment_capability_preflight import probe_dependencies, apply_workaround as apply_dep_workaround  # noqa: F401 — integration 158bd7a7
+from bob.env_capability_preflight import probe_dependencies as probe_env_capabilities, discover_workaround as discover_env_workaround  # noqa: F401 — integration 9cea2d12
 from bob.research_strategies import (  # noqa: F401 — integration 7ce7f72a
     emit_canonical_acs,
     validate_against_spec_quality_gate,

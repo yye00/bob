@@ -24,6 +24,7 @@ from bob.acceptance.kinds import (
     CharacterizationAC,
     SnapshotResult,
     VerificationResult,
+    characterization,
     observe_and_snapshot,
     parse_characterization_ac,
     verify_against_snapshots,
@@ -396,6 +397,145 @@ class TestVerifyAgainstSnapshots:
         result = verify_against_snapshots(ac, tmp_path)
         assert result.passed is True
         assert "match" in result.details.lower() or "baseline" in result.details.lower()
+
+
+# ---------------------------------------------------------------------------
+# High-level characterization() dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestCharacterizationDispatch:
+    def test_observe_phase_returns_snapshot_result(self, tmp_path):
+        _write_target(tmp_path, "def f(x): return x + 1")
+        ac = {
+            "characterization": {
+                "target": "target_mod.py::f",
+                "sample_inputs": [[1]],
+                "snapshot_dir": "snapshots/",
+            }
+        }
+        result = characterization(ac, tmp_path, phase="observe")
+        assert isinstance(result, SnapshotResult)
+        assert result.success is True
+
+    def test_verify_phase_returns_verification_result(self, tmp_path):
+        _write_target(tmp_path, "def f(x): return x + 1")
+        ac = {
+            "characterization": {
+                "target": "target_mod.py::f",
+                "sample_inputs": [[1]],
+                "snapshot_dir": "snapshots/",
+            }
+        }
+        characterization(ac, tmp_path, phase="observe")
+        result = characterization(ac, tmp_path, phase="verify")
+        assert isinstance(result, VerificationResult)
+        assert result.passed is True
+
+    def test_default_phase_is_verify(self, tmp_path):
+        _write_target(tmp_path, "def f(): return 1")
+        ac = {
+            "characterization": {
+                "target": "target_mod.py::f",
+                "sample_inputs": "auto",
+                "snapshot_dir": "snapshots/",
+            }
+        }
+        characterization(ac, tmp_path, phase="observe")
+        result = characterization(ac, tmp_path)
+        assert isinstance(result, VerificationResult)
+
+    def test_accepts_already_parsed_ac(self, tmp_path):
+        _write_target(tmp_path, "def f(): return 1")
+        ac = CharacterizationAC(
+            target="target_mod.py::f",
+            sample_inputs="auto",
+            snapshot_dir="snapshots/",
+        )
+        result = characterization(ac, tmp_path, phase="observe")
+        assert isinstance(result, SnapshotResult)
+
+    def test_bad_phase_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError, match="phase"):
+            characterization(
+                {"characterization": {"target": "m.f", "snapshot_dir": "s/"}},
+                tmp_path,
+                phase="bogus",
+            )
+
+    def test_unparseable_ac_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError):
+            characterization("not a characterization AC", tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# disk_reconciler extension: snapshots count as AC-satisfaction artifacts
+# ---------------------------------------------------------------------------
+
+
+class TestDiskReconciler:
+    def _ac(self):
+        return {
+            "characterization": {
+                "target": "target_mod.py::f",
+                "sample_inputs": [[1]],
+                "snapshot_dir": "snapshots/",
+            }
+        }
+
+    def test_no_artifacts_before_observe(self, tmp_path):
+        from bob.acceptance.disk_reconciler import (
+            characterization_artifacts_present,
+            snapshot_artifacts,
+        )
+
+        _write_target(tmp_path, "def f(x): return x")
+        assert snapshot_artifacts(self._ac(), tmp_path) == []
+        assert characterization_artifacts_present(self._ac(), tmp_path) is False
+
+    def test_artifacts_present_after_observe(self, tmp_path):
+        from bob.acceptance.disk_reconciler import (
+            characterization_artifacts_present,
+            snapshot_artifacts,
+        )
+
+        _write_target(tmp_path, "def f(x): return x")
+        observe_and_snapshot(parse_characterization_ac(self._ac()), tmp_path)
+        arts = snapshot_artifacts(self._ac(), tmp_path)
+        assert len(arts) == 1
+        assert characterization_artifacts_present(self._ac(), tmp_path) is True
+
+    def test_reconcile_passes_when_unchanged(self, tmp_path):
+        from bob.acceptance.disk_reconciler import reconcile_characterization_ac
+
+        _write_target(tmp_path, "def f(x): return x")
+        observe_and_snapshot(parse_characterization_ac(self._ac()), tmp_path)
+        passed, detail = reconcile_characterization_ac(self._ac(), tmp_path)
+        assert passed is True
+        assert "snapshot artifact" in detail
+
+    def test_reconcile_fails_without_snapshots(self, tmp_path):
+        from bob.acceptance.disk_reconciler import reconcile_characterization_ac
+
+        _write_target(tmp_path, "def f(x): return x")
+        passed, detail = reconcile_characterization_ac(self._ac(), tmp_path)
+        assert passed is False
+        assert "observer phase not run" in detail.lower()
+
+    def test_reconcile_fails_on_regression(self, tmp_path):
+        from bob.acceptance.disk_reconciler import reconcile_characterization_ac
+
+        _write_target(tmp_path, "def f(x): return x")
+        observe_and_snapshot(parse_characterization_ac(self._ac()), tmp_path)
+        _write_target(tmp_path, "def f(x): return x * 999")
+        passed, _ = reconcile_characterization_ac(self._ac(), tmp_path)
+        assert passed is False
+
+    def test_reconcile_non_characterization_returns_false(self, tmp_path):
+        from bob.acceptance.disk_reconciler import reconcile_characterization_ac
+
+        passed, detail = reconcile_characterization_ac("File exists: x.py", tmp_path)
+        assert passed is False
 
 
 # ---------------------------------------------------------------------------

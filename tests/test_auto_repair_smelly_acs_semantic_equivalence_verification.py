@@ -12,6 +12,7 @@ from bob.auto_repair_smelly_acs_semantic_equivalence_verification import (
     suggest_rewrite,
     verify_semantic_equivalence,
     apply_repairs,
+    auto_apply_repairs,
     respect_opt_out,
     compute_auto_repair_rate,
     handle_missing_judge,
@@ -177,6 +178,49 @@ class TestAutoRepairSmelly:
             )
 
         assert len(repairs) == 0
+
+    def test_auto_apply_repairs_error_severity_applied(self, tmp_path: Path) -> None:
+        finding = _make_error_finding()
+        rewrite = "The system shall process requests."
+
+        with (
+            patch("bob.spec_quality.ac_auto_repair.suggest_rewrite", return_value=rewrite),
+            patch("bob.spec_quality.ac_auto_repair.verify_semantic_equivalence", return_value=(True, "Equivalent.")),
+        ):
+            repairs = auto_apply_repairs(
+                findings=[finding],
+                feature_id="feat-001",
+                repairs_log=tmp_path / "repairs.log",
+            )
+
+        assert len(repairs) == 1
+        assert repairs[0]["rewrite"] == rewrite
+
+    def test_auto_apply_repairs_opt_out_returns_empty(self, tmp_path: Path) -> None:
+        finding = _make_error_finding()
+        repairs = auto_apply_repairs(
+            findings=[finding],
+            feature_id="feat-001",
+            repairs_log=tmp_path / "repairs.log",
+            auto_repair=False,
+        )
+        assert repairs == []
+
+    def test_auto_apply_repairs_rejects_non_string_feature_id(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError):
+            auto_apply_repairs(
+                findings=[],
+                feature_id=123,  # type: ignore[arg-type]
+                repairs_log=tmp_path / "repairs.log",
+            )
+
+    def test_auto_apply_repairs_rejects_non_list_findings(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError):
+            auto_apply_repairs(
+                findings="not-a-list",  # type: ignore[arg-type]
+                feature_id="feat-001",
+                repairs_log=tmp_path / "repairs.log",
+            )
 
     def test_apply_repairs_opt_out(self, tmp_path: Path) -> None:
         finding = _make_error_finding()

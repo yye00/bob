@@ -10,7 +10,10 @@ import pytest
 
 from bob.structured_uncertainty_clarification import (
     generate_candidate_implementations,
+    generate_candidate_stubs,
+    detect_ambiguous_slots,
     mark_ambiguous_slots,
+    run_clarification_loop,
     trigger_user_question,
 )
 from spec_synthesis import CandidateStub, DisagreementSlot, SpecNeedsHumanError
@@ -223,3 +226,79 @@ class TestTriggerUserQuestion:
         except SpecNeedsHumanError:
             raised = True
         assert raised, "Expected SpecNeedsHumanError but no exception was raised"
+
+
+class TestGenerateCandidateStubs:
+    def test_returns_list(self):
+        acs = ["Function defined: bob.foo.bar"]
+        result = generate_candidate_stubs(acs)
+        assert isinstance(result, list)
+
+    def test_empty_list_returns_empty(self):
+        assert generate_candidate_stubs([]) == []
+
+    def test_produces_n_candidates(self):
+        result = generate_candidate_stubs(["Function defined: bob.foo.bar"], n_candidates=3)
+        assert len(result) == 3
+
+    def test_non_list_raises_value_error(self):
+        with pytest.raises(ValueError, match="acceptance_criteria must be a list"):
+            generate_candidate_stubs("not a list")  # type: ignore[arg-type]
+
+    def test_non_string_items_raise_value_error(self):
+        with pytest.raises(ValueError, match="items must be strings"):
+            generate_candidate_stubs([123])  # type: ignore[arg-type]
+
+    def test_n_candidates_zero_raises_value_error(self):
+        with pytest.raises(ValueError, match="n_candidates must be >= 1"):
+            generate_candidate_stubs(["Function defined: foo.bar"], n_candidates=0)
+
+
+class TestDetectAmbiguousSlots:
+    def test_empty_returns_empty(self):
+        assert detect_ambiguous_slots([]) == []
+
+    def test_identical_stubs_no_disagreement(self):
+        stubs = [
+            CandidateStub("foo", "bool", [], [], "def foo(): return True"),
+            CandidateStub("foo", "bool", [], [], "def foo(): return True"),
+        ]
+        assert detect_ambiguous_slots(stubs) == []
+
+    def test_disagreeing_stubs_detected(self):
+        stubs = [
+            CandidateStub("foo", "bool", [], [], "def foo(): ..."),
+            CandidateStub("foo", "int", [], [], "def foo(): ..."),
+            CandidateStub("foo", "str", [], [], "def foo(): ..."),
+        ]
+        result = detect_ambiguous_slots(stubs)
+        assert any(s.slot_name == "foo" and s.dimension == "return_type" for s in result)
+
+    def test_non_list_raises_value_error(self):
+        with pytest.raises(ValueError, match="stubs must be a list"):
+            detect_ambiguous_slots("not a list")  # type: ignore[arg-type]
+
+    def test_threshold_out_of_range_raises_value_error(self):
+        with pytest.raises(ValueError, match="threshold must be in"):
+            detect_ambiguous_slots([], threshold=1.5)
+
+
+class TestRunClarificationLoop:
+    def test_empty_acs_returns_no_needs_human(self):
+        spec_slots, outcome = run_clarification_loop([])
+        assert isinstance(spec_slots, dict)
+        assert outcome is None
+
+    def test_ci_mode_ambiguous_returns_spec_needs_human(self):
+        spec_slots, outcome = run_clarification_loop(
+            ["Function defined: foo.bar"], ci_mode=True
+        )
+        assert outcome == "SPEC_NEEDS_HUMAN"
+
+    def test_non_list_raises_value_error(self):
+        with pytest.raises(ValueError, match="acceptance_criteria must be a list"):
+            run_clarification_loop("not a list")  # type: ignore[arg-type]
+
+    def test_non_string_items_raise_value_error(self):
+        with pytest.raises(ValueError, match="items must be strings"):
+            run_clarification_loop([123])  # type: ignore[arg-type]

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Awaitable, Callable
 
-from bob.orchestrator.spawn_retry import spawn_with_retry
+from bob.spawn_layer import spawn_with_retry
 
 logger = logging.getLogger(__name__)
 

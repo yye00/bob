@@ -401,6 +401,85 @@ def persisted_artifact_count(
     return compute_artifact_count_after_spawn(workspace)
 
 
+def count_persisted_artifacts(
+    workspace: str | os.PathLike[str] | None,
+) -> int:
+    """Count implementation artifacts persisted to the workspace src/tests tree.
+
+    This is the canonical name referenced by the feature acceptance criteria
+    (``Function defined: bob.startup_crash_exempt.count_persisted_artifacts``).
+    It delegates to :func:`compute_artifact_count_after_spawn`.
+
+    A count of 0 means the sub-agent crashed before writing any persistent
+    implementation artifact — the signal that separates a transport crash
+    (exempt) from a genuine work-loss crash (charge retry).
+
+    Parameters
+    ----------
+    workspace:
+        Workspace root directory.  May be ``None`` or non-existent.
+
+    Returns
+    -------
+    int
+        Number of artifact files found.  Always >= 0; never raises.
+    """
+    return compute_artifact_count_after_spawn(workspace)
+
+
+def is_startup_crash_exempt(
+    *,
+    exit_signature: str | None,
+    workspace: str | os.PathLike[str] | None,
+    exempt_counter: int,
+) -> bool:
+    """Return True iff a mid_work_crash should be exempt from the retry budget.
+
+    This is the canonical predicate referenced by the feature acceptance
+    criteria (``Function defined: bob.startup_crash_exempt.is_startup_crash_exempt``).
+
+    A crash is exempt when ALL of the following hold:
+
+    * The exit signature matches a known transport-transient pattern
+      (self-signed cert chain, connection reset, timeout, MCP plugin failure).
+    * Zero persisted implementation artifacts exist in the workspace
+      (no real work was lost — the crash preceded any src/tests write).
+    * The lifetime exemption cap (25) has not been reached.
+
+    A crash with persisted artifacts is a genuine work-loss crash and is
+    NOT exempt (charge a retry per F-R6-300). A crash with no transport
+    signature is unclassified and NOT exempt.
+
+    Parameters
+    ----------
+    exit_signature:
+        The stderr tail / crash signature from the failed sub-agent spawn.
+        ``None`` or empty string yields ``False``.
+    workspace:
+        Workspace root directory.  May be ``None`` or non-existent.
+    exempt_counter:
+        Current lifetime exemption count for this feature (0-based).
+
+    Returns
+    -------
+    bool
+        ``True`` when the crash should be exempt from the retry budget,
+        ``False`` otherwise.
+
+    Raises
+    ------
+    ValueError
+        When ``exempt_counter`` is not an integer, or when ``exit_signature``
+        is provided but is not a string or None.
+    """
+    outcome = try_exempt(
+        exit_signature=exit_signature,
+        workspace=workspace,
+        exempt_counter=exempt_counter,
+    )
+    return outcome.decision == ExemptDecision.EXEMPT
+
+
 def exempt_counter(feature_id: str, *, db_path: str | os.PathLike[str] | None = None) -> int:
     """Return the current lifetime exemption count for ``feature_id``.
 
@@ -681,11 +760,13 @@ __all__ = [
     "check_startup_crash_exemption",
     "classify_startup_crash",
     "compute_artifact_count_after_spawn",
+    "count_persisted_artifacts",
     "exempt_counter",
     "exempt_from_retry_budget",
     "exit_signature_matches_transport_transient",
     "exponential_backoff_seconds",
     "get_exempt_count",
+    "is_startup_crash_exempt",
     "is_transport_crash",
     "persisted_artifact_count",
     "should_exempt_from_retry",

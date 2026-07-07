@@ -18,8 +18,10 @@ from bob.codet_triangulation import (
     CandidateTestSet,
     MatrixCell,
     ScoredMatrix,
+    build_agreement_matrix,
     generate_kxk_matrix,
     mutual_agreement_scorer,
+    select_best_impl,
 )
 from bob.orchestrator.codet_triangulation import spawn_k_impls, spawn_k_tests
 
@@ -125,3 +127,49 @@ class TestMutualAgreementScorer:
         )
         assert isinstance(cell, MatrixCell)
         assert cell.score >= 0.0
+
+
+class TestBuildAgreementMatrix:
+    def test_returns_scored_matrix(self, tmp_path):
+        impls, test_sets = _make_candidates("feat-bam-1", 2, tmp_path)
+        result = build_agreement_matrix(impls, test_sets, workspace=tmp_path)
+        assert isinstance(result, ScoredMatrix)
+
+    def test_matrix_has_kxk_cells(self, tmp_path):
+        k = 2
+        impls, test_sets = _make_candidates("feat-bam-2", k, tmp_path)
+        result = build_agreement_matrix(impls, test_sets, workspace=tmp_path)
+        assert len(result.cells) == k * k
+
+    def test_empty_impls_raises_value_error(self, tmp_path):
+        _, test_sets = _make_candidates("feat-bam-empty", 1, tmp_path)
+        with pytest.raises(ValueError, match="impls"):
+            build_agreement_matrix([], test_sets, workspace=tmp_path)
+
+    def test_empty_test_sets_raises_value_error(self, tmp_path):
+        impls, _ = _make_candidates("feat-bam-empty2", 1, tmp_path)
+        with pytest.raises(ValueError, match="test_sets"):
+            build_agreement_matrix(impls, [], workspace=tmp_path)
+
+
+class TestSelectBestImpl:
+    def test_returns_candidate_impl(self, tmp_path):
+        impls, test_sets = _make_candidates("feat-sbi-1", 2, tmp_path)
+        winner = select_best_impl(impls, test_sets, workspace=tmp_path)
+        assert isinstance(winner, CandidateImpl)
+
+    def test_winner_matches_matrix_winner(self, tmp_path):
+        impls, test_sets = _make_candidates("feat-sbi-2", 2, tmp_path)
+        matrix = build_agreement_matrix(impls, test_sets, workspace=tmp_path)
+        winner = select_best_impl(impls, test_sets, workspace=tmp_path)
+        assert winner.index == impls[matrix.winner_impl_index].index
+
+    def test_single_impl_returns_that_impl(self, tmp_path):
+        impls, test_sets = _make_candidates("feat-sbi-k1", 1, tmp_path)
+        winner = select_best_impl(impls, test_sets, workspace=tmp_path)
+        assert winner is impls[0]
+
+    def test_empty_impls_raises_value_error(self, tmp_path):
+        _, test_sets = _make_candidates("feat-sbi-empty", 1, tmp_path)
+        with pytest.raises(ValueError, match="impls"):
+            select_best_impl([], test_sets, workspace=tmp_path)

@@ -1,6 +1,6 @@
-"""Tests for bob.bootstrap_readiness_override.check_bootstrap_bypass.
+"""Tests for hippy.bootstrap_readiness_override.should_bootstrap_bypass.
 
-Verifies that check_bootstrap_bypass correctly allows one bypass execute
+Verifies that should_bootstrap_bypass correctly allows one bypass execute
 per feature when:
   - bootstrap_attempts < 1
   - research_iterations == 0
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.bootstrap_readiness_override import check_bootstrap_bypass
+from hippy.bootstrap_readiness_override import should_bootstrap_bypass
 from bob.models import Feature
 
 
@@ -29,44 +29,54 @@ def _feature(**overrides) -> Feature:
     return Feature(**defaults)
 
 
-def test_check_bootstrap_bypass_fresh_feature_allowed():
+def test_should_bootstrap_bypass_fresh_feature_allowed():
     """Fresh feature (both counters zero) is allowed bypass."""
     feature = _feature(bootstrap_attempts=0, research_iterations=0)
-    assert check_bootstrap_bypass(feature) is True
+    assert should_bootstrap_bypass(feature) is True
 
 
-def test_check_bootstrap_bypass_after_first_use_blocked():
+def test_should_bootstrap_bypass_after_first_use_blocked():
     """Feature that already used the bypass (bootstrap_attempts=1) is blocked."""
     feature = _feature(bootstrap_attempts=1, research_iterations=0)
-    assert check_bootstrap_bypass(feature) is False
+    assert should_bootstrap_bypass(feature) is False
 
 
-def test_check_bootstrap_bypass_with_research_blocked():
+def test_should_bootstrap_bypass_with_research_blocked():
     """Feature with existing research iterations is blocked (no deadlock)."""
     feature = _feature(bootstrap_attempts=0, research_iterations=1)
-    assert check_bootstrap_bypass(feature) is False
+    assert should_bootstrap_bypass(feature) is False
 
 
-def test_check_bootstrap_bypass_both_nonzero_blocked():
+def test_should_bootstrap_bypass_both_nonzero_blocked():
     """Both counters nonzero — bypass blocked."""
     feature = _feature(bootstrap_attempts=1, research_iterations=2)
-    assert check_bootstrap_bypass(feature) is False
+    assert should_bootstrap_bypass(feature) is False
 
 
-def test_check_bootstrap_bypass_returns_bool():
+def test_should_bootstrap_bypass_returns_bool():
     """Function always returns a bool, not a truthy/falsy value."""
     feature = _feature(bootstrap_attempts=0, research_iterations=0)
-    result = check_bootstrap_bypass(feature)
+    result = should_bootstrap_bypass(feature)
     assert isinstance(result, bool)
 
 
-def test_check_bootstrap_bypass_high_bootstrap_attempts_blocked():
+def test_should_bootstrap_bypass_high_bootstrap_attempts_blocked():
     """bootstrap_attempts > 1 is also blocked (more than max)."""
     feature = _feature(bootstrap_attempts=5, research_iterations=0)
-    assert check_bootstrap_bypass(feature) is False
+    assert should_bootstrap_bypass(feature) is False
 
 
-def test_check_bootstrap_bypass_high_research_iterations_blocked():
+def test_should_bootstrap_bypass_high_research_iterations_blocked():
     """Multiple research iterations present — bypass blocked."""
     feature = _feature(bootstrap_attempts=0, research_iterations=10)
-    assert check_bootstrap_bypass(feature) is False
+    assert should_bootstrap_bypass(feature) is False
+
+
+def test_should_bootstrap_bypass_accepts_plain_object():
+    """Any object exposing the two counter attributes is accepted (duck-typed)."""
+
+    class _Stub:
+        bootstrap_attempts = 0
+        research_iterations = 0
+
+    assert should_bootstrap_bypass(_Stub()) is True

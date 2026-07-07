@@ -44,6 +44,7 @@ from bob.acceptance.kinds import (
     parse_characterization_ac,
     verify_against_snapshots,
 )
+from bob.acceptance.disk_reconciler import reconcile_characterization_ac
 
 try:
     from foo.bar import sample_inputs  # noqa: F401 — re-export required by AC
@@ -94,9 +95,9 @@ def bf_6_characterization_ac_kind_approval_test_diffs_legacy(
         ValueError: If *ac_spec* specifies an invalid (non-None, non-empty)
                     characterization body, or if *phase* is unrecognised.
     """
-    if phase not in ("observe", "verify"):
+    if phase not in ("observe", "verify", "reconcile"):
         raise ValueError(
-            f"phase must be 'observe' or 'verify', got {phase!r}"
+            f"phase must be 'observe', 'verify', or 'reconcile', got {phase!r}"
         )
 
     ws = pathlib.Path(workspace) if workspace is not None else pathlib.Path.cwd()
@@ -143,6 +144,15 @@ def bf_6_characterization_ac_kind_approval_test_diffs_legacy(
                 if result.success
                 else f"Observer phase failed: {'; '.join(result.errors)}"
             ),
+            "diffs": [],
+            "phase": phase,
+        }
+
+    if phase == "reconcile":
+        passed, detail = reconcile_characterization_ac(ac, ws)
+        return {
+            "passed": passed,
+            "detail": detail,
             "diffs": [],
             "phase": phase,
         }

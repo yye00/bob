@@ -16,6 +16,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from bob.scope_enumeration_linter import (  # noqa: F401 — integration: bob.spec_extractor
+    ScopeEnumerationResult,
+    check_scope_enumeration,
+    has_unbounded_scope_word,
+)
 from bob.spec_quality.self_consistency import _extract_variant
 from bob.spec_quality.spec_extractor import (
     ACFilterResult,
@@ -225,4 +230,7 @@ __all__ = [
     "ACFilterResult",
     "DemotedAC",
     "VERIFIER_EXTENSION_MODULES",
+    "ScopeEnumerationResult",
+    "check_scope_enumeration",
+    "has_unbounded_scope_word",
 ]

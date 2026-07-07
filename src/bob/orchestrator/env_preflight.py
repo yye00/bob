@@ -251,13 +251,21 @@ def spawns_research_subagent() -> bool:
     return True
 
 
-def discover_workaround(probe_result: ProbeResult) -> Optional[Workaround]:
-    """Discover a concrete workaround for a missing dep by spawning a research sub-agent.
+def discover_workaround(
+    probe_result: ProbeResult,
+    workspace: Optional[pathlib.Path] = None,
+) -> Optional[Workaround]:
+    """Discover a concrete workaround for a missing dep.
 
-    This is the public API. Internally:
-    1. Spawns a research sub-agent (or simulated in-process research) that
-       queries for how to install / emulate the missing dep.
-    2. Returns a ``Workaround`` if one is found, else None.
+    This is the public API. Implements the Voyager loop (Wang et al.
+    arXiv:2305.16291): when *workspace* is given, the persistent skill library
+    is searched FIRST; on a hit above the similarity threshold the stored
+    workaround is reused and no research sub-agent is spawned. On a miss, the
+    research path runs and the discovered workaround is written back so future
+    preflight calls hit the library instead of re-spawning research.
+
+    When *workspace* is None (the pre-Voyager call convention) the library is
+    skipped entirely and behavior is identical to plain research.
 
     The workaround is marked ``low_risk=True`` when it involves only Python
     package installation (pip install) — these can be auto-applied. CLI
@@ -268,11 +276,90 @@ def discover_workaround(probe_result: ProbeResult) -> Optional[Workaround]:
 
     dep = probe_result.dep
 
+    if workspace is not None:
+        cached = _lookup_skill_library(dep, workspace)
+        if cached is not None:
+            return cached
+
     # Research sub-agent simulation — in production this would call
     # spawn_sub_agent with a research prompt. Here we implement the
     # known workaround database that the research sub-agent would surface.
     workaround = _research_workaround(dep)
+
+    if workaround is not None and workspace is not None:
+        _write_back_skill(dep, workaround, workspace)
+
     return workaround
+
+
+def _skill_query_for_dep(dep: DepEntry) -> str:
+    """Natural-language capability query used to search/store a dep workaround."""
+    return f"workaround for missing {dep.kind} dependency {dep.name}"
+
+
+def _lookup_skill_library(
+    dep: DepEntry, workspace: pathlib.Path
+) -> Optional[Workaround]:
+    """Search the persistent skill library for a stored workaround for *dep*.
+
+    Returns a reconstructed ``Workaround`` on a hit above the similarity
+    threshold, else None. Never raises: library failures degrade to research.
+    """
+    try:
+        from bob.skill_library import search_skill_library
+
+        result = search_skill_library(
+            query=_skill_query_for_dep(dep),
+            workspace=workspace,
+        )
+    except Exception:
+        logger.debug("skill-library lookup failed for %r", dep.name, exc_info=True)
+        return None
+
+    if not result:
+        return None
+
+    apply_result = result.get("apply_result")
+    if apply_result is None or not getattr(apply_result, "success", False):
+        return None
+
+    logger.info(
+        "Voyager skill-library hit for missing dep %r — reusing stored "
+        "workaround, skipping research spawn",
+        dep.name,
+    )
+    return Workaround(
+        dep_name=dep.name,
+        description=str(getattr(apply_result, "output", "") or ""),
+        low_risk=False,
+        commands=[],
+    )
+
+
+def _write_back_skill(
+    dep: DepEntry, workaround: Workaround, workspace: pathlib.Path
+) -> None:
+    """Persist a freshly researched *workaround* into the skill library.
+
+    Never raises: a write-back failure must not break preflight.
+    """
+    shim_src = (
+        '"""Shim: workaround for missing dependency '
+        f"{dep.name} ({dep.kind}).\n\n{workaround.description}\n"
+        '"""\n\n\n'
+        "def apply(context):\n"
+        f"    return {workaround.description!r}\n"
+    )
+    try:
+        from bob.skill_library import write_skill
+
+        write_skill(
+            capability_description=_skill_query_for_dep(dep),
+            shim_module_src=shim_src,
+            workspace=workspace,
+        )
+    except Exception:
+        logger.debug("skill-library write-back failed for %r", dep.name, exc_info=True)
 
 
 def _research_workaround(dep: DepEntry) -> Optional[Workaround]:
@@ -487,7 +574,7 @@ def run_preflight(
             missing_probes.append(result)
 
     for pr in missing_probes:
-        wk = discover_workaround(pr)
+        wk = discover_workaround(pr, workspace=workspace)
         apply_or_halt(pr, wk)
         if wk is not None:
             applied_workarounds.append(wk)

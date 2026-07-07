@@ -565,6 +565,38 @@ def validate_round_trip(yaml_text: str) -> bool:
     return True
 
 
+def extract_from_peas(
+    peas_path: "Path",
+    *,
+    out_path: "Path | None" = None,
+    threshold: float = 0.65,
+    workspace: "Path | None" = None,
+    existing_spec_path: "Path | None" = None,
+    project_id: str = "extract-from-peas",
+    _synthesize_fn: "Any" = None,
+) -> "dict[str, Any]":
+    """Parse a PEAS prose-only markdown file and synthesize acceptance criteria.
+
+    Canonical module-name-matching entry-point for the ``bob extract-from-peas``
+    pipeline — delegates to :func:`extract_and_synthesize`, which validates
+    *peas_path* (raising ``ValueError`` when it is not path-like or absent) and
+    then runs parse → stub → synthesize → score-gate.
+
+    Returns:
+        Summary dict with keys: extracted, synthesized, gate_passed,
+        gate_failed, per_feature, yaml_text.
+    """
+    return extract_and_synthesize(
+        peas_path,
+        out_path=out_path,
+        threshold=threshold,
+        workspace=workspace,
+        existing_spec_path=existing_spec_path,
+        project_id=project_id,
+        _synthesize_fn=_synthesize_fn,
+    )
+
+
 # Alias satisfying the AC: "Function defined: bob.extract_from_peas.extract_features"
 def extract_features(
     peas_path: "Path",

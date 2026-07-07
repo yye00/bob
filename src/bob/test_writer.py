@@ -53,6 +53,7 @@ __all__ = [
     "filter_by_compilation",
     "filter_by_stub_pass",
     "filter_by_coverage",
+    "build_pass_coverage_filter",
     "EmittedTest",
     "FilterResult",
     "BijectionReport",
@@ -360,3 +361,32 @@ def filter_by_coverage(emitted_tests: list[EmittedTest]) -> list[EmittedTest]:
             f"emitted_tests must be a list, got {type(emitted_tests).__name__!r}"
         )
     return [et for et in emitted_tests if _check_raises_coverage(et.test_path)]
+
+
+def build_pass_coverage_filter(
+    emitted_tests: list[EmittedTest],
+) -> list[EmittedTest]:
+    """Apply the full TestGen-LLM Build/Pass/Coverage triple filter.
+
+    Chains the three checks in order — compile (Build), fails-on-stub (Pass),
+    and coverage uplift (Coverage) — returning only the emitted tests that
+    survive all three.  A test is kept iff it compiles, is genuinely red on
+    stub code, and references at least one non-pytest symbol.
+
+    Args:
+        emitted_tests: List of EmittedTest objects to filter.
+
+    Returns:
+        Subset of emitted_tests accepted by all three filter stages.
+
+    Raises:
+        ValueError: When ``emitted_tests`` is not a list.
+    """
+    if not isinstance(emitted_tests, list):
+        raise ValueError(
+            f"emitted_tests must be a list, got {type(emitted_tests).__name__!r}"
+        )
+    survivors = filter_by_compilation(emitted_tests)
+    survivors = filter_by_stub_pass(survivors)
+    survivors = filter_by_coverage(survivors)
+    return survivors

@@ -28,7 +28,11 @@ from bob.sticky_completed import (
     prevent_status_downgrade,
     is_completion_persisted,
 )
-from bob.sticky_completed_gate import check_sticky_completed, reset_completion_stamp
+from bob.sticky_completed_gate import (
+    apply_sticky_gate,
+    check_sticky_completed,
+    reset_completion_stamp,
+)
 from bob.ears_parser import BehaviorTuple, parse_behavior_criterion
 from bob.test_ownership_map import build_test_ownership_map, verify_regression_owner
 from bob.pending_successor_detector import (
@@ -53,8 +57,10 @@ __all__ = [
     "prevent_status_downgrade",
     "is_completion_persisted",
     "check_sticky_completed",
+    "apply_sticky_gate",
     "reset_completion_stamp",
     "sticky_completed_gate",
+    "resolve_sticky_status",
     "build_test_ownership_map",
     "verify_regression_owner",
     "detect_pending_successor_verify",
@@ -178,6 +184,40 @@ def sticky_completed_gate(
     import pathlib as _pathlib
 
     return check_sticky_completed(
+        parent_completed=parent_completed,
+        target_status=target_status,
+        acceptance_criteria=acceptance_criteria,
+        workspace=workspace,
+    )
+
+
+def resolve_sticky_status(
+    parent_completed: bool,
+    target_status: str,
+    acceptance_criteria: "str | list[str] | None",
+    workspace: "pathlib.Path | str | None" = None,
+) -> str:
+    """Resolve the status an evaluator vote should actually assign.
+
+    Thin evaluator-side wrapper around
+    :func:`bob.sticky_completed_gate.apply_sticky_gate`.  When the sticky gate
+    fires, the requested demotion is refused and ``'ready'`` is returned so a
+    persisted-completed feature cannot be un-completed by re-evaluation;
+    otherwise *target_status* is returned unchanged.
+
+    Args:
+        parent_completed: True when the feature was status='completed' in the
+            parent generation's DB.
+        target_status: The status the evaluator vote wishes to assign.
+        acceptance_criteria: Raw JSON string or Python list of AC strings.
+        workspace: Root directory for disk-based AC verification. Defaults
+            to ``pathlib.Path.cwd()``.
+
+    Returns:
+        ``'ready'`` when the gate blocks the demotion; otherwise
+        *target_status* unchanged.
+    """
+    return apply_sticky_gate(
         parent_completed=parent_completed,
         target_status=target_status,
         acceptance_criteria=acceptance_criteria,

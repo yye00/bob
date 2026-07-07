@@ -18,6 +18,7 @@ import uuid
 import pytest
 
 from bob.spec_provenance import compute_coverage, trace_ac_to_source
+from bob.spec.provenance import round_trip_coverage, trace_ac_provenance
 
 
 INTENT = (
@@ -230,3 +231,71 @@ def test_compute_coverage_integrates_with_synthesizer_output():
     ]
     passed, coverage = compute_coverage(synthesized_acs, INTENT)
     assert passed is True, f"Expected coverage >=0.90, got {coverage:.2%}"
+
+
+# ---------------------------------------------------------------------------
+# bob.spec.provenance package API — trace_ac_provenance
+# ---------------------------------------------------------------------------
+
+
+def test_trace_ac_provenance_returns_expected_keys():
+    """trace_ac_provenance returns a dict with the expected keys."""
+    fid = str(uuid.uuid4())
+    db = _make_temp_db(fid, "Test Feature", INTENT, FULL_COVERAGE_ACS)
+    result = trace_ac_provenance(fid, 0, db_path=db)
+    assert result["feature_id"] == fid
+    assert result["ac_index"] == 0
+    assert result["ac"] == FULL_COVERAGE_ACS[0]
+    assert isinstance(result["spans"], list)
+
+
+def test_trace_ac_provenance_missing_feature_raises_key_error():
+    """trace_ac_provenance raises KeyError when the feature is not found."""
+    fid = str(uuid.uuid4())
+    db = _make_temp_db(fid, "Test Feature", INTENT, FULL_COVERAGE_ACS)
+    with pytest.raises(KeyError):
+        trace_ac_provenance("nonexistent-id", 0, db_path=db)
+
+
+def test_trace_ac_provenance_out_of_range_raises_index_error():
+    """trace_ac_provenance raises IndexError when ac_index is out of range."""
+    fid = str(uuid.uuid4())
+    db = _make_temp_db(fid, "Test Feature", INTENT, FULL_COVERAGE_ACS)
+    with pytest.raises(IndexError):
+        trace_ac_provenance(fid, 999, db_path=db)
+
+
+def test_trace_ac_provenance_empty_feature_id_raises_value_error():
+    """trace_ac_provenance raises ValueError for an empty feature_id."""
+    with pytest.raises(ValueError, match="feature_id must be a non-empty str"):
+        trace_ac_provenance("", 0)
+
+
+def test_trace_ac_provenance_non_int_index_raises_value_error():
+    """trace_ac_provenance raises ValueError when ac_index is not an int."""
+    with pytest.raises(ValueError, match="ac_index must be an int"):
+        trace_ac_provenance("some-id", "0")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# bob.spec.provenance package API — round_trip_coverage
+# ---------------------------------------------------------------------------
+
+
+def test_round_trip_coverage_full_coverage_passes():
+    """round_trip_coverage passes for ACs covering all intent sentences."""
+    passed, coverage = round_trip_coverage(FULL_COVERAGE_ACS, INTENT)
+    assert passed is True
+    assert coverage >= 0.90
+
+
+def test_round_trip_coverage_non_string_intent_raises():
+    """round_trip_coverage raises ValueError when intent is not a str."""
+    with pytest.raises(ValueError, match="intent must be a str"):
+        round_trip_coverage(["criterion"], 123)  # type: ignore[arg-type]
+
+
+def test_round_trip_coverage_acs_not_list_raises():
+    """round_trip_coverage raises ValueError when acs is not a list."""
+    with pytest.raises(ValueError, match="acs must be a list"):
+        round_trip_coverage("criterion", INTENT)  # type: ignore[arg-type]

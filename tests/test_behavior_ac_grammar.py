@@ -192,3 +192,66 @@ class TestCodegenIcontractDecorators:
         assert "@icontract.ensure" in result
         assert "@icontract.invariant" in result
         assert "OverflowError" in result
+
+
+class TestBehaviorEarsGrammar:
+    """Structured EARS-style behavior grammar in ac_grammar.behavior_ears."""
+
+    def test_parse_returns_structured_tuple(self):
+        from ac_grammar.behavior_ears import (
+            BehaviorCriterion,
+            parse_behavior_criterion,
+        )
+
+        crit = parse_behavior_criterion(
+            "behavior: parser returns BehaviorAC when AC matches grammar"
+        )
+        assert isinstance(crit, BehaviorCriterion)
+        assert crit.subject == "parser"
+        assert crit.verb == "returns"
+        assert crit.object_ == "BehaviorAC"
+        assert crit.condition == "AC matches grammar"
+
+    def test_parse_non_behavior_ac_returns_none(self):
+        from ac_grammar.behavior_ears import parse_behavior_criterion
+
+        assert parse_behavior_criterion("pytest: tests/test_foo.py") is None
+
+    def test_parse_missing_when_raises(self):
+        from ac_grammar.behavior_ears import parse_behavior_criterion
+
+        with pytest.raises(ValueError):
+            parse_behavior_criterion("behavior: parser returns BehaviorAC")
+
+    def test_check_behavior_uses_structured_fields(self):
+        from ac_grammar.behavior_ears import (
+            check_behavior,
+            parse_behavior_criterion,
+        )
+
+        crit = parse_behavior_criterion(
+            "behavior: parser returns BehaviorAC when AC matches grammar"
+        )
+        result = check_behavior(crit)
+        assert set(result.keys()) == {"verdict", "evidence", "confidence", "prompt"}
+        assert "parser" in result["prompt"]
+        assert "returns" in result["prompt"]
+        assert "AC matches grammar" in result["prompt"]
+
+    def test_check_behavior_accepts_raw_string(self):
+        from ac_grammar.behavior_ears import check_behavior
+
+        result = check_behavior(
+            "behavior: parser returns BehaviorAC when AC matches grammar"
+        )
+        assert result["verdict"] is False  # no code context provided
+
+    def test_check_behavior_verdict_true_when_code_matches(self):
+        from ac_grammar.behavior_ears import check_behavior
+
+        ctx = {"files": {"src/parser.py": "def parser(): returns BehaviorAC"}}
+        result = check_behavior(
+            "behavior: parser returns BehaviorAC when AC matches grammar", ctx
+        )
+        assert result["verdict"] is True
+        assert result["confidence"] > 0.5

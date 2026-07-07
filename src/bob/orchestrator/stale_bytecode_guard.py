@@ -218,6 +218,93 @@ def log_stale_file(path: pathlib.Path, mtime: float, start_time: float) -> None:
     )
 
 
+def orchestrator_sources_changed_since(
+    workspace: pathlib.Path,
+    start_time: Optional[float] = None,
+    *,
+    lock_file: Optional[pathlib.Path] = None,
+) -> bool:
+    """Return True if any orchestrator source file was modified after start_time.
+
+    Compares the mtime of every .py file under src/bob*/orchestrator/ against
+    the previous bob_N process's start time. When any file is newer, the running
+    process is holding pre-edit bytecode and must be relaunched.
+
+    Args:
+        workspace: Root of the bob generation directory (e.g. /path/to/bob96).
+        start_time: Unix timestamp of the previous bob_N process start.
+        lock_file: Path to .bob.lock; consulted for started_at when start_time
+            is None.
+
+    Returns:
+        True if at least one orchestrator source file is newer than start_time,
+        False otherwise (including when start_time cannot be resolved).
+
+    Raises:
+        ValueError: If workspace is not a pathlib.Path, or if neither start_time
+            nor lock_file is provided.
+    """
+    if not isinstance(workspace, pathlib.Path):
+        raise ValueError(
+            f"workspace must be a pathlib.Path, got {type(workspace).__name__!r}"
+        )
+    if start_time is None and lock_file is None:
+        raise ValueError("Either start_time or lock_file must be provided")
+
+    return bool(check_freshness(workspace, start_time, lock_file=lock_file))
+
+
+def guard_relaunch_on_stale_bytecode(
+    workspace: pathlib.Path,
+    start_time: Optional[float] = None,
+    *,
+    lock_file: Optional[pathlib.Path] = None,
+    relaunch: Optional[object] = None,
+) -> bool:
+    """Kill+relaunch the process when orchestrator bytecode is stale.
+
+    Self-heal entry point for the reaper: if any orchestrator source file is
+    newer than the previous process start, the running process holds stale
+    bytecode and must be relaunched even when the DB looks recoverable.
+
+    Args:
+        workspace: Root of the bob generation directory.
+        start_time: Unix timestamp of the previous bob_N process start.
+        lock_file: Path to .bob.lock; consulted for started_at when start_time
+            is None.
+        relaunch: Zero-argument callable invoked to kill+relaunch the process
+            when stale bytecode is detected. Required and must be callable.
+
+    Returns:
+        True when stale bytecode was detected and ``relaunch`` was invoked,
+        False when sources are fresh (no relaunch needed).
+
+    Raises:
+        ValueError: If workspace is not a pathlib.Path, if relaunch is not
+            callable, or if neither start_time nor lock_file is provided.
+    """
+    if not isinstance(workspace, pathlib.Path):
+        raise ValueError(
+            f"workspace must be a pathlib.Path, got {type(workspace).__name__!r}"
+        )
+    if not callable(relaunch):
+        raise ValueError(
+            f"relaunch must be callable, got {type(relaunch).__name__!r}"
+        )
+
+    if not orchestrator_sources_changed_since(
+        workspace, start_time, lock_file=lock_file
+    ):
+        return False
+
+    logger.warning(
+        "STALE-BYTECODE: orchestrator source newer than process start — "
+        "triggering kill+relaunch"
+    )
+    relaunch()
+    return True
+
+
 def handle_missing_lock_file(lock_file: pathlib.Path) -> bool:
     """Return True conservatively when .bob.lock is absent.
 

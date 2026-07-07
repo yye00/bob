@@ -31,6 +31,7 @@ from spec_synthesis import (
     UNCERTAINTY_THRESHOLD,
     SpecNeedsHumanError,
     generate_candidate_stubs as _generate_candidate_stubs,
+    run_clarification_loop as _run_clarification_loop,
     exit_spec_needs_human,
 )
 from spec_synthesis.uncertainty_loop import (
@@ -172,6 +173,139 @@ def trigger_user_question(
     return _trigger_clarification_questions(
         disagreement_slots,
         max_per_round=max_per_round,
+        ci_mode=ci_mode,
+        audit_log_path=audit_log_path,
+    )
+
+
+def generate_candidate_stubs(
+    acceptance_criteria: list[str],
+    *,
+    n_candidates: int = N_CANDIDATES,
+) -> list[CandidateStub]:
+    """Generate N candidate stub implementations from the draft spec.
+
+    AC-named entry point (mirrors :func:`generate_candidate_implementations`).
+    For each "Function defined" or "Class defined" AC, produce
+    ``n_candidates`` stubs that vary in return type, raised exceptions,
+    and side effects.
+
+    Parameters
+    ----------
+    acceptance_criteria:
+        List of AC strings for the feature.
+    n_candidates:
+        Number of candidate stubs to generate per slot (default 3).
+
+    Returns
+    -------
+    list[CandidateStub]
+        All generated stubs (``n_candidates`` × number of function slots).
+
+    Raises
+    ------
+    ValueError
+        If ``acceptance_criteria`` is not a list, contains non-string items,
+        or ``n_candidates`` is less than 1.
+    """
+    return generate_candidate_implementations(
+        acceptance_criteria, n_candidates=n_candidates
+    )
+
+
+def detect_ambiguous_slots(
+    stubs: list[CandidateStub],
+    *,
+    threshold: float = UNCERTAINTY_THRESHOLD,
+) -> list[DisagreementSlot]:
+    """Detect slots where candidate stubs disagree on observable behaviour.
+
+    AC-named entry point (mirrors :func:`mark_ambiguous_slots`). Groups
+    stubs by slot name, computes a disagreement rate for each observable
+    dimension (return type, raised exceptions, side effects), and returns
+    slots whose rate exceeds ``threshold``.
+
+    Parameters
+    ----------
+    stubs:
+        Candidate stubs produced by :func:`generate_candidate_stubs`.
+    threshold:
+        Uncertainty threshold (default T=0.4). Slots above this trigger
+        a user question.
+
+    Returns
+    -------
+    list[DisagreementSlot]
+        Slots whose disagreement rate is above ``threshold``.
+
+    Raises
+    ------
+    ValueError
+        If ``stubs`` is not a list or ``threshold`` is outside [0, 1].
+    """
+    return mark_ambiguous_slots(stubs, threshold=threshold)
+
+
+def run_clarification_loop(
+    acceptance_criteria: list[str],
+    spec_slots: dict[str, Any] | None = None,
+    *,
+    n_candidates: int = N_CANDIDATES,
+    ci_mode: bool | None = None,
+    audit_log_path: Path | str | None = None,
+) -> tuple[dict[str, Any], str | None]:
+    """Run the full structured-uncertainty clarification loop.
+
+    Orchestrates the pipeline:
+
+    1. :func:`generate_candidate_stubs` — produce N stubs per slot.
+    2. :func:`detect_ambiguous_slots` — find slots above T=0.4.
+    3. If CI mode and any disagreement → return ``(spec_slots, SPEC_NEEDS_HUMAN)``.
+    4. Otherwise collect answers interactively and fold them into ``spec_slots``.
+
+    In CI mode (``BOB_CI_MODE=1`` or ``ci_mode=True``) with any ambiguous
+    slots, returns ``SPEC_NEEDS_HUMAN`` rather than confabulating an answer.
+
+    Parameters
+    ----------
+    acceptance_criteria:
+        List of AC strings for the feature being synthesised.
+    spec_slots:
+        Existing spec-slot dict to fold clarification answers into.
+        Defaults to an empty dict.
+    n_candidates:
+        Number of candidate stubs to generate per slot (default 3).
+    ci_mode:
+        Force CI mode on/off; ``None`` reads the ``BOB_CI_MODE``
+        environment variable.
+    audit_log_path:
+        Path to the ``clarifications.log`` audit trail.
+
+    Returns
+    -------
+    tuple[dict[str, Any], str | None]
+        ``(spec_slots, "SPEC_NEEDS_HUMAN")`` when CI-blocked, or
+        ``(spec_slots, None)`` when the loop completed successfully.
+
+    Raises
+    ------
+    ValueError
+        If ``acceptance_criteria`` is not a list or contains non-strings.
+    """
+    if not isinstance(acceptance_criteria, list):
+        raise ValueError(
+            f"acceptance_criteria must be a list, got {type(acceptance_criteria).__name__}"
+        )
+    for item in acceptance_criteria:
+        if not isinstance(item, str):
+            raise ValueError(
+                f"acceptance_criteria items must be strings, got {type(item).__name__}"
+            )
+
+    return _run_clarification_loop(
+        acceptance_criteria,
+        spec_slots,
+        n_candidates=n_candidates,
         ci_mode=ci_mode,
         audit_log_path=audit_log_path,
     )

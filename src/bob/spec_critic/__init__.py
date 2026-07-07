@@ -321,6 +321,12 @@ def emit_plan_ready(
 # AC alias: "Function defined: bob.spec_critic.load_constitution"
 load_constitution = load_spec_constitution
 
+# AC alias: "Function defined: bob.spec_critic.critique_spec". The package
+# __init__ shadows the sibling spec_critic.py module, so the canonical
+# entry point must be re-exposed here under both names.
+critique_spec = run_spec_critic
+run_spec_critique = run_spec_critic
+
 __all__ = [
     "findings_registry",
     "write_findings",
@@ -330,7 +336,9 @@ __all__ = [
     "emit_plan_ready",
     "load_constitution",
     "load_spec_constitution",
+    "critique_spec",
     "run_spec_critic",
+    "run_spec_critique",
     "SpecCritic",
     "ConstitutionMissingError",
     "SpecDefect",

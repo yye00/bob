@@ -87,3 +87,26 @@ def test_numeric_object_parses():
     result = parse_behavior(ac)
     assert result is not None
     assert isinstance(result, BehaviorCriterion)
+
+
+def test_ac_grammar_parse_empty_returns_none():
+    """ac_grammar.behavior_ears.parse_behavior_criterion('') is None, not a raise."""
+    from ac_grammar.behavior_ears import parse_behavior_criterion
+
+    assert parse_behavior_criterion("") is None
+
+
+def test_ac_grammar_parse_whitespace_returns_none():
+    from ac_grammar.behavior_ears import parse_behavior_criterion
+
+    assert parse_behavior_criterion("   ") is None
+
+
+def test_ac_grammar_check_behavior_no_context_returns_dict():
+    """check_behavior with a minimal criterion and no context returns a dict."""
+    from ac_grammar.behavior_ears import check_behavior, parse_behavior_criterion
+
+    crit = parse_behavior_criterion("behavior: a b c when d")
+    result = check_behavior(crit)
+    assert isinstance(result, dict)
+    assert result["verdict"] is False

@@ -276,6 +276,10 @@ from bob.stuck_readiness_decomposer import (  # noqa: F401 — integration AC 7c
     check_stuck_readiness as _check_stuck_readiness,
     mark_pending_decomposition as _mark_pending_decomposition,
 )
+from bob.stuck_readiness_decomposition import (  # noqa: F401 — integration AC 80577d54
+    should_decompose as _should_decompose,
+    mark_pending_decomposition as _srd_mark_pending_decomposition,
+)
 from bob.readiness_decomposition import (  # noqa: F401 — integration AC 86da3f00
     should_trigger_decomposition as _should_trigger_decomposition,
     mark_pending_decomposition as _rd_mark_pending_decomposition,
@@ -731,6 +735,41 @@ def format_termination_message(termination: "LoopTermination | None") -> str:
     if termination is None:
         return "RAISED"
     return translate_termination_label(termination.name)
+
+
+def run_loop(
+    project_id: str,
+    *,
+    max_cost: float | None = None,
+    workspace: str | None = None,
+    fresh: bool = False,
+    target_feature_id: str | None = None,
+    force_unlock: bool = False,
+    max_concurrent_features: int = 1,
+) -> "LoopTermination":
+    """Run the orchestration loop synchronously for ``project_id``.
+
+    Thin module-level entry point wrapping :meth:`OrchestrationLoop.run`.
+    Constructs an :class:`OrchestrationLoop` and drives it to completion
+    via ``asyncio.run``, returning the :class:`LoopTermination` reason.
+
+    Raises:
+        ValueError: if ``project_id`` is empty/blank — a missing project id
+            is a programming error, not a silently-ignored no-op.
+    """
+    if not isinstance(project_id, str) or not project_id.strip():
+        raise ValueError("project_id must be a non-empty string")
+
+    loop = OrchestrationLoop(
+        project_id=project_id,
+        max_cost=max_cost,
+        workspace=workspace,
+        fresh=fresh,
+        target_feature_id=target_feature_id,
+        force_unlock=force_unlock,
+        max_concurrent_features=max_concurrent_features,
+    )
+    return asyncio.run(loop.run())
 
 
 # R10-015: Maximum number of free retries granted to a feature whose

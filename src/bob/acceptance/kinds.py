@@ -466,6 +466,50 @@ def verify_against_snapshots(
 
 
 # ---------------------------------------------------------------------------
+# High-level dispatch entry point
+# ---------------------------------------------------------------------------
+
+def characterization(
+    ac: Any,
+    workspace: pathlib.Path | str,
+    phase: str = "verify",
+) -> SnapshotResult | VerificationResult:
+    """Run a characterization AC in the given *phase*.
+
+    High-level entry point tying parsing, observation, and verification
+    together. Parses *ac* into a :class:`CharacterizationAC` and dispatches to
+    the observer or verifier phase.
+
+    Args:
+        ac:        Raw AC (dict/string) or an already-parsed
+                   :class:`CharacterizationAC`.
+        workspace: Project workspace root (path or string).
+        phase:     ``'observe'`` to capture baseline snapshots, or ``'verify'``
+                   (default) to diff current behavior against them.
+
+    Returns:
+        A :class:`SnapshotResult` for the observer phase, or a
+        :class:`VerificationResult` for the verifier phase.
+
+    Raises:
+        ValueError: If *phase* is unrecognised or *ac* cannot be parsed as a
+                    characterization criterion.
+    """
+    if phase not in ("observe", "verify"):
+        raise ValueError(f"phase must be 'observe' or 'verify', got {phase!r}")
+
+    ws = pathlib.Path(workspace)
+
+    parsed = ac if isinstance(ac, CharacterizationAC) else parse_characterization_ac(ac)
+    if parsed is None:
+        raise ValueError(f"Could not parse characterization AC from: {ac!r}")
+
+    if phase == "observe":
+        return observe_and_snapshot(parsed, ws)
+    return verify_against_snapshots(parsed, ws)
+
+
+# ---------------------------------------------------------------------------
 # Convenience aliases satisfying AC checks for these symbols at this module path
 # ---------------------------------------------------------------------------
 

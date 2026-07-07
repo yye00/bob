@@ -238,6 +238,39 @@ def is_ambiguous_ac(ac: str) -> bool:
     return False
 
 
+def is_ambiguous_criterion(ac: str) -> bool:
+    """Return True if a single acceptance criterion is ambiguous.
+
+    A criterion is *not* ambiguous only when it matches one of the accepted
+    structured forms (``File exists:``, ``Function defined:``,
+    ``Class defined:``, ``pytest:``, ``integration:``, ``behavior: … when …``).
+    Anything else — bare verbs, unbounded quantifiers, empty/whitespace text,
+    or unstructured free text — is ambiguous.
+
+    Parameters
+    ----------
+    ac:
+        The acceptance criterion string to classify.
+
+    Returns
+    -------
+    bool
+        ``True`` if the criterion is ambiguous, ``False`` if it is a valid
+        structured form.
+
+    Raises
+    ------
+    ValueError
+        If ``ac`` is not a string.
+    """
+    if not isinstance(ac, str):
+        raise ValueError(f"ac must be a string, got {type(ac).__name__}")
+    stripped = ac.strip()
+    if not stripped:
+        return True
+    return not _matches_structured_form(stripped)
+
+
 def has_concrete_identifier(ac: str) -> bool:
     """Return True if the AC contains a concrete identifier (file path, function name, test path).
 

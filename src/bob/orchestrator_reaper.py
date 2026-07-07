@@ -34,6 +34,41 @@ def _get_check_stale_bytecode():
     return check_stale_bytecode
 
 
+def _get_guard_relaunch_on_stale_bytecode():
+    from bob.orchestrator.stale_bytecode_guard import (  # noqa: PLC0415
+        guard_relaunch_on_stale_bytecode,
+    )
+    return guard_relaunch_on_stale_bytecode
+
+
+def relaunch_if_stale_before_reap(
+    workspace: pathlib.Path,
+    start_time: Optional[float] = None,
+    *,
+    lock_file: Optional[pathlib.Path] = None,
+    relaunch=None,
+) -> bool:
+    """Kill+relaunch the process before reaping when orchestrator bytecode is stale.
+
+    Delegates to bob.orchestrator.stale_bytecode_guard.guard_relaunch_on_stale_bytecode.
+    Called before sweeping orphan executing rows: if any orchestrator source file
+    is newer than the previous process start, the running process holds stale
+    bytecode and must be relaunched — even when the DB looks recoverable.
+
+    Args:
+        workspace: Root of the bob generation directory.
+        start_time: Unix timestamp of the previous bob_N process start.
+        lock_file: Path to .bob.lock; consulted for started_at when start_time
+            is None.
+        relaunch: Zero-argument callable invoked to kill+relaunch on stale detection.
+
+    Returns:
+        True when stale bytecode was detected and relaunch was invoked, else False.
+    """
+    guard = _get_guard_relaunch_on_stale_bytecode()
+    return guard(workspace, start_time, lock_file=lock_file, relaunch=relaunch)
+
+
 def finalize_orphans_on_exit(project_id: str) -> None:
     """Flip orphan 'executing' rows to 'failed' immediately before LoopTermination returns.
 

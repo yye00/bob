@@ -17,6 +17,12 @@ import pytest
 from bob_legacy.baseline_gate import CollectionResult, validate_collection
 from bob.verifier import validate_collection as vc_from_verifier, CollectionResult as CR_from_verifier
 
+from baseline_gate import (
+    BaselineUnstableError,
+    assert_baseline_collects_cleanly,
+    baseline_collection_ok,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,3 +129,75 @@ def test_multiple_failing_files_collected(tmp_path):
     assert not result.ok
     assert "tests/test_a.py" in result.failing_files
     assert "tests/test_b.py" in result.failing_files
+
+
+# ---------------------------------------------------------------------------
+# baseline_collection_ok — boolean predicate
+# ---------------------------------------------------------------------------
+
+def test_baseline_collection_ok_true_on_clean(tmp_path):
+    (tmp_path / "tests").mkdir()
+    clean_output = "<Module tests/test_ok.py>\n"
+    with patch("subprocess.run", return_value=_fake_proc(0, stdout=clean_output)):
+        assert baseline_collection_ok(tmp_path, test_dir="tests") is True
+
+
+def test_baseline_collection_ok_false_on_collect_error(tmp_path):
+    (tmp_path / "tests").mkdir()
+    error_output = "ERROR collecting tests/test_broken.py\nImportError: nope\n"
+    with patch("subprocess.run", return_value=_fake_proc(2, stdout=error_output)):
+        assert baseline_collection_ok(tmp_path, test_dir="tests") is False
+
+
+def test_baseline_collection_ok_true_on_none_workspace():
+    assert baseline_collection_ok(None) is True
+
+
+def test_baseline_collection_ok_returns_plain_bool(tmp_path):
+    (tmp_path / "tests").mkdir()
+    with patch("subprocess.run", return_value=_fake_proc(0, stdout="")):
+        result = baseline_collection_ok(tmp_path, test_dir="tests")
+    assert type(result) is bool
+
+
+# ---------------------------------------------------------------------------
+# assert_baseline_collects_cleanly — raises on unstable baseline
+# ---------------------------------------------------------------------------
+
+def test_assert_returns_result_on_clean(tmp_path):
+    (tmp_path / "tests").mkdir()
+    with patch("subprocess.run", return_value=_fake_proc(0, stdout="<Module x>")):
+        result = assert_baseline_collects_cleanly(tmp_path, test_dir="tests")
+    assert isinstance(result, CollectionResult)
+    assert result.ok
+
+
+def test_assert_raises_on_collect_error(tmp_path):
+    (tmp_path / "tests").mkdir()
+    error_output = "ERROR collecting tests/test_broken.py\nImportError: nope\n"
+    with patch("subprocess.run", return_value=_fake_proc(2, stdout=error_output)):
+        with pytest.raises(BaselineUnstableError):
+            assert_baseline_collects_cleanly(tmp_path, test_dir="tests")
+
+
+def test_assert_error_names_failing_file(tmp_path):
+    (tmp_path / "tests").mkdir()
+    error_output = "ERROR collecting tests/test_broken.py\nImportError: nope\n"
+    with patch("subprocess.run", return_value=_fake_proc(2, stdout=error_output)):
+        with pytest.raises(BaselineUnstableError, match="test_broken.py"):
+            assert_baseline_collects_cleanly(tmp_path, test_dir="tests")
+
+
+def test_assert_none_workspace_ok():
+    result = assert_baseline_collects_cleanly(None)
+    assert result.ok
+
+
+def test_assert_propagates_invalid_timeout(tmp_path):
+    with pytest.raises(ValueError, match="timeout"):
+        assert_baseline_collects_cleanly(tmp_path, timeout=0)
+
+
+def test_baseline_collection_ok_propagates_invalid_timeout(tmp_path):
+    with pytest.raises(ValueError, match="timeout"):
+        baseline_collection_ok(tmp_path, timeout=-1)

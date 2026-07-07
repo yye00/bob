@@ -13,7 +13,29 @@ from pathlib import Path
 
 import pytest
 
-from bob.ac_artifact_verifier import ArtifactMiss, verify_ac_artifacts
+from bob.ac_artifact_verifier import (
+    ArtifactMiss,
+    verify_ac_artifacts,
+    verify_artifacts_exist,
+)
+
+
+class TestCanonicalEntryPoint:
+    def test_verify_artifacts_exist_is_callable(self):
+        assert callable(verify_artifacts_exist)
+
+    def test_alias_matches_canonical(self):
+        assert verify_ac_artifacts is verify_artifacts_exist
+
+    def test_canonical_name_empty_list(self):
+        assert verify_artifacts_exist([], workspace="/tmp") == []
+
+    def test_canonical_name_missing_file(self):
+        result = verify_artifacts_exist(
+            ["File exists: gone_via_canonical.py"], workspace="/tmp"
+        )
+        assert len(result) == 1
+        assert "ARTIFACT_MISSING" in result[0].reason
 
 
 class TestVerifyAcArtifactsBasic:

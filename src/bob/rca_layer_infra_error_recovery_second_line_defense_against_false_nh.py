@@ -32,8 +32,63 @@ __all__ = [
     "auto_reset_if_infra",
     "classify_attempts",
     "harvest_novel_pattern",
+    "rca_infra_only_recovery",
     "rca_layer_infra_error_recovery_second_line_defense_against_false_nh",
 ]
+
+
+def rca_infra_only_recovery(
+    feature_id: str,
+    project_id: str,
+    db_update_fn: Callable[..., None],
+    workspace: str | os.PathLike[str] | None = None,
+    failed_acs: list[str] | None = None,
+    refinement_attempts: int | None = None,
+) -> bool:
+    """Second-line RCA defense: recover a feature if all failures were infra-caused.
+
+    Canonical public entry point for this feature. Called by the orchestrator
+    BEFORE transitioning a feature to ``needs_human``. Inspects the history of
+    failed attempts and, if the RCA verdict is ``infra_only``, resets the feature
+    to ``ready`` with ``refinement_attempts=0`` and auto-appends any novel infra
+    signature to ``config/spawn_retry.yaml`` — the system learns the new transient
+    pattern without a human edit.
+
+    Delegates to :func:`bob.orchestrator.rca_infra_recovery.auto_reset_if_infra`,
+    which additionally implements a code-emission-defect retry path when
+    ``failed_acs`` and ``refinement_attempts`` are supplied.
+
+    Raises
+    ------
+    TypeError
+        If ``feature_id`` is not a string or ``db_update_fn`` is not callable.
+    ValueError
+        If ``feature_id`` is empty or whitespace-only.
+
+    Returns
+    -------
+    bool
+        ``True`` if a recovery action was taken (caller must NOT transition to
+        ``needs_human``); ``False`` if the feature should proceed to
+        ``needs_human``.
+    """
+    if not isinstance(feature_id, str):
+        raise TypeError(
+            f"feature_id must be a str, got {type(feature_id).__name__}"
+        )
+    if not feature_id.strip():
+        raise ValueError("feature_id must be a non-empty, non-whitespace string")
+    if not callable(db_update_fn):
+        raise TypeError("db_update_fn must be callable")
+
+    return auto_reset_if_infra(
+        feature_id=feature_id,
+        project_id=project_id,
+        db_update_fn=db_update_fn,
+        workspace=workspace,
+        failed_acs=failed_acs,
+        refinement_attempts=refinement_attempts,
+    )
 
 
 def rca_layer_infra_error_recovery_second_line_defense_against_false_nh(
@@ -85,7 +140,7 @@ def rca_layer_infra_error_recovery_second_line_defense_against_false_nh(
     False
         No recovery is warranted; the feature should proceed to ``needs_human``.
     """
-    return auto_reset_if_infra(
+    return rca_infra_only_recovery(
         feature_id=feature_id,
         project_id=project_id,
         db_update_fn=db_update_fn,

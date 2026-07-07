@@ -28,7 +28,7 @@ from bob.linter_ac_repair import auto_repair_ac, semantic_equivalence_check  # n
 
 # apply_auto_repair: canonical entry point for AC3 (bob.linter.apply_auto_repair)
 apply_auto_repair = auto_repair_ac
-from bob.linter_22_smells import (
+from bob.linter.smell_detectors import (
     BLOCKING_SMELLS,
     SMELL_BY_ID,
     SMELL_CATALOG,

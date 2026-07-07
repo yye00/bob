@@ -14,6 +14,11 @@ Integration: bob.evaluator
 
 Public API
 ----------
+apply_sticky_gate(parent_completed, target_status, acceptance_criteria,
+                  workspace) -> str
+    Returns the resolved status string: 'ready' when the gate blocks the
+    demotion, otherwise *target_status* unchanged.  Canonical entry point.
+
 check_sticky_completed(parent_completed, target_status, acceptance_criteria,
                        workspace) -> bool
     Returns True when the status flip IS blocked (gate fires), False when
@@ -138,6 +143,50 @@ def check_sticky_completed(
         len(file_paths),
     )
     return True
+
+
+def apply_sticky_gate(
+    parent_completed: bool,
+    target_status: str,
+    acceptance_criteria: str | list[str] | None,
+    workspace: pathlib.Path | str | None = None,
+) -> str:
+    """Return the status a feature should actually take after the sticky gate.
+
+    This is the canonical entry point for the sticky-completed gate: instead of
+    returning a boolean verdict, it returns the *resolved* status string so the
+    caller can assign it directly.
+
+    When the gate fires (see :func:`check_sticky_completed`) the requested
+    demotion is refused and the feature is kept at ``'ready'`` — re-evaluation
+    cannot un-complete persisted work.  Otherwise *target_status* is returned
+    unchanged.
+
+    Args:
+        parent_completed: Flag indicating the feature was completed by the
+            parent generation.
+        target_status: The status the caller wishes to assign.
+        acceptance_criteria: Raw JSON string or Python list of AC strings.
+            May be None or empty — treated as an empty list.
+        workspace: Root directory for disk-based AC verification. Defaults
+            to ``pathlib.Path.cwd()``.
+
+    Returns:
+        ``'ready'`` when the gate blocks the demotion; otherwise
+        *target_status* unchanged.
+
+    Raises:
+        ValueError: If *parent_completed* is not a bool, *target_status* is
+            not a non-empty string, or *workspace* exists but is not a directory.
+    """
+    if check_sticky_completed(
+        parent_completed=parent_completed,
+        target_status=target_status,
+        acceptance_criteria=acceptance_criteria,
+        workspace=workspace,
+    ):
+        return "ready"
+    return target_status
 
 
 def should_accept_status_flip(

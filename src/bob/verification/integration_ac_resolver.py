@@ -105,6 +105,20 @@ def resolve_integration_ac(
         return (False, "no wired integration target found: no 'integration:' marker")
 
     body = criterion[idx + len("integration:"):]
+
+    # Pattern 9 (F-R7-594): shell-script integration bodies (…/*.sh, …/*.bash)
+    # are not Python module paths — hand them to the shell-script demoter, which
+    # PASS-demotes an existing executable script and hard-fails a missing or
+    # non-executable one.  Only None (not-a-shell-script) falls through to
+    # Pattern 8 dotted-path resolution below.
+    from bob.integration_shell_script_demoter import (
+        demote_shell_script_integration_ac,
+    )
+
+    shell_result = demote_shell_script_integration_ac(criterion, workspace)
+    if shell_result is not None:
+        return shell_result
+
     targets = extract_integration_targets(criterion)
 
     for target in targets:

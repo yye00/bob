@@ -9,7 +9,7 @@ exit code.
 
 Public API
 ----------
-verify_ac_artifacts(acs, workspace) -> list[ArtifactMiss]
+verify_artifacts_exist(acs, workspace) -> list[ArtifactMiss]
     Check every AC string and return a list of ArtifactMiss for failures.
     Raises ValueError when acs is not a list or workspace is None.
     Raises TypeError when any element of acs is not a string.
@@ -25,7 +25,7 @@ from bob.verification.ac_artifact_check import (
 )
 
 
-def verify_ac_artifacts(
+def verify_artifacts_exist(
     acs: list[str],
     workspace: Union[str, Path],
 ) -> list[ArtifactMiss]:
@@ -65,4 +65,8 @@ def verify_ac_artifacts(
     return _verify_ac_artifacts(acs, Path(workspace))
 
 
-__all__ = ["ArtifactMiss", "verify_ac_artifacts"]
+# Backwards-compatible alias: the original public name.
+verify_ac_artifacts = verify_artifacts_exist
+
+
+__all__ = ["ArtifactMiss", "verify_artifacts_exist", "verify_ac_artifacts"]

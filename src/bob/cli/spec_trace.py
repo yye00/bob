@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from bob.spec_quality.provenance import trace_ac
+from bob.spec.provenance import trace_ac_provenance
 
 
 def spec_trace(target: str, db_path: str | None) -> None:
@@ -27,7 +27,7 @@ def spec_trace(target: str, db_path: str | None) -> None:
         raise SystemExit(1)
 
     try:
-        result = trace_ac(feature_id, ac_index, db_path=db_path)
+        result = trace_ac_provenance(feature_id, ac_index, db_path=db_path)
     except KeyError as exc:
         click.echo(f"Error: {exc}", err=True)
         raise SystemExit(1)

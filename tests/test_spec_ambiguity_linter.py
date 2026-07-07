@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from spec_ambiguity_linter import lint_acceptance_criteria, LintIssue, LintReport
+from bob.spec_ambiguity_linter import is_ambiguous_criterion
 
 
 class TestLintAcceptanceCriteriaStructuredForms:
@@ -122,6 +123,46 @@ class TestLintIssueType:
     def test_lint_issue_has_reason(self):
         issues = lint_acceptance_criteria("F", ["works correctly"])
         assert hasattr(issues[0], "reason")
+
+
+class TestIsAmbiguousCriterion:
+    def test_structured_file_exists_is_not_ambiguous(self):
+        assert is_ambiguous_criterion("File exists: src/foo.py") is False
+
+    def test_structured_pytest_is_not_ambiguous(self):
+        assert is_ambiguous_criterion("pytest: tests/test_foo.py") is False
+
+    def test_structured_function_defined_is_not_ambiguous(self):
+        assert is_ambiguous_criterion("Function defined: bob.foo.bar") is False
+
+    def test_bare_verb_works_is_ambiguous(self):
+        assert is_ambiguous_criterion("works correctly") is True
+
+    def test_bare_verb_handles_is_ambiguous(self):
+        assert is_ambiguous_criterion("handles all edge cases") is True
+
+    def test_unbounded_quantifier_is_ambiguous(self):
+        assert is_ambiguous_criterion("works for any input") is True
+
+    def test_free_text_without_structure_is_ambiguous(self):
+        assert is_ambiguous_criterion("the feature should be nice") is True
+
+    def test_empty_string_is_ambiguous(self):
+        assert is_ambiguous_criterion("") is True
+
+    def test_whitespace_only_is_ambiguous(self):
+        assert is_ambiguous_criterion("   ") is True
+
+    def test_returns_bool(self):
+        assert isinstance(is_ambiguous_criterion("File exists: x.py"), bool)
+
+    def test_non_string_raises_value_error(self):
+        with pytest.raises(ValueError):
+            is_ambiguous_criterion(None)
+
+    def test_int_raises_value_error(self):
+        with pytest.raises(ValueError):
+            is_ambiguous_criterion(42)
 
 
 class TestLintReportClass:

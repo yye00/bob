@@ -28,8 +28,30 @@ from bob.spec_quality.contract_grammar_lambda_binder import (
     ContractGrammarBindingError,
     emit_bound_require_decorator,
     extract_free_variables as _extract_free_variables,
-    validate_lambda_binding,
+    validate_lambda_binding as _validate_lambda_binding_impl,
 )
+
+
+def validate_lambda_binding(decorator: str) -> bool:
+    """Validate that every name in the lambda body is bound or available.
+
+    AST-parses *decorator*, locates the lambda node, and asserts every ``Name``
+    in the lambda body is either a lambda parameter or a builtin/keyword constant.
+    Raises ``ContractGrammarBindingError`` if any name is unbound, rejecting the
+    contract-grammar synthesis before persistence.
+
+    Args:
+        decorator: A decorator source string, e.g.
+            ``"@icontract.require(lambda x: (x > 0))"``.
+
+    Returns:
+        ``True`` when all names are bound.
+
+    Raises:
+        ContractGrammarBindingError: When one or more names in the lambda body
+            are not bound by the lambda parameters.
+    """
+    return _validate_lambda_binding_impl(decorator)
 
 
 def validate_contract_decorator(decorator: str) -> bool:
@@ -52,7 +74,7 @@ def validate_contract_decorator(decorator: str) -> bool:
         ContractGrammarBindingError: When one or more names in the lambda body
             are not bound by the lambda parameters.
     """
-    return validate_lambda_binding(decorator)
+    return _validate_lambda_binding_impl(decorator)
 
 
 def validate_decorator_binding(decorator: str) -> bool:
@@ -122,6 +144,77 @@ def validate_decorator_bindings(decorator: str) -> bool:
             are not bound by the lambda parameters.
     """
     return validate_lambda_binding(decorator)
+
+
+def validate_decorator_lambda(decorator: str) -> bool:
+    """Validate that every name in the lambda body is bound or available.
+
+    AC-required canonical name (singular). AST-parses *decorator*, locates the
+    lambda node, and asserts every ``Name`` in the lambda body is either a
+    lambda parameter or a builtin/keyword constant. Raises
+    ``ContractGrammarBindingError`` if any name is unbound, rejecting the
+    contract-grammar synthesis before persistence.
+
+    Args:
+        decorator: A decorator source string, e.g.
+            ``"@icontract.require(lambda x: (x > 0))"``.
+
+    Returns:
+        ``True`` when all names are bound.
+
+    Raises:
+        ContractGrammarBindingError: When one or more names in the lambda body
+            are not bound by the lambda parameters.
+    """
+    return validate_lambda_binding(decorator)
+
+
+def emit_require_decorator(condition: str) -> str:
+    """Emit a correctly-bound ``@icontract.require`` decorator string.
+
+    AC-required canonical name. Extracts the free variables from *condition*
+    and emits them as lambda parameters so that ``icontract`` can bind them at
+    decoration time, fixing the zero-arg lambda bug (feature 73879589) where
+    ``@icontract.require(lambda: (x > 0))`` raised NameError at runtime.
+
+    Examples::
+
+        emit_require_decorator("x > 0")
+        # → "@icontract.require(lambda x: (x > 0))"
+
+        emit_require_decorator("x > 0 and y < 10")
+        # → "@icontract.require(lambda x, y: (x > 0 and y < 10))"
+
+    Args:
+        condition: A Python expression string for the precondition.
+
+    Returns:
+        A decorator source string with all free variables bound as lambda
+        parameters.
+    """
+    return emit_bound_require_decorator(condition)
+
+
+def validate_lambda_free_variables(decorator: str) -> bool:
+    """Validate that every free variable in the lambda body is bound.
+
+    AC-required canonical name. AST-parses *decorator*, locates the lambda
+    node, and asserts every free ``Name`` in the lambda body is bound by the
+    lambda parameters (or is a builtin / keyword constant). Rejects the
+    contract-grammar synthesis before persistence when any name is unbound.
+
+    Args:
+        decorator: A decorator source string, e.g.
+            ``"@icontract.require(lambda x: (x > 0))"``.
+
+    Returns:
+        ``True`` when all free variables are bound.
+
+    Raises:
+        ContractGrammarBindingError: When one or more names in the lambda body
+            are not bound by the lambda parameters.
+    """
+    return _validate_lambda_binding_impl(decorator)
 
 
 def extract_lambda_parameters(condition: str) -> tuple[str, ...]:

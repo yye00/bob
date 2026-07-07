@@ -973,6 +973,54 @@ def emit_file_exists_acs(criteria: list[str], description: str) -> list[str]:
     return _ensure_described_files_covered(criteria, description)
 
 
+def should_emit_function_ac(symbol: str, description: str) -> bool:
+    """F-af78c082 (HALF 1): decide whether a ``Function defined: <symbol>`` AC is
+    contractually warranted.
+
+    A structured ``Function defined:`` AC is only legitimate when the exact
+    *symbol* appears VERBATIM in the feature's prose *description* (i.e. the
+    human/PEAS author actually named that function). When the prose does not
+    name the concrete symbol, the synthesizer MUST NOT invent an exact name and
+    hard-gate on it — doing so hard-fails otherwise-complete features on a
+    one-word naming difference (the 99b78f59 apply_ vs handle_ drain). In that
+    case the caller should emit a behavior/pytest AC instead.
+
+    The check is a case-insensitive, word-boundary identifier scan: the symbol
+    must occur as a whole identifier token in the description, not as a
+    substring of a larger word.
+
+    Parameters
+    ----------
+    symbol:
+        The candidate function name the synthesizer is considering gating on.
+    description:
+        The feature's prose description.
+
+    Returns
+    -------
+    bool
+        True iff *symbol* is a non-empty identifier that appears verbatim (as a
+        whole word) in *description*. Empty/whitespace inputs return False.
+
+    Raises
+    ------
+    TypeError / AttributeError
+        If *symbol* or *description* is not a str (fails loudly, never silently
+        succeeds).
+    """
+    if not isinstance(symbol, str):
+        raise TypeError(f"symbol must be a str, got {type(symbol).__name__!r}")
+    if not isinstance(description, str):
+        raise TypeError(f"description must be a str, got {type(description).__name__!r}")
+    sym = symbol.strip()
+    if not sym or not description.strip():
+        return False
+    # Whole-identifier (word-boundary) match, case-insensitive. re.escape keeps
+    # regex-special chars in the symbol literal.
+    pattern = r"\b" + re.escape(sym) + r"\b"
+    return re.search(pattern, description, re.IGNORECASE) is not None
+
+
 def _ensure_described_files_covered(criteria: list[str], description: str) -> list[str]:
     """Emit a ``File exists: <path>`` AC for every concrete .py path the
     description explicitly names but the criteria don't already cover.
@@ -1016,6 +1064,12 @@ def _ensure_described_files_covered(criteria: list[str], description: str) -> li
         if not is_code:
             continue
         if sl in blob_l:  # already covered by some AC
+            continue
+        # F-af78c082 (HALF 1): only gate on an exact symbol the prose named
+        # verbatim. This is true by construction here (sym was extracted FROM
+        # desc), but routing through the guard keeps the contract explicit and
+        # prevents a future refactor from emitting an invented name.
+        if not should_emit_function_ac(sym, desc):
             continue
         out.append(f"Function defined: {sym}")
     return out

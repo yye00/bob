@@ -306,6 +306,33 @@ def reap_subagent_for_feature(feature_id: str) -> list[int]:
     return reaped
 
 
+def reap_subagent_on_terminal(feature_id: str) -> list[int]:
+    """Reap the claude subagent for a feature that just reached a terminal state.
+
+    Named terminal-transition entry point. Applies to all terminal
+    transitions (completed, needs_human, regression, failed): validates the
+    input, then delegates to :func:`reap_subagent_for_feature`.
+
+    Args:
+        feature_id: UUID string of the just-terminated feature. An empty
+            string short-circuits to an empty result (nothing to reap).
+
+    Returns:
+        List of integer PIDs confirmed dead (empty when nothing matched).
+
+    Raises:
+        ValueError: if ``feature_id`` is not a str.
+    """
+    if not isinstance(feature_id, str):
+        raise ValueError(
+            f"reap_subagent_on_terminal: feature_id must be a str, "
+            f"got {type(feature_id).__name__}"
+        )
+    if not feature_id:
+        return []
+    return reap_subagent_for_feature(feature_id)
+
+
 def sweep_orphan_subagents() -> list[tuple[str, int]]:
     """Backstop sweep: reap subagents for features in terminal states > 5min.
 

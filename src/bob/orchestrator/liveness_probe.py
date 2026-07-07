@@ -30,7 +30,9 @@ from bob.orchestrator.probe_ancestry import collect_ancestor_pids, is_shell_wrap
 logger = logging.getLogger(__name__)
 
 # Regex matches: 'bob run', 'bob14 run', '/path/to/bob14 run', etc.
-_ORCHESTRATOR_PATTERN = re.compile(r"(?:^|[\s/])bob(?:3|[0-9]+)\s+run(?:\s|$)")
+# The generation digits are optional so both the legacy 'bob run' form and the
+# gen-N binary alias 'bobN run' (e.g. bob14) are detected.
+_ORCHESTRATOR_PATTERN = re.compile(r"(?:^|[\s/])bob[0-9]*\s+run(?:\s|$)")
 
 # How many seconds of executing-row recency counts as "live".
 _EXECUTING_RECENCY_SECONDS = 60

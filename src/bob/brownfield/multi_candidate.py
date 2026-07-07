@@ -137,6 +137,53 @@ def rank_by_judge_vote(
     )
 
 
+def judge_and_select(
+    candidates: list[CandidatePatch],
+    *,
+    feature_description: str = "",
+    acceptance_criteria: Optional[list[str]] = None,
+) -> Optional[CandidatePatch]:
+    """Filter regression-breaking candidates, judge survivors, return the winner.
+
+    AC-required entry point: 'Function defined:
+    bob.brownfield.multi_candidate.judge_and_select'.
+
+    Implements steps 3-4 of the multi-candidate pipeline:
+      3. Filter: drop any patch that breaks visible existing regression tests.
+      4. Survivors: LLM-judge sub-agent ranks by patch quality
+         (test-pass count, code-style adherence, minimal-diff, spec-AC coverage).
+
+    The single highest-ranked survivor is returned (the "winner" to commit).
+
+    Args:
+        candidates: List of CandidatePatch objects (all workers' patches).
+        feature_description: Free-text feature description for AC coverage.
+        acceptance_criteria: List of AC strings to check coverage for.
+
+    Returns:
+        The winning CandidatePatch (with .score and .judge_reason populated),
+        or None when the candidate list is empty or no survivors remain.
+
+    Raises:
+        ValueError: If candidates is not a list.
+    """
+    if not isinstance(candidates, list):
+        raise ValueError(f"candidates must be a list, got {type(candidates)!r}")
+    if not candidates:
+        return None
+
+    survivors = filter_regression_breaking(candidates)
+    if not survivors:
+        return None
+
+    ranked = rank_by_judge_vote(
+        survivors,
+        feature_description=feature_description,
+        acceptance_criteria=acceptance_criteria,
+    )
+    return ranked[0] if ranked else None
+
+
 __all__ = [
     "CandidatePatch",
     "MultiCandidateResult",
@@ -144,6 +191,7 @@ __all__ = [
     "spawn_worker_candidates",
     "filter_regression_breaking",
     "rank_by_judge_vote",
+    "judge_and_select",
     "run_multi_candidate",
     "maybe_run_multi_candidate",
 ]

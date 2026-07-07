@@ -1047,6 +1047,35 @@ def get_scoped_pytest_command(acceptance_criteria: list[str] | None) -> str:
     return build_scoped_pytest_invocation(acceptance_criteria)
 
 
+def build_scoped_pytest_command(acceptance_criteria: list[str] | None = None) -> str:
+    """Build a scoped ``python -m pytest`` command for the feature's own tests.
+
+    Canonical entry point used to point a subagent's self-verification at its
+    own feature's test files (extracted from ``pytest:`` acceptance criteria)
+    rather than the full ``tests/`` suite, which has 1800+ tests and takes
+    >30 min — long enough for max_turns to cancel the subagent before it can
+    mark the feature complete.
+
+    Validates *acceptance_criteria* the same way as
+    :func:`get_scoped_pytest_command`: a non-list, non-``None`` value or a
+    non-string list item raises ``ValueError`` rather than silently producing
+    a wrong command.
+
+    Args:
+        acceptance_criteria: List of AC strings, or ``None``.
+
+    Returns:
+        A ``python -m pytest <paths> -v`` string scoped to the feature's own
+        test files, or ``python -m pytest tests/ -v`` when no ``pytest:`` ACs
+        are present.
+
+    Raises:
+        ValueError: If *acceptance_criteria* is not a list or None, or if any
+            list item is not a string.
+    """
+    return get_scoped_pytest_command(acceptance_criteria)
+
+
 def build_scoped_pytest_invocation(acceptance_criteria: list[str] | None = None) -> str:
     """Extract ``pytest:`` AC entries and build a scoped pytest invocation string.
 
@@ -1194,6 +1223,33 @@ def verification_prompt_section(acceptance_criteria: list[str] | None = None) ->
         ValueError: If *acceptance_criteria* is not a list or ``None``.
     """
     return get_verification_prompt(acceptance_criteria)
+
+
+def get_verification_prompt_section() -> str:
+    """Return the verification prompt section, hot-reloading source if it changed.
+
+    Subagent dispatch reads the prompt through this accessor rather than the
+    module-level :data:`VERIFICATION_PROMPT_SECTION` constant directly.  Before
+    returning, it asks :func:`bob.prompt_hot_reload.reload_if_changed` whether
+    this module's source file changed on disk since the last dispatch; if so the
+    module is reloaded so an on-disk prompt patch takes effect immediately —
+    without waiting for the orchestrator process to restart (feature 9b346569).
+
+    Returns:
+        The current :data:`VERIFICATION_PROMPT_SECTION` text.
+    """
+    from bob import prompt_hot_reload
+
+    reloaded = prompt_hot_reload.reload_if_changed(__name__)
+    if reloaded:
+        # After a reload, this function object is stale; read the fresh constant
+        # off the reimported module so callers see the patched text.
+        import sys
+
+        module = sys.modules.get(__name__)
+        if module is not None:
+            return getattr(module, "VERIFICATION_PROMPT_SECTION")
+    return VERIFICATION_PROMPT_SECTION
 
 
 def verification_prompt_forbids_stdout_redirect() -> bool:

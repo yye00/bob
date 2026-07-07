@@ -33,6 +33,8 @@ from typing import Any
 from bob.spec_quality.example_grammar import (
     KeyExample,
     PropertyAC,
+    emit_hypothesis_test as _emit_hypothesis_test,
+    emit_parametrize_test as _emit_parametrize_test,
     parse_key_example,
     parse_property_ac as _parse_property_ac,
 )
@@ -150,3 +152,56 @@ def parse_key_example_ac(ac: dict[str, Any] | str | None) -> KeyExample | None:
             )
 
     return parse_key_example(ac)
+
+
+def emit_hypothesis_test(prop: PropertyAC, *, seed: int = 0) -> str:
+    """Emit a runnable Hypothesis test for a parsed property AC.
+
+    Delegates to :func:`bob.spec_quality.example_grammar.emit_hypothesis_test`.
+    The generated test is decorated with ``@given(<generator>)`` and a fixed
+    ``seed`` so the property is reproducible.
+
+    Args:
+        prop: A parsed :class:`~bob.spec_quality.example_grammar.PropertyAC`.
+        seed: Hypothesis seed for reproducibility (default ``0``).
+
+    Returns:
+        Python source code string for a single Hypothesis test function.
+
+    Raises:
+        ValueError: When *prop* is ``None`` (a property test cannot be emitted
+                    without a parsed property spec).
+    """
+    if prop is None:
+        raise ValueError("Cannot emit a Hypothesis test from a None property AC")
+    return _emit_hypothesis_test(prop, seed=seed)
+
+
+def emit_key_example_test(
+    examples: list[KeyExample] | KeyExample | None,
+    *,
+    test_name: str = "test_key_examples",
+    seed: int = 0,
+) -> str:
+    """Emit a parametrized pytest test from one or more key-examples.
+
+    Delegates to :func:`bob.spec_quality.example_grammar.emit_parametrize_test`.
+    Each :class:`~bob.spec_quality.example_grammar.KeyExample` becomes one
+    ``@pytest.mark.parametrize`` entry.  The generated test pins ``seed=0`` in a
+    comment for reproducibility tracking.
+
+    Args:
+        examples:  A single :class:`KeyExample`, a list of them, or ``None``.
+                   ``None`` and empty lists yield an empty string (no test).
+        test_name: Name for the generated test function.
+        seed:      Seed recorded in the emitted source (default ``0``).
+
+    Returns:
+        Python source code string for the parametrize test, or ``""`` when
+        there are no examples to emit.
+    """
+    if examples is None:
+        return ""
+    if isinstance(examples, KeyExample):
+        examples = [examples]
+    return _emit_parametrize_test(examples, test_name=test_name, seed=seed)

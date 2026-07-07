@@ -809,6 +809,76 @@ def should_defer_to_successor_gen(
 should_defer_to_successor_verify = should_defer_to_successor_verifier
 
 
+def classify_verifier_extension_failure(
+    feature_id: str,
+    workspace: "str | os.PathLike[str] | None",
+    structural_ac_passed: bool,
+) -> str:
+    """Classify an AC-failed verifier-extension feature's next status (ec65822c).
+
+    When a feature's AC run fails, the run_loop must decide whether the failure
+    is a *real* defect (→ ``needs_human``) or an artifact of the running verifier
+    not yet recognising a pattern the feature just added to
+    ``enhanced_verification.py`` (or any :data:`VERIFIER_EXTENSION_MODULES`
+    member).  In the latter case the failure should be deferred to the successor
+    generation, whose verifier already includes the new pattern.
+
+    The decision is a two-condition gate, identical to the one used by
+    :func:`set_pending_successor_verify`:
+
+    1. The feature's workspace modifies a ``VERIFIER_EXTENSION_MODULES`` member.
+    2. At least one structural AC passed (proving the verifier file genuinely
+       changed — this is not a completely-broken feature).
+
+    Only when *both* hold do we return ``'pending_successor_verify'``; otherwise
+    a normal AC failure keeps its ``'needs_human'`` fate.  This is not a
+    backdoor: a real bug still fails at the successor gen, which re-runs the ACs
+    with its own (now-patched) verifier and flips the status to ``completed`` or
+    ``failed``.
+
+    Parameters
+    ----------
+    feature_id:
+        UUID of the feature under evaluation. Must be a non-empty string.
+    workspace:
+        Root directory of the feature's workspace. May be ``None``.
+    structural_ac_passed:
+        True when at least one structural AC passed during the verification run.
+
+    Returns
+    -------
+    str
+        ``'pending_successor_verify'`` when the failure should be deferred to the
+        successor generation, ``'needs_human'`` otherwise.
+
+    Raises
+    ------
+    ValueError
+        When *feature_id* is not a non-empty string.
+    """
+    if not isinstance(feature_id, str) or isinstance(feature_id, bool):
+        raise ValueError(
+            f"classify_verifier_extension_failure: feature_id must be a "
+            f"non-empty str, got {type(feature_id).__name__}"
+        )
+    if not feature_id:
+        raise ValueError(
+            "classify_verifier_extension_failure: feature_id must be a "
+            "non-empty str, got empty string"
+        )
+
+    from bob.pending_successor_verify import (
+        PENDING_SUCCESSOR_VERIFY_STATUS,
+        is_verifier_extension_feature,
+    )
+
+    if not structural_ac_passed:
+        return "needs_human"
+    if not is_verifier_extension_feature(feature_id, workspace):
+        return "needs_human"
+    return PENDING_SUCCESSOR_VERIFY_STATUS
+
+
 def handle_terminal_transition(feature_id: str, status: str | None = None) -> list[int]:
     """Reap claude subagent process when a feature enters a terminal state.
 
@@ -2689,6 +2759,76 @@ def disk_reconciler_promote_verification_fail(
     )
 
 
+def promote_on_verify_fail_from_disk(
+    project_id: str,
+    feature_id: str,
+    feature_name: str,
+    acceptance_criteria_json: str,
+    failed_gate: str | None = None,
+    passed_gates: list[str] | None = None,
+) -> bool:
+    """Promote a verification-failed feature from disk state (F-R7-598 companion).
+
+    Canonical AC entry point required by
+    "Function defined: bob.run_loop.promote_on_verify_fail_from_disk".
+
+    F-R7-598 added a disk_reconciler check BEFORE _final_exit_sweep flips an
+    orphan-executing feature to 'failed' — that closes the *orphan* path. This
+    function closes the symmetric *verification-fail* path: it is called BEFORE
+    the `mark needs_human due to failed verification` branch when a feature has
+    exhausted its retries but structural/behavior AC markers are verifiably
+    present on disk (the 8bac0a53 / F-R7-607 failure mode).
+
+    It delegates to disk_reconciler_verify_fail_check, which runs the same
+    reconcile_from_disk / check_executing_feature_acs logic the bulk reconciler
+    uses. If all ACs satisfy on disk it promotes the feature to 'completed' and
+    emits VERIFY_FAIL_DISK_PROMOTED; otherwise it returns False and the caller
+    proceeds to the original needs_human branch.
+
+    Guard: only promotes when failed_gate == "tests_pass" (not all-gates-failed)
+    AND the AC list contains at least one structural/behavior AC
+    ("File exists:" or "Function defined:"), so structural_count > 0. This
+    prevents promoting features that genuinely have no impl on disk and merely
+    benefited from lenient test demotion.
+
+    Parameters
+    ----------
+    project_id:
+        The project UUID.
+    feature_id:
+        UUID of the feature to check and possibly promote.
+    feature_name:
+        Human-readable feature name for log messages.
+    acceptance_criteria_json:
+        JSON-encoded list of AC strings (from feature.acceptance_criteria).
+        Raises ValueError if None or not a string.
+    failed_gate:
+        Optional: the gate name that failed (e.g. "tests_pass").
+    passed_gates:
+        Optional: list of gate names that passed before failure.
+
+    Returns
+    -------
+    bool
+        True if all ACs passed on disk and the feature was promoted to
+        'completed'. False if any AC failed, AC JSON is empty/unparseable,
+        or a guard blocks promotion.
+
+    Raises
+    ------
+    ValueError
+        If acceptance_criteria_json is None or not a string (invalid input).
+    """
+    return disk_reconciler_verify_fail_check(
+        project_id=project_id,
+        feature_id=feature_id,
+        feature_name=feature_name,
+        acceptance_criteria_json=acceptance_criteria_json,
+        failed_gate=failed_gate,
+        passed_gates=passed_gates,
+    )
+
+
 def seed_readiness_at_iteration_start(project_id: str) -> int:
     """Seed readiness_score for every ready feature that still sits at 0.0.
 
@@ -3248,6 +3388,101 @@ def increment_exemption_count(
     return new_count
 
 
+def is_transport_transient_crash(exit_signature: str | None) -> bool:
+    """Return True iff ``exit_signature`` matches a transport-transient crash.
+
+    AC: ``Function defined: bob.run_loop.is_transport_transient_crash``.
+
+    A transport-transient crash is an infra failure the feature did not cause
+    (MCP transport reset, self-signed cert chain, connection reset, read
+    timeout, broken pipe).  Such crashes must NOT charge a retry against the
+    feature's budget — this is the F-R7-597 chronic-NH fix.
+
+    Delegates to :func:`is_subagent_startup_crash` so the transport-pattern
+    set is defined in exactly one place.
+
+    Parameters
+    ----------
+    exit_signature:
+        The sub-agent ``result.error_message`` / stderr tail.  ``None`` or an
+        empty string returns ``False`` (no signature ⇒ not classifiable as a
+        transport crash).
+
+    Returns
+    -------
+    bool
+        ``True`` when the signature matches a known transport-transient
+        pattern, ``False`` otherwise.
+    """
+    return is_subagent_startup_crash(exit_signature)
+
+
+def read_startup_crash_exempt_count(
+    feature_id: str,
+    sidecar_dir: str | os.PathLike[str] | None = None,
+) -> int:
+    """Read the lifetime startup-crash exemption count for ``feature_id``.
+
+    AC: ``Function defined: bob.run_loop.read_startup_crash_exempt_count``.
+
+    Thin, explicit wrapper over :func:`load_exemption_sidecar` so callers can
+    read the per-feature exemption sidecar under the name the acceptance
+    criteria reference.
+
+    Parameters
+    ----------
+    feature_id:
+        UUID string of the feature.
+    sidecar_dir:
+        Directory for per-feature sidecar files.  Defaults to
+        ``BOB_STARTUP_EXEMPT_DIR`` or ``<cwd>/.bob_startup_exempt/``.
+
+    Returns
+    -------
+    int
+        Current exemption count (0 when unknown / unreadable / empty id).
+
+    Raises
+    ------
+    ValueError
+        When ``feature_id`` is None or not a string.
+    """
+    return load_exemption_sidecar(feature_id, sidecar_dir=sidecar_dir)
+
+
+def increment_startup_crash_exempt_count(
+    feature_id: str,
+    sidecar_dir: str | os.PathLike[str] | None = None,
+) -> int:
+    """Increment the lifetime startup-crash exemption count for ``feature_id``.
+
+    AC: ``Function defined: bob.run_loop.increment_startup_crash_exempt_count``.
+
+    Thin, explicit wrapper over :func:`increment_exemption_count` so callers
+    can persist a granted SUBAGENT_STARTUP_CRASH_EXEMPT under the name the
+    acceptance criteria reference.  Returns the new count after incrementing.
+
+    Parameters
+    ----------
+    feature_id:
+        UUID string of the feature.
+    sidecar_dir:
+        Directory for per-feature sidecar files.  Defaults to
+        ``BOB_STARTUP_EXEMPT_DIR`` or ``<cwd>/.bob_startup_exempt/``.
+
+    Returns
+    -------
+    int
+        The new exemption count after incrementing (always >= 1).
+
+    Raises
+    ------
+    ValueError
+        When ``feature_id`` is None or not a string.
+    """
+    return increment_exemption_count(feature_id, sidecar_dir=sidecar_dir)
+
+
 def reset_feature_ready_exempt(
     feature: object,
     *,
@@ -3544,6 +3779,42 @@ def claim_feature_as_executing(feature, *, update_feature) -> None:
     if update_feature is None or not callable(update_feature):
         raise TypeError("claim_feature_as_executing: update_feature must be callable")
     update_feature(feature.id, status="executing")
+
+
+def find_next_ready_feature(project_id: str):
+    """Return the highest-priority ready feature for a project, or None.
+
+    Queries the ``features_ready`` view (via ``bob.db.get_ready_features``),
+    which is ordered by ``priority ASC, created_at ASC``, and returns the first
+    row. This is the module-level default selector used by the concurrent batch
+    builder: after ``batch[0]`` is claimed as ``status='executing'`` it drops out
+    of the view, so a subsequent call returns the SECOND-priority feature —
+    letting the batch grow beyond size 1.
+
+    Parameters
+    ----------
+    project_id:
+        UUID of the project to select a feature from. Must be a non-empty
+        string.
+
+    Returns
+    -------
+    Feature | None
+        The highest-priority ready feature, or None when the view is empty.
+
+    Raises
+    ------
+    ValueError
+        When project_id is None or an empty/whitespace-only string.
+    """
+    if project_id is None or not isinstance(project_id, str) or not project_id.strip():
+        raise ValueError(
+            f"find_next_ready_feature: project_id must be a non-empty string, got {project_id!r}"
+        )
+    from bob.db import get_ready_features
+
+    ready = get_ready_features(project_id)
+    return ready[0] if ready else None
 
 
 # Alias used by the F-37a8d2b4 AC "Function defined: run_loop.claim_feature_executing".
@@ -4258,6 +4529,7 @@ __all__ = [
     "handle_pending_successor_verify",
     "should_defer_to_successor_verifier",
     "should_defer_to_successor_gen",
+    "classify_verifier_extension_failure",
     "_final_exit_sweep",
     "_final_exit_sweep_with_reconciler",
     "final_exit_sweep_with_disk_reconciliation",

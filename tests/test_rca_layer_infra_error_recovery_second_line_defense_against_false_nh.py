@@ -309,6 +309,88 @@ class TestSpecAmbiguityPath:
         db_update.assert_not_called()
 
 
+class TestRcaInfraOnlyRecovery:
+    """AC-named canonical entry point rca_infra_only_recovery."""
+
+    def test_function_is_defined(self) -> None:
+        from bob.rca_layer_infra_error_recovery_second_line_defense_against_false_nh import (
+            rca_infra_only_recovery,
+        )
+
+        assert callable(rca_infra_only_recovery)
+
+    def test_infra_only_verdict_resets(self) -> None:
+        from bob.rca_layer_infra_error_recovery_second_line_defense_against_false_nh import (
+            rca_infra_only_recovery,
+        )
+
+        calls: list[dict] = []
+
+        def db_update(fid: str, **kw: Any) -> None:
+            calls.append({"feature_id": fid, **kw})
+
+        with (
+            patch(
+                "bob.orchestrator.rca_infra_recovery.classify_attempts",
+                return_value="infra_only",
+            ),
+            patch(
+                "bob.orchestrator.rca_infra_recovery._count_rca_resets",
+                return_value=0,
+            ),
+            patch(
+                "bob.orchestrator.rca_infra_recovery.harvest_novel_pattern",
+                return_value=None,
+            ),
+            patch("bob.orchestrator.rca_infra_recovery._emit_rca_reset_event"),
+        ):
+            result = rca_infra_only_recovery(
+                feature_id="feat-canonical-001",
+                project_id="proj-x",
+                db_update_fn=db_update,
+            )
+
+        assert result is True
+        assert calls[0]["status"] == "ready"
+        assert calls[0]["refinement_attempts"] == 0
+
+    def test_none_feature_id_raises_type_error(self) -> None:
+        from bob.rca_layer_infra_error_recovery_second_line_defense_against_false_nh import (
+            rca_infra_only_recovery,
+        )
+
+        with pytest.raises(TypeError):
+            rca_infra_only_recovery(
+                feature_id=None,  # type: ignore[arg-type]
+                project_id="proj-x",
+                db_update_fn=MagicMock(),
+            )
+
+    def test_empty_feature_id_raises_value_error(self) -> None:
+        from bob.rca_layer_infra_error_recovery_second_line_defense_against_false_nh import (
+            rca_infra_only_recovery,
+        )
+
+        with pytest.raises(ValueError):
+            rca_infra_only_recovery(
+                feature_id="   ",
+                project_id="proj-x",
+                db_update_fn=MagicMock(),
+            )
+
+    def test_non_callable_db_fn_raises_type_error(self) -> None:
+        from bob.rca_layer_infra_error_recovery_second_line_defense_against_false_nh import (
+            rca_infra_only_recovery,
+        )
+
+        with pytest.raises(TypeError):
+            rca_infra_only_recovery(
+                feature_id="feat-canonical-002",
+                project_id="proj-x",
+                db_update_fn="not-callable",  # type: ignore[arg-type]
+            )
+
+
 class TestPublicAPIExports:
     """Module exports expected symbols."""
 

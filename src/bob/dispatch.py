@@ -864,6 +864,47 @@ def check_mutation_pass(
     )
 
 
+def mutation_pass_check(
+    test_command: list[str],
+    workspace: str | Path,
+    feature_id: str,
+    *,
+    env: dict[str, str] | None = None,
+    timeout: int = 120,
+) -> bool:
+    """AC-required entry point (F-R7-609 component D): run the mutation-pass check.
+
+    Canonical name on bob.dispatch. Runs *test_command* after a trivial mutation
+    has been applied to the edited region; returns True if the test STILL passes
+    (indicating an under-specified test — WEAK_TEST_DETECTED) or False if the
+    mutation flips the result (test adequately specifies the behaviour).
+
+    ICSE 2026 finding: 12-22% of "passing" patches are logically wrong because
+    the tests under-specify. Delegates to run_mutation_pass_check.
+
+    Args:
+        test_command: pytest / unittest command to run.
+        workspace:    Project workspace directory.
+        feature_id:   Feature ID for telemetry correlation.
+        env:          Optional extra environment variables.
+        timeout:      Subprocess timeout in seconds.
+
+    Returns:
+        True if the mutated test still passes (weak test); False otherwise.
+
+    Raises:
+        ValueError: If test_command is not a non-empty list, or feature_id is
+                    not a non-empty string.
+    """
+    if not isinstance(test_command, list) or not test_command:
+        raise ValueError("test_command must be a non-empty list")
+    if not isinstance(feature_id, str) or not feature_id.strip():
+        raise ValueError("feature_id must be a non-empty string")
+    return run_mutation_pass_check(
+        test_command, workspace, feature_id, env=env, timeout=timeout
+    )
+
+
 def spawn_worker(
     feature: Any,
     prompt: str,
@@ -1254,6 +1295,7 @@ __all__ = [
     "inject_repo_tree",
     "inject_repo_tree_into_prompt",
     "inject_repo_tree_to_worker",
+    "mutation_pass_check",
     "run_mutation_pass_check",
     "validate_repo_tree",
     "select_adaptive_edit_mode",

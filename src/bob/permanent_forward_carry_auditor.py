@@ -67,6 +67,7 @@ __all__ = [
     "extract_canonical_ids",
     "fail_loud_on_missing",
     "match_by_canonical_id",
+    "match_carry_forward_by_canonical_id",
     "match_feature_by_canonical_id",
     "normalize_feature_id",
     "required_feature_ids",
@@ -264,6 +265,37 @@ def match_feature_by_canonical_id(
 
     Raises:
         ValueError: If feature_entry is not a dict, or canonical_id is not a valid token.
+    """
+    return match_by_canonical_id(feature_entry, canonical_id)
+
+
+def match_carry_forward_by_canonical_id(
+    feature_entry: dict[str, Any],
+    canonical_id: str,
+) -> bool:
+    """Return True if canonical_id token appears in any text field of feature_entry.
+
+    Primary AC-required matcher for canonical F-R7-NNN carry-forward detection.
+    Delegates to match_by_canonical_id from bob.auditor.carry_forward_matcher,
+    which scans the id, title, and description fields of a single feature dict
+    using a word-boundary regex. Because the match is regex-based rather than an
+    exact-string 'id' comparison, a required feature is detected even when its
+    'id' field holds a sidecar alias or shortname — fixing the silent-drop
+    defect from F-R7-554 (sidecar rename / shortname drift).
+
+    Args:
+        feature_entry: A single feature dict. Must be a mapping; non-mapping
+            input raises ValueError.
+        canonical_id: The canonical feature ID to search for, e.g. "F-R7-478".
+            Must be a non-empty, non-blank string containing at least one letter
+            and one digit.
+
+    Returns:
+        True if canonical_id token is found in any text field, False otherwise.
+
+    Raises:
+        ValueError: If feature_entry is not a dict, or canonical_id is not a
+            valid canonical token.
     """
     return match_by_canonical_id(feature_entry, canonical_id)
 

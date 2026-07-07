@@ -10,3 +10,6 @@ from spec_quality.behavior_ac_parser import (  # noqa: F401  # 2b3b9c5d integrat
     accepts_synonym_conditional,
     parse_behavior_ac,
 )
+from spec_quality.quality_score_gate import (  # noqa: F401
+    gate_feature_readiness,
+)

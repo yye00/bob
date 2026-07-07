@@ -122,3 +122,57 @@ def test_integration_contract_env_preflight_importable():
     assert hasattr(env_preflight, "run_preflight")
     assert hasattr(env_preflight, "enumerate_deps")
     assert hasattr(env_preflight, "probe")
+
+
+def test_discover_workaround_writes_back_on_research_miss(tmp_path):
+    """A researched workaround is persisted to the library (Voyager write-back)."""
+    from bob.orchestrator.env_preflight import discover_workaround
+
+    missing = ProbeResult(dep=DepEntry(kind="python", name="pyyaml_missing_xyz"), present=False)
+    wk = discover_workaround(missing, workspace=tmp_path)
+    assert wk is not None
+
+    hits = search_skills(
+        query="workaround for missing python dependency pyyaml_missing_xyz",
+        workspace=tmp_path,
+        threshold=0.0,
+    )
+    assert len(hits) > 0, "research discovery should be written back to the library"
+
+
+def test_discover_workaround_hit_skips_research(tmp_path):
+    """When the library already holds the dep, research is not consulted."""
+    import bob.orchestrator.env_preflight as ep
+
+    dep = DepEntry(kind="cli", name="xxd")
+    # Seed the library via the same write-back path a prior run would use.
+    ep._write_back_skill(
+        dep,
+        ep.Workaround(dep_name="xxd", description="use python hex fallback", low_risk=False),
+        tmp_path,
+    )
+
+    called = {"research": False}
+    orig = ep._research_workaround
+
+    def _spy(d):
+        called["research"] = True
+        return orig(d)
+
+    ep._research_workaround = _spy
+    try:
+        wk = ep.discover_workaround(ProbeResult(dep=dep, present=False), workspace=tmp_path)
+    finally:
+        ep._research_workaround = orig
+
+    assert wk is not None
+    assert called["research"] is False, "library hit must skip the research spawn"
+
+
+def test_discover_workaround_no_workspace_preserves_legacy_behavior(tmp_path):
+    """Without a workspace, the library is bypassed and research runs as before."""
+    from bob.orchestrator.env_preflight import discover_workaround
+
+    wk = discover_workaround(ProbeResult(dep=DepEntry(kind="python", name="yaml"), present=False))
+    assert wk is not None
+    assert wk.dep_name == "yaml"

@@ -45,6 +45,7 @@ from typing import Any, Callable
 
 __all__ = [
     "file_touched_in_commit",
+    "has_ownership_evidence",
     "detect_regression_with_ownership",
     "detect_regression_with_evidence",
     "file_regression_unattributed",
@@ -143,6 +144,60 @@ def _has_causal_link(
             return True, evidence
 
     return False, []
+
+
+def has_ownership_evidence(
+    *,
+    feature_id: str,
+    owned_files: set[str],
+    breaking_files: set[str],
+    transitive_deps: dict[str, set[str]] | None = None,
+    max_transitive_depth: int = _DEFAULT_MAX_TRANSITIVE_DEPTH,
+) -> tuple[bool, list[str]]:
+    """Return whether a candidate feature has causal ownership evidence.
+
+    This is the public predicate behind the "no scapegoat without proof"
+    rule.  A feature may only be demoted to ``regression`` when one of its
+    own files (directly, or via a transitive import chain within
+    *max_transitive_depth* hops) appears in the breaking commit's diff.  When
+    no such link exists the demotion must be rejected and a
+    ``regression_unattributed`` event filed instead.
+
+    Args:
+        feature_id: The feature being evaluated (used for logging / errors).
+        owned_files: Set of file paths owned by the feature.
+        breaking_files: Set of file paths touched by the breaking commit(s).
+        transitive_deps: Optional import-graph ``{file: set[imported_files]}``
+            used to resolve transitive ownership. ``None`` disables transitive
+            resolution.
+        max_transitive_depth: Maximum import-chain depth to follow (default 3).
+            ``0`` restricts the check to direct overlap only.
+
+    Returns:
+        ``(has_evidence, evidence_list)`` — ``has_evidence`` is ``True`` when a
+        causal link is established; ``evidence_list`` holds human-readable
+        strings describing the evidence (empty when ``has_evidence`` is
+        ``False``).
+
+    Raises:
+        ValueError: When *feature_id* is empty, whitespace-only, or None.
+        ValueError: When *owned_files* is not a set or frozenset.
+        ValueError: When *breaking_files* is not a set or frozenset.
+    """
+    if not feature_id or (isinstance(feature_id, str) and not feature_id.strip()):
+        raise ValueError("feature_id must be a non-empty string")
+    if not isinstance(owned_files, (set, frozenset)):
+        raise ValueError("owned_files must be a set")
+    if not isinstance(breaking_files, (set, frozenset)):
+        raise ValueError("breaking_files must be a set")
+
+    return _has_causal_link(
+        feature_id,
+        set(owned_files),
+        set(breaking_files),
+        transitive_deps,
+        max_transitive_depth,
+    )
 
 
 def detect_regression_with_ownership(

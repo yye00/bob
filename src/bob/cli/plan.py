@@ -36,6 +36,31 @@ from bob.spec_quality.schema_constrained_emit import (
     validate_spec_dict,
 )
 from bob.linter import detect_smells, blocks_plan_create as _blocks_plan_create
+from bob.plan import validate_plan_features  # noqa: F401 — AC-form validator wiring
+
+
+def run_ac_form_gate(features: list[dict[str, Any]], console: Any) -> bool:
+    """Run the AC-form validator gate over *features* before plan creation.
+
+    Delegates to :func:`bob.plan.validate_plan_features`, which parses every
+    acceptance criterion against the canonical grammar
+    (pytest:/File exists:/Function defined:/Class defined:/integration:/behavior:)
+    and refuses to persist any feature whose ACs are malformed — catching the
+    v.13 parser-bug class at the source.
+
+    Returns True when all ACs are well-formed, False otherwise. The caller is
+    responsible for raising SystemExit(1) when this returns False.
+    """
+    try:
+        validate_plan_features(features)
+    except ValueError as exc:
+        console.print(f"[red bold]AC-form validation FAILED:[/red bold]\n[red]{exc}[/red]")
+        return False
+    console.print(
+        "[green]AC-form validation: PASSED[/green] "
+        "(all acceptance criteria match the canonical grammar)"
+    )
+    return True
 
 
 def run_schema_validation_gate(

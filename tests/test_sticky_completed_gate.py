@@ -13,7 +13,7 @@ import pathlib
 
 import pytest
 
-from bob.sticky_completed_gate import should_accept_status_flip
+from bob.sticky_completed_gate import apply_sticky_gate, should_accept_status_flip
 
 
 # ---------------------------------------------------------------------------
@@ -233,3 +233,75 @@ def test_workspace_defaults_to_cwd_when_not_stamped():
         workspace=None,
     )
     assert result is True
+
+
+# ---------------------------------------------------------------------------
+# apply_sticky_gate — canonical resolved-status entry point (AC-named function)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyStickyGate:
+    """apply_sticky_gate returns the resolved status.
+
+    When the sticky gate fires it must keep the feature at ``'ready'`` rather
+    than the requested demoting status; otherwise it returns the requested
+    target status unchanged.
+    """
+
+    def test_returns_ready_when_gate_blocks_demotion(self, tmp_path):
+        _write_ac_file(tmp_path, "src/mod.py")
+        resolved = apply_sticky_gate(
+            parent_completed=True,
+            target_status="failed",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            workspace=tmp_path,
+        )
+        assert resolved == "ready"
+
+    def test_returns_target_when_not_stamped(self, tmp_path):
+        _write_ac_file(tmp_path, "src/mod.py")
+        resolved = apply_sticky_gate(
+            parent_completed=False,
+            target_status="failed",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            workspace=tmp_path,
+        )
+        assert resolved == "failed"
+
+    def test_returns_target_when_ac_file_missing(self, tmp_path):
+        resolved = apply_sticky_gate(
+            parent_completed=True,
+            target_status="failed",
+            acceptance_criteria=_acs(["src/missing.py"]),
+            workspace=tmp_path,
+        )
+        assert resolved == "failed"
+
+    def test_returns_target_for_non_demoting_status(self, tmp_path):
+        _write_ac_file(tmp_path, "src/mod.py")
+        resolved = apply_sticky_gate(
+            parent_completed=True,
+            target_status="ready",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            workspace=tmp_path,
+        )
+        assert resolved == "ready"
+
+    def test_returns_target_when_no_file_acs(self, tmp_path):
+        resolved = apply_sticky_gate(
+            parent_completed=True,
+            target_status="needs_human",
+            acceptance_criteria=json.dumps(["pytest: tests/test_x.py"]),
+            workspace=tmp_path,
+        )
+        assert resolved == "needs_human"
+
+    def test_return_type_is_str(self, tmp_path):
+        _write_ac_file(tmp_path, "src/mod.py")
+        resolved = apply_sticky_gate(
+            parent_completed=True,
+            target_status="failed",
+            acceptance_criteria=_acs(["src/mod.py"]),
+            workspace=tmp_path,
+        )
+        assert type(resolved) is str  # noqa: E721
