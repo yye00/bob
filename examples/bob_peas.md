@@ -3663,3 +3663,25 @@ test-only deps (e.g. hypothesis) or those collection errors reappear.
 Behaviour: WHEN a feature declares a `pytest:` acceptance criterion THEN
 tests_pass runs only that feature's own test paths and a sibling module's
 collection error cannot fail it.
+
+## AC path-normalizer MUST strip synthesizer path corruption (file. prefix, leading /)
+Tier: Core | Priority: high | Slot: F-R7-655
+The AC synthesizer intermittently emits File-exists / pytest path ACs with
+corrupted paths that can NEVER be satisfied, silently NH-ing an otherwise
+COMPLETE feature at attempt 5. Observed on the bob96 build at 147/149: feature
+F-R7-603 got `File exists: file.claude/hooks/context_budget.py` (spurious
+`file.` prefix) and F-R7-626 got `File exists: /src/bob/spec_synthesizer.py`
+(spurious leading `/`) — in BOTH cases the CORRECT workspace-relative path was
+already present as a sibling AC and the real file existed on disk, so the
+feature's actual work was done; only the bogus-path AC failed. This is the same
+family as F-R7-411 (reachability) and F-R7-654 (grammar). Fix (bob CODE at
+synthesis/extraction time; STRENGTHENS the gate by removing false negatives,
+lowers NO threshold): a path-AC normalizer MUST canonicalize every File-exists
+and pytest path to a workspace-relative form — strip a spurious leading `/`,
+strip a spurious `file.`/`file:` prefix, collapse `<pkg>/src/<pkg>`-style
+duplication, and de-duplicate against existing sibling ACs — BEFORE the AC is
+persisted. A path that does not resolve under the workspace after normalization
+is a synthesis defect to repair, not a feature to fail. Behaviour: WHEN the
+synthesizer emits a File-exists or pytest AC whose path has a `file.`/`file:`
+prefix or a leading `/` THEN the normalizer rewrites it to the canonical
+workspace-relative path and drops it if an equivalent sibling AC already exists.
