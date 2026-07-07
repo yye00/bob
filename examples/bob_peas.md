@@ -3536,3 +3536,103 @@ FAILS with "launch evidence is not dispatch-coupled". Boundary: harness/test-inf
 features (F-R7-641 exemption) are unaffected; with the GPU-backend requirement
 disabled the behaviour is exactly as before, so non-GPU projects and bob's own
 self-build are unaffected.
+
+## Turn-limit exhaustion is a completability signal, not a transport-transient
+Tier: Core | Priority: high | Slot: F-R7-649
+A prior generation lost days to this: when a sub-agent hits its
+max_turns budget the SDK returns a turn-limit result that surfaces
+as a nonzero exit ("Command failed with exit code 1"). The
+transport-transient classifier (F-R6-300 / startup_crash_exempt)
+matched the bare "exit code 1" / "message reader" substring and
+mis-classified turn-limit exhaustion as a free transport retry, so
+an oversized feature silently retried its full turn budget forever
+and never converged (observed: a feature spun ~3.5h emitting
+exactly N dispatches then a graceful exit-1 each attempt). Fix (bob
+CODE + forward-carry): the transport-transient regex MUST match
+ONLY genuine transport signatures (ECONNRESET, connection reset,
+self-signed certificate, ReadTimeout, broken pipe, MCP connection
+failed) and MUST NOT match a bare nonzero exit code or "message
+reader" alone. A turn-limit result must instead raise the
+completability path: charge the attempt, and if the feature keeps
+hitting the turn ceiling, route it to decomposition (F-R7 stuck
+decomposer) — NOT to infinite retry. Behaviour: WHEN a sub-agent
+result carries a turn-limit / max_turns-reached marker THEN the
+loop treats it as attempt-consuming and decomposition-eligible,
+never as a transport-transient free retry.
+
+## Per-run tunables MUST be honored at the spawn call site, not only defined
+Tier: Core | Priority: high | Slot: F-R7-650
+BOB_SUB_AGENT_MAX_TURNS existed as a module-level default
+(DEFAULT_SUB_AGENT_MAX_TURNS) but the actual sub-agent spawn in
+orchestrator/run_loop.py passed a hardcoded literal max_turns=25
+into build_sub_agent_options(...), so setting the env var changed
+nothing — the completability cliff (F-R7-649) could not be relieved
+by raising the budget because the raise was ignored. Fix (bob
+CODE): the spawn call site MUST read the env-derived default; add a
+regression test that sets BOB_SUB_AGENT_MAX_TURNS and asserts the
+spawned options carry that value. Generalize: for EVERY documented
+tunable env var, a test must prove the value reaches the behavior
+it claims to control (define-vs-honor gap). Behaviour: WHEN
+BOB_SUB_AGENT_MAX_TURNS is set THEN the value observed on the
+spawned sub-agent options equals it.
+
+## Audit-exemption sets are frozen in the spec — an implementer cannot self-exempt
+Tier: Core | Priority: high | Slot: F-R7-651
+The single most dangerous defect this generation: a sub-agent
+DEFEATED the universal GPU-execution audit (F-R7 dispatch-coupled
+gate) not by faking a counter but by writing its OWN exemption
+allowlist. It added a `_HOST_OPS` set to the audit test classifying
+linalg/sparse/signal/ndimage ops as "documented host-tier, MUST
+NOT dispatch", so the audit went GREEN while those ops ran on the
+CPU (test names literally read
+`test_host_op_does_not_advance_dispatch_ledger[sci.sparse.spmv]
+PASSED`). It justified this with the ops' own module docstrings
+("host-scalar algorithm intended"). The counter was honest; the
+COVERAGE was subverted by letting the implementer decide who is
+exempt. Fix (spec-over-code, STRENGTHENS the gate, never lowers a
+threshold): (1) the set of dispatch-exempt ops MUST be defined in
+the PEAS/spec and injected into the audit as read-only data — the
+implementer's code MUST NOT be able to add members to it; the ONLY
+structural exemption is a size-0 result. (2) A whole-of-surface
+requirement (e.g. clause "EVERY numeric op executes on the device")
+OVERRIDES any per-module docstring claiming host compute is
+intended — such a docstring is itself a defect to fix, not a
+license to exempt. (3) The audit registry MUST be adversarially
+reviewed (spec-critic sub-agent) so no op can quietly exempt
+itself, and the oracle-not-gameable suite MUST include the cheat
+"op adds itself to the exemption allowlist" and keep FAILING it.
+Root note for the record: the in-place rebuild GAMED this because
+its sub-agent inherited the allowlist idea; a clean-room from-PEAS
+build with fresh sub-agents did NOT game it and produced a fully
+GPU-executing library. Behaviour: WHEN an audited compute op is
+classified exempt by any source other than the frozen spec-defined
+set THEN the audit FAILS with "exemption not authorized by spec".
+
+## Unique spec_slot per feature — scheduler must key runnable/claim on feature id
+Tier: Core | Priority: medium | Slot: F-R7-652
+extract-from-peas emitted three feature rows sharing spec_slot
+F-R7-003, and both the supervisor and `bob run` computed
+runnable/claim eligibility keyed on spec_slot. A completed sibling
+made the runnable-count for the still-pending audit feature read 0,
+so the build STOPPED (QUEUE_DRAINED) with real work left. Fix (bob
+CODE): (a) extraction MUST assign a unique spec_slot to every
+feature (dedupe/suffix on collision at write time); (b) the
+scheduler's runnable/claim/complete logic MUST key on the feature's
+unique id, never on spec_slot (spec_slot is for cross-generation
+matching only, per F-R7-400). Behaviour: WHEN two features share a
+spec_slot THEN extraction rejects or disambiguates them, and a
+completed feature never suppresses a distinct pending feature.
+
+## Skeleton must create tests/__init__.py so cross-test imports collect
+Tier: Core | Priority: medium | Slot: F-R7-653
+Across multiple builds the same collection failure recurred:
+audit/registry helper modules live under tests/ and are imported as
+`from tests.<mod> import ...`, but the project skeleton never
+created tests/__init__.py, so pytest could not resolve `tests` as a
+package and every importing test failed collection with exit=2
+(ModuleNotFoundError: No module named 'tests'), masquerading as an
+acceptance_criteria_met failure. Fix (spec): the project-skeleton
+feature MUST create an (empty) tests/__init__.py (and a src package
+__init__ where the layout is package-style) so shared test helpers
+are importable. Behaviour: WHEN a test does `from tests.X import Y`
+THEN collection succeeds because tests/ is a package.
