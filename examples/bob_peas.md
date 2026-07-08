@@ -3915,3 +3915,16 @@ AND the sub-agent over a window and classify WEDGED when both are frozen AND the
 is no compiler/benchmark process AND no source/test writes (excluding build-output
 dirs). A living-but-frozen process is a stall, not liveness. (Pairs with the
 in-process SDK watchdog which should prevent the hang in the first place.)
+
+
+## Application-spec File-exists/command AC paths MUST resolve from the bob workspace root, not the project subdir
+Tier: Core | Priority: high | Slot: F-R9-032
+When a brownfield/application spec's code lives in a subdirectory of the workspace
+(e.g. workspace=rocm-systems, code under projects/rccl/), File-exists and command
+ACs authored as project-relative paths ("src/dda_x.cu", "src/include/.../alltoall/")
+do NOT resolve against the workspace root and FALSELY fail verification even though
+the file exists at projects/rccl/src/dda_x.cu — blocking a genuinely-complete
+feature (observed: RCCL F007/T4). Fix: the extractor MUST rewrite File-exists/command
+AC paths to be workspace-root-relative (prepend the spec's project subdir), OR the
+verifier MUST resolve a bare relative path against the spec's declared project root
+before failing. A path that exists under the project subdir is satisfied.
