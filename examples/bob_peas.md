@@ -4133,3 +4133,55 @@ REQUIREMENT for bob98:
 INVARIANT: this is purely a toolchain-robustness fix. It touches NO anti-cheat gate
 and NO threshold. The `#wrong==0` bitwise gate (lossless targets) and busbw ±2%
 self-consistency gate remain exactly as specified.
+
+---
+
+Tier: Core | Priority: high | Slot: F-R9-040
+
+## Scope brownfield native-build `command:`/`build:` ACs to the host arch — never a default all-arch clean build
+
+CONTEXT (RCCL T2/F003, 2026-07-08): the AC `command: cd projects/rccl && ./install.sh
+(builds on gfx950; gfx942 compile-check only)` TIMED OUT at the 600s command:-AC
+budget and pushed the feature toward needs_human. Root cause: `install.sh` defaults
+to a CLEAN build (`rm -rf build/release`) AND, with no `--amdgpu_targets`, compiles
+device fatbins for ALL 13 supported archs — ~18k objects — which cannot finish in any
+reasonable per-criterion budget. The AC's own prose said "builds on gfx950", i.e. the
+behavior-ACs only ever test on this host's arch, so building 13 archs was 10-13x wasted
+work masquerading as a hang.
+
+REQUIREMENT: any native-build AC (C++/HIP/CUDA/Rust/etc.) MUST pin the build to the
+arch/target the behavior-ACs actually exercise (e.g. `--amdgpu_targets gfx950`,
+`-DCMAKE_CUDA_ARCHITECTURES=90`, `--target x86_64`). A default multi-arch clean build
+is never acceptable in a time-bounded verifier. This bounds build time WITHOUT touching
+any correctness gate — the #wrong==0 / busbw ±2% behavior-ACs still run against the
+built library exactly as before.
+
+---
+
+Tier: Core | Priority: high | Slot: F-R9-041
+
+## Monorepo path ACs (`File exists:`, `pytest:`, `command:` cwd) MUST be authored workspace-relative with the full nested-project prefix
+
+CONTEXT (RCCL T2/F003, 2026-07-08): the AC `File exists: tuner/rccl_tuner_gfx942.csv`
+FAILED even though the file existed at `projects/rccl/tuner/rccl_tuner_gfx942.csv`.
+bob's file-exists resolver is WORKSPACE-relative (workspace root = the monorepo top,
+here ~/dark-factory/rocm-systems), and its lenient fallback only rglobs `src/` and
+`tests/` for `.py` basenames — so a non-.py artifact (.csv/.md/.so) under a nested
+project dir silently fails to resolve. PROOF it was a path-authoring bug, not a missing
+deliverable: the sibling AC `File exists: projects/rccl/perf_results/T2_cpx_tuner.md`
+used the full prefix and PASSED.
+
+REQUIREMENT: when the build workspace is a monorepo with a nested project subdir, every
+path-bearing AC MUST use the full workspace-relative path (`projects/<proj>/...`). Do
+NOT rely on the resolver's basename fallback and do NOT loosen that fallback to rglob
+the whole tree for arbitrary basenames — a broad basename match risks FALSE-PASS on a
+relocated/renamed artifact (this is exactly why strict mode already gates the .py
+basename fallback). Fix the spec's paths, not the resolver's strictness.
+
+NOTE on both F-R9-040/041: these are SPEC-AUTHORING defects surfaced by a real build.
+The mandate's ordering held — both were fixed by correcting the spec (arch scope + path
+prefix) and by raising the SANCTIONED time-budget knob BOB_CRITERION_EXEC_TIMEOUT (a
+budget, not a gate), never by weakening #wrong==0 or busbw ±2%. Also confirmed a
+diagnosis discipline: when a verifier reports a "timeout", first check whether the
+command is doing more work than the AC intends (all-arch vs host-arch) BEFORE raising
+the budget — the budget raise is the backstop, the scope fix is the real correction.
