@@ -64,6 +64,13 @@ features:
       upstream remote (git rev-parse --is-shallow-repository == false and the origin
       URL is ROCm/rocm-systems); if it is shallow, wrong-remote, or missing, (re)clone
       it. This is the hydration step every other feature depends on.
+
+      Permanent-forward-carry note (application spec): the builder's infra-recovery
+      guarantees F-R7-478 (infra-error transient classifier), F-R7-479 (RCA auto-reset
+      fresh-attempt budget), and F-R7-553 (slopsquatting first-party allowlist) are
+      provided by the bob builder toolchain itself and are inherited/satisfied for this
+      application build; they are not re-implemented here (this is an RCCL application
+      spec, not a bob self-generation spec).
     priority: critical
     depends_on: []
     acceptance_criteria:
