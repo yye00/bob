@@ -4227,3 +4227,40 @@ turn." All are watchdog TIMING/liveness fixes; NONE touch the #wrong==0 or busbw
 anti-cheat gates. A watchdog that kills healthy work before verification is strictly
 worse than one that waits a few extra minutes to confirm a (rare, effectively
 permanent) real hang.
+
+---
+
+Tier: Core | Priority: high | Slot: F-R9-043
+
+## Lossy-target tolerance must be stated PER CODEC by bit-width; never disposition a lossy codec from a single mid-build relerr sample
+
+Two refinements to F-R9-038, both surfaced by RCCL T1a/F005 (2026-07-08) where the
+final verified result was independently confirmed real (T3a +10.5%/+12.8% bit-exact)
+while T1a completed as a correct honest-negative.
+
+(1) PER-CODEC TOLERANCE. A single blanket lossy tolerance (the RCCL spec used
+`mean rel err ≤ 2e-2` for both Q4 and FP4) is information-theoretically
+UNSATISFIABLE by a 4-bit codec: 16 levels with one per-32-element scale cannot hold
+2% mean relative error on general fp32 reduction data. The measured sweep was
+monotonic and correct by bit-width — q8=1.0e-2 (passes), q6=4.3e-2, fp8=3.6e-2,
+q4=1.9e-1, fp4=1.6e-1 — i.e. the codec was implemented CORRECTLY and the 4-bit rows
+fail only because the bar was an 8-bit-grade bar. A correct FP4 AllReduce SHOULD land
+~0.15-0.20. REQUIREMENT: when a lossy target enumerates multiple codecs/bit-widths,
+the spec MUST state a tolerance PER format matched to its information content (e.g.
+fp4≈0.2, q6/fp8≈0.04, q8≈0.01), OR declare 4-bit rows expected-honest-negative up
+front. Judging every codec against one bar either forces a correct 4-bit codec to a
+false FAIL or (if the bar were loosened to fit 4-bit) would let an 8-bit codec cheat.
+Each per-codec tolerance is still STATED IN THE SPEC (implementer never self-picks) —
+this is a spec-ACCURACY refinement, and it does NOT touch the lossless `#wrong==0` or
+busbw ±2% gates, which stay exactly as-is.
+
+(2) DISPOSITION ONLY FROM THE COMPLETED SWEEP. Do not judge a lossy codec (or any
+perf result) from a single mid-attempt sample. During T1a I twice read a transient
+`mean_rel_err=1.0` mid-build and briefly concluded the codec was "broken garbage";
+the completed build's sweep showed it was fine (q8=0.0104). A mid-build relerr/​busbw
+reflects a not-yet-fully-wired or not-yet-linked kernel, not the shipped behavior.
+REQUIREMENT: the verifier/adversary must read the codec/perf verdict from the
+FINAL post-build artifact (the completed sweep whose header matches the AC's demanded
+sizes/ranks), never from an in-progress log — the same "evidence must come from a
+freshly executed, header-matched benchmark" rule already applied to speedup numbers.
+This is a verification-DISCIPLINE requirement, not a gate change.
