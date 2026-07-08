@@ -3902,3 +3902,16 @@ spec's measurement ACs MUST be written as behavior: EARS ("behavior: <subject>
 anti-cheat gates fully intact while making the AC parseable. The extractor SHOULD
 auto-convert leading-label prose ACs (Regression:/Impact:/Correctness:) to behavior:
 form at synthesis time. Verified: after conversion all 7 features scored 1.000 PASS.
+
+
+## Stall/liveness watchdog MUST detect alive-but-frozen subagents, not just dead ones
+Tier: Core | Priority: high | Slot: F-R9-031
+An external stall-watchdog that only fires when the sub-agent process is ABSENT
+(claude count == 0) misses the dominant mode-C hang: the claude sub-agent process
+stays ALIVE but makes zero progress (cputime frozen, blocked in ep_poll on a hung
+gateway/SDK call). Observed: RCCL F007 wedged 13min with claude=1, watchdog never
+fired. Fix: the watchdog MUST sample the cputime of BOTH the orchestrator (bob run)
+AND the sub-agent over a window and classify WEDGED when both are frozen AND there
+is no compiler/benchmark process AND no source/test writes (excluding build-output
+dirs). A living-but-frozen process is a stall, not liveness. (Pairs with the
+in-process SDK watchdog which should prevent the hang in the first place.)
