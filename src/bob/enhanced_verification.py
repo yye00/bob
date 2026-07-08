@@ -4256,7 +4256,7 @@ def _search_for_function(
         # boundaries keep `import Foo`/`as Foo` from matching `Foobar`.
         pattern = (
             rf"(?:(?:def|class)\s+{escaped}\s*[\(:]"
-            rf"|^{escaped}\s*="
+            rf"|^{escaped}\s*(?::[^=\n]+)?="
             rf"|\bimport\s+{escaped}\b"
             rf"|\bas\s+{escaped}\b)"
         )

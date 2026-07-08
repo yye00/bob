@@ -4264,3 +4264,40 @@ FINAL post-build artifact (the completed sweep whose header matches the AC's dem
 sizes/ranks), never from an in-progress log — the same "evidence must come from a
 freshly executed, header-matched benchmark" rule already applied to speedup numbers.
 This is a verification-DISCIPLINE requirement, not a gate change.
+
+---
+
+Tier: Core | Priority: high | Slot: F-R9-044
+
+## `Function defined:` symbol verifier must resolve PEP-526 annotated module-level assignments (and all import-time symbol forms), not only bare assignments
+
+CONTEXT (bob98 self-build, 2026-07-08): feature F-R7-455 ("Full 22-smell linter
+extension") hit a FALSE needs_human after 5 attempts on a single AC —
+`Function defined: bob.smell_linter.SMELL_DETECTORS` — while every other check passed
+(1232 src files, 2022 tests, no stubs/mocks, code_changes_made, security clean). The
+symbol was FULLY CORRECT and importable: `from bob.smell_linter import SMELL_DETECTORS`
+returns a `list` of exactly 22 SmellDefinition, defined as:
+    SMELL_DETECTORS: list[SmellDefinition] = SMELL_CATALOG
+
+ROOT CAUSE: `_search_for_function` in enhanced_verification.py resolves a Python symbol
+via a source regex whose module-level-assignment branch was `^{name}\s*=` — it required
+`=` immediately after the name and did NOT allow a PEP-526 type annotation between them.
+So an ANNOTATED assignment `NAME: T = ...` (idiomatic in a typed codebase) matched none
+of the def/class/bare-assign/import branches and hard-failed, NH-ing a correct feature.
+
+FIX (verifier-correctness only; NO threshold or anti-cheat change): the assignment branch
+must allow an optional annotation — `^{name}\s*(?::[^=\n]+)?=`. Verified: annotated assign
+now resolves True; bare assign, real def, and re-export still True; a genuinely-absent
+symbol still hard-fails False (no over-match — anti-cheat preserved).
+
+REQUIREMENT: the `Function defined:` AC is used GENERICALLY by the spec synthesizer for
+ANY importable top-level symbol (function, class, constant, alias). Its resolver MUST
+accept the full set of ways Python defines a module-level name: `def`, `async def`,
+`class`, bare assignment, PEP-526 annotated assignment, and import re-export/alias.
+Missing any one false-fails idiomatic code. This reinforces F-R7-620 (concept-token
+equivalence) and the bob84 re-export fix — same failure family: a too-narrow symbol
+resolver NH-ing correct work. BEST long-term fix: resolve by actual `import_module` +
+`getattr` (ground truth for "importable symbol"), sandboxed so it cannot execute
+side-effectful modules, falling back to the regex when import is unsafe/unavailable.
+This makes the checker MATCH the AC's real meaning; it is NOT a gate weakening — a truly
+absent symbol must still fail.
