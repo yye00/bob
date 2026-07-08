@@ -3840,3 +3840,21 @@ bob has no structured GPU-kernel optimization methodology: a perf feature today 
 Tier: Core | Priority: medium | Slot: F-R9-025
 
 RCCL performance is governed by a large discrete config space (protocols Simple/LL/LL128, algorithms Ring/Tree, channel/chunk counts, and the RCCL_*/NCCL_* env + tuner-CSV knobs of F-R9-021), and a naive sweep is both expensive and easy to game. Adopt the autotune discipline proven in NVIDIA's tilegym-cutile-autotuning skill, ported to RCCL: (1) tune-once then cache — sweep the config space once per (collective, size-range, ngpus, arch) and persist the winning config keyed on that tuple, rather than re-searching every run; (2) prune the search space to a bounded set (the skill targets <=8 configs/arch) using arch- and size-guards so a sweep cannot blow the time budget; (3) MANDATORY correctness parity on every swept config — run the F-R9-019 `rccl-correct` (#wrong=0) check with tuning ENABLED and again with tuning DISABLED (a `DISABLE_AUTOTUNE`-equivalent baseline), so a config that wins on bandwidth but corrupts results is rejected; (4) A/B the tuned config against the fixed best-known/default via the F-R9-020 noise-aware perf gate. This makes RCCL knob-tuning systematic and cheat-resistant instead of a one-off manual env poke, and reuses the correctness+perf gates as the accept criteria.
+
+## Perf-benchmark AC sweep sizes MUST fit the test-harness buffer multiplier, not just VRAM
+Tier: Core | Priority: high | Slot: F-R9-026
+A perf/benchmark application spec must cap the max sweep size to what the benchmark
+harness can allocate (typically several times the message size), not just device VRAM.
+rccl-tests allocates ~6-7x message size per rank (send+recv+expected+graph); -e 8G
+OOMs on MI355X (288GB VRAM) with fragmentation, producing a complete-looking file
+containing only `HIP failure: out of memory` and zero busbw, poisoning downstream
+comparisons. Verified: 2G ~405 GB/s #wrong=0; 4G OOMs. The benchmark command: AC
+verifier MUST reject output with OOM/FATAL/"out of memory"/"Test failure" markers even
+when the file exists. Harness-buffer limit, never a relaxation of #wrong==0/busbw gates.
+
+## plan --create MUST be idempotent — never insert null-spec_slot duplicate feature rows
+Tier: Core | Priority: high | Slot: F-R9-027
+Re-running plan --create inserted a duplicate feature set with spec_slot=NULL (18 rows
+for a 9-feature spec), confusing scheduler runnable/claim logic (extends F-R7-652).
+plan --create MUST upsert keyed on spec_slot, never blind-insert; every feature MUST
+carry a non-null spec_slot; a null-slot row is a defect to prevent at insert time.

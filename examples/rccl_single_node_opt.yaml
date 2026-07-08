@@ -32,6 +32,12 @@ description: |
   exact); lossy targets (T1a/T1b) require bounded mean relative error vs an fp32
   reference (<=2e-2 for Q4/FP4, <=5e-3 for Q8/FP8).
 
+  SWEEP CAP: max sweep size is 2G (-e 2G), not 8G. rccl-tests allocates ~6-7x the
+  message size per rank (send+recv+expected+graph buffers); at 8G that OOMs on the
+  MI355X even with 288GB VRAM (verified: 1G/2G pass at ~400-405 GB/s busbw #wrong=0,
+  4G OOMs). 2G captures the full useful range including the large-message plateau.
+  This is a harness-buffer limit, NOT a perf/correctness gate relaxation.
+
   ARCH SCOPE (this build host): the build/benchmark machine is gfx950-only (8x
   MI355X / CDNA4, ROCm 7.0.1). Build, benchmark, and correctness are performed and
   recorded on gfx950. Where a target has gfx942-specific code paths (e.g. INT codecs
@@ -97,7 +103,7 @@ features:
       - "command: cd projects/rccl && ./install.sh (librccl.so built)"
       - "command: cd projects/rccl-tests && ./install.sh (perf binaries built)"
       - "command: tools/topo_expl confirms an 8-GPU fully-connected XGMI clique"
-      - "command: build/all_reduce_perf -b 8 -e 8G -f 2 -g 8 -d half -c 1 (exit 0, #wrong==0)"
+      - "command: build/all_reduce_perf -b 8 -e 2G -f 2 -g 8 -d half -c 1 (exit 0, #wrong==0)"
       - "File exists: projects/rccl/perf_results/baseline/allreduce_half.txt"
       - "File exists: projects/rccl/perf_results/baseline/allreduce_bfloat16.txt"
       - "File exists: projects/rccl/perf_results/baseline/reducescatter_half.txt"
@@ -195,7 +201,7 @@ features:
       - "File exists: src/include/algorithms/all_reduce/quick_reduce_codec.h"
       - "File exists: src/dda_quick_reduce_ipc.cu"
       - "command: cd projects/rccl && ./install.sh on gfx950 (FP4 native; INT/FP8 codec paths compile-check for gfx942)"
-      - "Regression: with RCCL_QUICKREDUCE_ENABLE=0, all_reduce_perf -b 8 -e 8G -g 8 within +/-2% of baseline and #wrong==0"
+      - "Regression: with RCCL_QUICKREDUCE_ENABLE=0, all_reduce_perf -b 8 -e 2G -g 8 within +/-2% of baseline and #wrong==0"
       - "Impact: with RCCL_QUICKREDUCE_ENABLE=1 RCCL_QUICKREDUCE_CODEC=fp4 on gfx950, all_reduce_perf busbw >= 1.5x baseline above the ~1 MiB crossover (record the crossover size)"
       - "Correctness: mean relative error vs an fp32 reference reduction <= 2e-2 for Q4/FP4 (recorded, not silently relaxed)"
       - "File exists: projects/rccl/perf_results/T1a_quickreduce.md (before/after table + rel-err on gfx950; gfx942 deferred)"
