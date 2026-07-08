@@ -3993,3 +3993,31 @@ gate default-off rather than inventing an uplift. bob's RCCL T3 deliverable prod
 all four unprompted — encode them as REQUIRED deliverable structure so honest
 attribution is guaranteed, not luck. This is an anti-cheat requirement (it closes the
 misattribution hole that #wrong==0 alone leaves open), so it must never be relaxed.
+
+
+## A broken/incompatible MCP tool manifests as a mode-C silent-hang and bricks EVERY subagent via mandatory orientation
+Tier: Core | Priority: high | Slot: F-R9-036
+Discovered on RCCL (2026-07-08): three consecutive T1a subagents hung at the IDENTICAL
+point (cputime frozen ~13s, ep_poll, right after skills-install). RCA: the subagent's
+mandatory-orientation prompt forces `memory_search(...)` (bob-memory MCP) as its FIRST
+tool action; the installed mem0ai had drifted to 2.0.11, whose `Memory.search`/`get_all`
+API removed top-level `user_id` (now `filters={"user_id": ...}`) and renamed `limit`->
+`top_k`. bob's memory.py used the OLD signature, so the tool call raised
+`ValueError: Top-level entity parameters ... not supported`. CRITICAL: the claude-code
+SDK/MCP transport did NOT surface the in-tool exception as a normal tool error — it
+WEDGED THE STREAM, presenting to the orchestrator as an indistinguishable mode-C
+silent-hang (ep_poll freeze). Because orientation Step 6 ALWAYS calls memory_search
+first, a single broken MCP tool deterministically bricks EVERY subagent for EVERY
+feature — and masquerades as a gateway hang, inflating the apparent mode-C rate.
+Fixes bob MUST adopt: (a) PIN mem0ai and every MCP-backend dependency to a tested
+version (or defensively adapt to the installed API at runtime); (b) the mandatory
+memory_search in orientation MUST DEGRADE GRACEFULLY — a memory-tool failure logs and
+continues, never wedges the turn (memory is an optimization; ablation V0 runs with it
+OFF, so it can never be a hard dependency of a feature's first turn); (c) bob MUST
+self-test each MCP tool once at startup with a canary call and DISABLE any tool that
+errors, instead of letting it brick every subagent; (d) the SDK/MCP integration should
+treat an in-tool exception as a tool-error result (retryable/visible), not as a stream
+wedge. This is the same family as bob96 learnings #3 (minimal MCP set) and #4 (SDK
+watchdog): the watchdog eventually reaps these, but the real fix is not shipping a
+broken MCP tool into the mandatory path. Reproduce: call BobMemory().search("x") under
+the installed mem0 version — if it raises, every subagent will hang at orientation.
