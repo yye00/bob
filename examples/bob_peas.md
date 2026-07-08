@@ -3858,3 +3858,31 @@ Re-running plan --create inserted a duplicate feature set with spec_slot=NULL (1
 for a 9-feature spec), confusing scheduler runnable/claim logic (extends F-R7-652).
 plan --create MUST upsert keyed on spec_slot, never blind-insert; every feature MUST
 carry a non-null spec_slot; a null-slot row is a defect to prevent at insert time.
+
+## disk_reconciler MUST NOT re-run long command:/build: ACs under its wall-clock budget — check the artifact instead
+Tier: Core | Priority: high | Slot: F-R9-028
+The disk-state reconciler executes a feature's command:/build: acceptance criteria
+to decide completion, but runs under a 120s wall-clock budget. For a brownfield
+build feature whose command: AC is a full compile (e.g. `command: cd projects/rccl
+&& ./install.sh` ~10min), the reconciler always times out ("reconcile_from_disk:
+wall-clock budget exhausted") and can NEVER complete the feature even when the
+build artifact already exists on disk. Combined with an orchestrator that wedges
+mid-attempt, the feature enters an un-completable loop (observed: RCCL F001 spawned
+repeatedly, librccl.so rebuilt+wiped each time, refinement_attempts stuck at 0).
+Fix: for a command:/build: AC that names or implies a build artifact, the
+reconciler MUST check the ARTIFACT'S existence/freshness (e.g. build/release/
+librccl.so present and newer than sources) as satisfaction evidence rather than
+re-executing the build; only re-run when the artifact is absent AND the budget
+allows. A build-AC whose output exists is satisfied, not pending.
+
+## stall/liveness detection MUST use rising-edge or source-scoped writes, not build-output settling
+Tier: Core | Priority: medium | Slot: F-R9-029
+An external stall-watcher (and any heartbeat liveness check) that treats "any
+workspace file-write in the last N minutes" as ALIVE gives false negatives after a
+C++ build: post-compile artifact settling under build/ and _deps/ keeps the
+write-count > 0 for minutes after the orchestrator has actually wedged, so the
+watcher never fires. Fix: the write-liveness signal MUST exclude build-output
+directories (build/, _deps/, CMakeFiles/) and prefer src/tests writes, OR require
+the write-count to be RISING (rising-edge) rather than merely non-zero, OR combine
+with a mandatory "orchestrator cputime advancing" check. A wedged orchestrator
+with a settling build tree must be classified as stalled.
