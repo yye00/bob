@@ -3943,6 +3943,24 @@ sibling runnable features get scheduled; the starved feature is retried after
 siblings or routed to decomposition. A single hard feature must not monopolize the
 claim slot. (extends the stuck-readiness decomposer + F-R9-031 frozen-watchdog.)
 
+> F-R9-033 addendum (RCCL, 2026-07-08): the deprioritization MUST be DYNAMIC (live
+> per-feature zero-progress attempt count), NEVER a static hand-added dependency edge.
+> Observed the trap firsthand: to stop F003/T2 (then the wedger) from starving F004/T3
+> + F005/T1a, a static dependency was added chaining T2 behind them. Correct at the
+> time — but once T1a became the new wedger (8 consecutive hangs), that same static
+> edge made T1a starve T2 and T1b, which had been given deps on T1a purely to serialize
+> them. THE STARVATION SOURCE MOVED, and the static fix became the new starvation edge.
+> Lessons: (1) independent optimization targets must NEVER be given cross-dependencies
+> just to serialize scheduling — a false dependency becomes a starvation edge when the
+> bottleneck shifts; express ordering via reversible per-cycle scheduler priority, not
+> the dependency graph. (2) verify true independence from the SPEC before decoupling
+> (here T1b's own description said "Distinct from T1a ... does NOT reuse the RS->reduce
+> ->AG or ncclSum machinery" — no shared code path). (3) the scheduler should run
+> multiple independent runnable features CONCURRENTLY (BOB_MAX_CONCURRENT_FEATURES>1)
+> so a single stuck feature cannot monopolize progress — decoupling three RCCL targets
+> immediately moved the build from 1-executing (all cycles on the wedged T1a) to
+> 3-executing (T2/T1a/T1b in parallel).
+
 
 > F-R9-031 addendum (verified on bob97): the in-process idle-timeout approach (wrapping the SDK stream __anext__ in asyncio.wait_for) is a KNOWN TRAP — it violates anyio's cancel-scope rule ('exit cancel scope in a different task') and corrupts the stream/gather (bob72 regression). The real fix MUST be at the SDK transport layer (a per-request HTTP/gateway timeout inside claude-code-sdk), NOT an app-layer wait_for. Until then, an OUT-OF-PROCESS watchdog (kill the wedged bob-run pid) is the only safe mitigation.
 
