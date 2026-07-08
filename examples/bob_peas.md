@@ -3886,3 +3886,19 @@ directories (build/, _deps/, CMakeFiles/) and prefer src/tests writes, OR requir
 the write-count to be RISING (rising-edge) rather than merely non-zero, OR combine
 with a mandatory "orchestrator cputime advancing" check. A wedged orchestrator
 with a settling build tree must be classified as stalled.
+
+## Application-spec measurement ACs (Regression:/Impact:/Correctness:/RCCL_PARAM prose) MUST be emitted as behavior: EARS form
+Tier: Core | Priority: high | Slot: F-R9-030
+The RCCL spec's per-target measurement ACs were authored as prose lines
+("Regression: with GATE=0 busbw within +/-2%", "Impact: with GATE=1 latency >=2x",
+"Correctness: #wrong==0", "RCCL_PARAM X registered default 0"). The spec-quality
+ambiguity linter only accepts File exists:/Function defined:/Class defined:/pytest:/
+integration:/behavior:/command:/build:/ctest: forms, so every such prose AC dropped
+ambiguity_score and gate-blocked the feature below 0.85 — ALL 7 target features
+(F002-F008) stuck at 0.74-0.83, never reaching ready. Fix: an application/brownfield
+spec's measurement ACs MUST be written as behavior: EARS ("behavior: <subject>
+<verb> <object> when <condition>") preserving the exact thresholds verbatim (the
++/-2% busbw, #wrong==0, >=2x, rel-err bounds stay in the AC text). This keeps the
+anti-cheat gates fully intact while making the AC parseable. The extractor SHOULD
+auto-convert leading-label prose ACs (Regression:/Impact:/Correctness:) to behavior:
+form at synthesis time. Verified: after conversion all 7 features scored 1.000 PASS.
