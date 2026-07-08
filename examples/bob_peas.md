@@ -4063,3 +4063,27 @@ running process and its child bob inherit the old exported value. Changing the l
 a running supervisor requires RESTARTING the supervisor process (or reading the tunable
 from disk per iteration). Pairs with F-R9-031 (SDK watchdog) and bob96 #3/#4: the
 watchdog reaps stalls, but ADAPTIVE CONCURRENCY prevents inducing them en masse.
+
+
+## Lossy optimization targets need a TOLERANCE-AWARE correctness gate to ship enabled; bitwise #wrong==0 forces them to honest-negative
+Tier: Core | Priority: high | Slot: F-R9-038
+A LOSSY collective (e.g. T1a QuickReduce block-quant AllReduce, T1b quantized MoE
+AllToAll) CANNOT satisfy a bitwise `#wrong==0` correctness gate when its path is
+engaged — by construction every quantized element differs slightly from the exact
+reference, so rccl-tests' bitwise validator reports `#wrong` proportional to the
+element count (observed on RCCL T1b: #wrong scaled linearly 16337@8K → 2.68e8@134M,
+then exactly 0 at sizes where the path fell back to the lossless kernel). This is
+EXPECTED lossy behavior, NOT corruption. Consequence: a lossy target can only ever
+complete as (a) an HONEST-NEGATIVE gated-off feature (fully implemented, builds,
+OFF==baseline bit-exact, ON honestly reported — which is what RCCL T1a and T1b
+correctly did), OR (b) if the spec wants the lossy path to actually SHIP ENABLED,
+it MUST provide a TOLERANCE-AWARE correctness gate that checks mean/max RELATIVE
+error against a stated bound (e.g. fp8 e4m3 round-trip ≤ X%), NOT bitwise equality.
+CRITICAL: this does NOT weaken the bitwise `#wrong==0` gate for LOSSLESS targets
+(T2 chiplet, T3 sym-LL128, T4 RHD, DDA-relax) — those MUST stay bit-exact. The
+tolerance gate applies ONLY to explicitly-lossy targets and must state the exact
+error bound in the spec so it cannot be gamed (an implementer must not pick their
+own tolerance — same discipline as F-R9-035 attribution and the frozen-exemption
+rule). Without this, every lossy target is structurally forced to honest-negative
+regardless of whether its codec is actually good — which is a safe default (nothing
+wrong ships) but blocks a genuinely-correct lossy win from ever being demonstrated.
