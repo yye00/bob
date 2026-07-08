@@ -4039,3 +4039,27 @@ wedge. This is the same family as bob96 learnings #3 (minimal MCP set) and #4 (S
 watchdog): the watchdog eventually reaps these, but the real fix is not shipping a
 broken MCP tool into the mandatory path. Reproduce: call BobMemory().search("x") under
 the installed mem0 version — if it raises, every subagent will hang at orientation.
+
+
+## Mode-C gateway silent-hang is CONCURRENCY-AMPLIFIED; concurrency must adaptively throttle
+Tier: Core | Priority: high | Slot: F-R9-037
+The mode-C SDK/gateway silent-hang (TCP connection ESTABLISHED, stream never streams
+tokens, subagent frozen in ep_poll/futex_wait) fires FAR more often under concurrent
+subagent load. Proven on RCCL (2026-07-08): with 3 heavy subagent sessions running
+concurrently, ALL THREE wedged in orientation every cycle at the identical ~10-11s
+cputime — yet a SINGLE heavy `claude --print` call with the same flags (thinking +
+bypassPermissions + tools) returned normally in <45s WHILE the three were wedged. The
+gateway is healthy for one heavy session and storms into silent-stalls at three. This
+matches the bob96 observation that gateway-transport failures are concurrency-amplified
+(8-wide stormed, 1-wide ~baseline). The earlier successful T-targets (T3/T4) ran
+effectively serial. Fixes: (a) bob MUST adaptively throttle — if >=K concurrent
+subagents enter a mode-C stall within one detection window, HALVE max-concurrent and
+retry serially, rather than holding a fixed wide fan-out that storms the gateway; (b)
+default the RCCL/brownfield heavy-compile builds to LOW concurrency (1-2) since each
+subagent's per-turn payload (large C++ context + MCP + thinking) is heavy; wide fan-out
+is for light features. (c) OPERATIONAL: a supervisor that exports its concurrency limit
+as an environment variable ONCE at startup will NOT pick up a live file edit — the
+running process and its child bob inherit the old exported value. Changing the limit on
+a running supervisor requires RESTARTING the supervisor process (or reading the tunable
+from disk per iteration). Pairs with F-R9-031 (SDK watchdog) and bob96 #3/#4: the
+watchdog reaps stalls, but ADAPTIVE CONCURRENCY prevents inducing them en masse.
