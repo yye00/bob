@@ -74,9 +74,9 @@ features:
     priority: critical
     depends_on: []
     acceptance_criteria:
-      - "Command succeeds: git -C . rev-parse --is-inside-work-tree (workspace is a git checkout)"
-      - "Command succeeds: test \"$(git -C . rev-parse --is-shallow-repository)\" = false (full clone, not shallow)"
-      - "Command succeeds: git -C . remote get-url origin | grep -q ROCm/rocm-systems (correct upstream)"
+      - "command: git -C . rev-parse --is-inside-work-tree (workspace is a git checkout)"
+      - "command: test \"$(git -C . rev-parse --is-shallow-repository)\" = false (full clone, not shallow)"
+      - "command: git -C . remote get-url origin | grep -q ROCm/rocm-systems (correct upstream)"
       - "File exists: projects/rccl/install.sh"
       - "File exists: projects/rccl-tests/install.sh"
       - "File exists: projects/rccl/src/collectives.cc"
@@ -94,10 +94,10 @@ features:
     priority: critical
     depends_on: ['F000']
     acceptance_criteria:
-      - "Command succeeds: cd projects/rccl && ./install.sh (librccl.so built)"
-      - "Command succeeds: cd projects/rccl-tests && ./install.sh (perf binaries built)"
-      - "Command succeeds: tools/topo_expl confirms an 8-GPU fully-connected XGMI clique"
-      - "Command succeeds: build/all_reduce_perf -b 8 -e 8G -f 2 -g 8 -d half -c 1 (exit 0, #wrong==0)"
+      - "command: cd projects/rccl && ./install.sh (librccl.so built)"
+      - "command: cd projects/rccl-tests && ./install.sh (perf binaries built)"
+      - "command: tools/topo_expl confirms an 8-GPU fully-connected XGMI clique"
+      - "command: build/all_reduce_perf -b 8 -e 8G -f 2 -g 8 -d half -c 1 (exit 0, #wrong==0)"
       - "File exists: projects/rccl/perf_results/baseline/allreduce_half.txt"
       - "File exists: projects/rccl/perf_results/baseline/allreduce_bfloat16.txt"
       - "File exists: projects/rccl/perf_results/baseline/reducescatter_half.txt"
@@ -119,7 +119,7 @@ features:
     depends_on: ['F001']
     acceptance_criteria:
       - "File exists: projects/rccl/perf_results/ab_bench.sh"
-      - "Command succeeds: bash projects/rccl/perf_results/ab_bench.sh --help"
+      - "command: bash projects/rccl/perf_results/ab_bench.sh --help"
       - "Running the harness on a baseline file twice yields <=2% reported delta (self-consistency)"
       - "Harness output includes columns: size, baseline busbw, after busbw, uplift %, #wrong (or rel-err), and a PASS/FAIL verdict line"
 
@@ -141,7 +141,7 @@ features:
     depends_on: ['F002']
     acceptance_criteria:
       - "RCCL_PARAM RCCL_CHIPLET_TUNER_ENABLE registered with default 0"
-      - "Command succeeds: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
+      - "command: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
       - "File exists: tuner/rccl_tuner_gfx942.csv (with chiplet-aware rows)"
       - "Regression: with RCCL_CHIPLET_TUNER_ENABLE=0, all_reduce_perf -b 4K -e 4M -g 8 busbw within +/-2% of baseline and #wrong==0"
       - "Impact: with RCCL_CHIPLET_TUNER_ENABLE=1 in CPX mode (mpirun -np 64 --bind-to numa, all_reduce_perf -b 4K -e 4M), small-message (4-16 KiB) latency reduced >=2x vs baseline"
@@ -165,7 +165,7 @@ features:
     depends_on: ['F002']
     acceptance_criteria:
       - "RCCL_PARAM RCCL_SYM_LL128_ENABLE and RCCL_DDA_NRANKS_RELAX registered, default 0"
-      - "Command succeeds: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
+      - "command: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
       - "Regression: with both gates 0, the 8-rank ncclSum all_reduce_perf path is bit-identical to baseline (#wrong==0, busbw within +/-2%)"
       - "Impact: with RCCL_SYM_LL128_ENABLE=1, all_reduce_perf -b 1M -e 256M -g 4 selects LL128 and reaches >= ~95% of peak busbw in the large band"
       - "Impact: with RCCL_DDA_NRANKS_RELAX=1, all_reduce_perf -g 2 and -g 4 run the generalized DDA path (#wrong==0)"
@@ -194,7 +194,7 @@ features:
       - "RCCL_PARAM RCCL_QUICKREDUCE_ENABLE default 0; lossy path NEVER auto-selected on the exact ncclSum default path"
       - "File exists: src/include/algorithms/all_reduce/quick_reduce_codec.h"
       - "File exists: src/dda_quick_reduce_ipc.cu"
-      - "Command succeeds: cd projects/rccl && ./install.sh on gfx950 (FP4 native; INT/FP8 codec paths compile-check for gfx942)"
+      - "command: cd projects/rccl && ./install.sh on gfx950 (FP4 native; INT/FP8 codec paths compile-check for gfx942)"
       - "Regression: with RCCL_QUICKREDUCE_ENABLE=0, all_reduce_perf -b 8 -e 8G -g 8 within +/-2% of baseline and #wrong==0"
       - "Impact: with RCCL_QUICKREDUCE_ENABLE=1 RCCL_QUICKREDUCE_CODEC=fp4 on gfx950, all_reduce_perf busbw >= 1.5x baseline above the ~1 MiB crossover (record the crossover size)"
       - "Correctness: mean relative error vs an fp32 reference reduction <= 2e-2 for Q4/FP4 (recorded, not silently relaxed)"
@@ -216,7 +216,7 @@ features:
     acceptance_criteria:
       - "RCCL_PARAM RCCL_QUANT_ALLTOALL_ENABLE default 0"
       - "File exists: src/include/algorithms/alltoall/ (new quantized AllToAll header)"
-      - "Command succeeds: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
+      - "command: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
       - "Implementation does NOT depend on ncclSum associativity (AllToAll performs no reduction)"
       - "Regression: with RCCL_QUANT_ALLTOALL_ENABLE=0, alltoall_perf -b 8K -e 1G -g 8 within +/-2% of baseline"
       - "Impact: with RCCL_QUANT_ALLTOALL_ENABLE=1, alltoall_perf busbw uplift in the MoE token-size band vs baseline"
@@ -241,7 +241,7 @@ features:
     acceptance_criteria:
       - "RCCL_PARAM RCCL_RHD_ENABLE default 0"
       - "File exists: src/dda_recursive_halving_ipc.cu"
-      - "Command succeeds: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
+      - "command: cd projects/rccl && ./install.sh (builds on gfx950; gfx942-specific code paths compile-check only)"
       - "Regression: with RCCL_RHD_ENABLE=0, reduce_scatter_perf/all_reduce_perf -b 256K -e 64M -g 8 within +/-2% of baseline and #wrong==0"
       - "Correctness: with RCCL_RHD_ENABLE=1, #wrong==0 (bit-exact) across the sweep"
       - "Impact (honest): before/after table records latency vs ring in the medium band; a null/small result is documented, not hidden"

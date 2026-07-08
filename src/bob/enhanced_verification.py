@@ -1567,6 +1567,38 @@ def _check_criterion_with_details(
         expression = stripped[len("pytest:"):].strip()
         return _run_pytest_criterion(workspace, expression, timeout=timeout)
 
+    # "command:" / "command succeeds:" — run a shell command in the workspace and
+    # require exit 0. Trailing parenthetical prose (e.g. "(librccl.so built)") is
+    # stripped. This is the generic build/benchmark/tooling AC kind for C++/HIP
+    # application specs (e.g. RCCL) whose steps are shell invocations, not pytest.
+    _cmd_prefix = None
+    for _cp in ("command succeeds:", "command:"):
+        if stripped.lower().startswith(_cp):
+            _cmd_prefix = _cp
+            break
+    if _cmd_prefix is not None:
+        shell_cmd = stripped[len(_cmd_prefix):].strip()
+        # drop a single trailing "(...)" annotation if present
+        _m = re.search(r"\s*\([^()]*\)\s*$", shell_cmd)
+        if _m:
+            shell_cmd = shell_cmd[: _m.start()].strip()
+        if not shell_cmd:
+            return False, "command: AC has no shell command"
+        try:
+            _stdout, _stderr, _rc, _to = _run_with_pgroup_timeout(
+                ["bash", "-lc", shell_cmd], cwd=str(workspace), timeout_s=timeout,
+            )
+        except Exception as _e:  # pragma: no cover - defensive
+            return False, f"command: failed to launch: {_e}"
+        if _to:
+            return False, f"command timed out after {timeout}s: {shell_cmd!r}"
+        if _rc == 0:
+            return True, ""
+        return False, (
+            f"command failed (exit={_rc}): {shell_cmd!r}; "
+            f"stderr_tail={(_stderr or _stdout)[-300:]}"
+        )
+
     # "CI tests: <description>" — look for a pytest file whose name contains
     # recognizable keywords from the description, then run it.  This lets spec
     # authors write prose AC lines like

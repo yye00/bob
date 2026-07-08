@@ -86,6 +86,11 @@ _AC_FORMS: list[re.Pattern[str]] = [
     re.compile(r"^python\s*:\s*\S+", re.IGNORECASE),
     re.compile(r"^Field exists\s*.*:\s*\S+", re.IGNORECASE),
     re.compile(r"^CI tests\s*:\s*\S+", re.IGNORECASE),
+    re.compile(r"^command(?: succeeds)?\s*:\s*\S+", re.IGNORECASE),
+    re.compile(r"^build\s*:\s*\S+", re.IGNORECASE),
+    re.compile(r"^compile\s*:\s*\S+", re.IGNORECASE),
+    re.compile(r"^link\s*:\s*\S+", re.IGNORECASE),
+    re.compile(r"^ctest\s*:\s*\S+", re.IGNORECASE),
 ]
 
 # E-severity smell patterns (simplified subset that doesn't require spaCy)
@@ -617,6 +622,11 @@ def _score_spec_executability(criteria: list[str]) -> tuple[float, list[str]]:
         re.compile(r"^integration\s*:\s*[\w./:-]+", re.IGNORECASE),
         re.compile(r"^python\s*:\s*\S+", re.IGNORECASE),
         re.compile(r"^CI tests\s*:\s*\S+", re.IGNORECASE),
+        re.compile(r"^command(?: succeeds)?\s*:\s*\S+", re.IGNORECASE),
+        re.compile(r"^build\s*:\s*\S+", re.IGNORECASE),
+        re.compile(r"^compile\s*:\s*\S+", re.IGNORECASE),
+        re.compile(r"^link\s*:\s*\S+", re.IGNORECASE),
+        re.compile(r"^ctest\s*:\s*\S+", re.IGNORECASE),
     ]
     hints: list[str] = []
     executable = 0

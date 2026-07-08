@@ -49,6 +49,11 @@ _AC_FORMS: list[tuple[str, re.Pattern[str]]] = [
     ("python", re.compile(r"^python\s*:\s*\S+", re.IGNORECASE)),
     # Field exists form
     ("Field exists", re.compile(r"^Field exists\s*.*:\s*\S+", re.IGNORECASE)),
+    ("command", re.compile(r"^command(?:\s+succeeds)?\s*:\s*\S+", re.IGNORECASE)),
+    ("build", re.compile(r"^build\s*:\s*\S+", re.IGNORECASE)),
+    ("compile", re.compile(r"^compile\s*:\s*\S+", re.IGNORECASE)),
+    ("link", re.compile(r"^link\s*:\s*\S+", re.IGNORECASE)),
+    ("ctest", re.compile(r"^ctest\s*:\s*\S+", re.IGNORECASE)),
 ]
 
 # Bare-verb patterns that indicate vague criteria.

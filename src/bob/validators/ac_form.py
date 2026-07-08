@@ -50,6 +50,10 @@ _INTEGRATION_RE = re.compile(r"^integration\s*:\s*[\w][\w./:-]*$", re.IGNORECASE
 # behavior: <EARS clause> — must contain 'when' somewhere after the prefix.
 _BEHAVIOR_RE = re.compile(r"^behavior\s*:\s*.+\bwhen\b.+$", re.IGNORECASE)
 
+_COMMAND_RE = re.compile(r"^command(?:\s+succeeds)?\s*:\s*\S.*", re.IGNORECASE)
+_BUILD_RE = re.compile(r"^(?:build|compile|link)\s*:\s*\S.*", re.IGNORECASE)
+_CTEST_RE = re.compile(r"^ctest\s*:\s*\S.*", re.IGNORECASE)
+
 _CANONICAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("pytest", _PYTEST_RE),
     ("File exists", _FILE_EXISTS_RE),
@@ -57,6 +61,9 @@ _CANONICAL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("Class defined", _CLASS_DEFINED_RE),
     ("integration", _INTEGRATION_RE),
     ("behavior (EARS)", _BEHAVIOR_RE),
+    ("command", _COMMAND_RE),
+    ("build", _BUILD_RE),
+    ("ctest", _CTEST_RE),
 ]
 
 
