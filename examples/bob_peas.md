@@ -3967,3 +3967,29 @@ commit partial WIP per attempt and restore it on the next spawn. A retry that al
 starts from zero cannot converge a feature larger than the MTBF window; a resuming
 retry can. (Directly realizes bob96 learning #7 option (a)/(b) and pairs with
 F-R9-031 out-of-process watchdog to bound each attempt's wasted time.)
+
+
+## Every performance deliverable MUST be attribution-auditable: name the gate, prove engagement, distinguish inert configs, refuse to fabricate
+Tier: Core | Priority: high | Slot: F-R9-035
+A performance A/B can produce a real-but-MISATTRIBUTED speedup that still passes the
+#wrong==0 correctness gate — e.g. toggling a pre-existing default-on knob (RCCL had
+DDA_ENABLE=1 and DDA_NRANKS_RELAX already in-tree) and crediting the delta to the
+feature's NEW code, or running a config that is silently INERT (single-process -g N
+sets directMode=1 so the DDA IPC path never engages and gate-on==gate-off; or a gate
+that widens tuning tables no device kernel ever selects). Correctness gates do NOT
+catch misattribution. Therefore every T-target/perf deliverable MUST: (a) NAME the
+exact gate env var(s) toggled and record the env delta INTO the benchmark output
+header so attribution is auditable from the artifact alone; (b) PROVE the optimized
+path actually executed via engagement evidence (e.g. NCCL_DEBUG=INFO showing the
+kernel/init ran, with a clean gate-off control showing it did NOT) — the flag flipping
+is not proof the code ran (the T4/RHD + T3/DDA lesson); (c) explicitly DISTINGUISH an
+inert configuration (directMode=1, no-kernel-for-protocol, unsupported platform
+feature) from a live one, and state which measurement is authoritative when a naive
+A/B is superseded (T3's single-process +74% was non-authoritative; the MPI 1-proc/GPU
+relax sweep was the real +12.7%); (d) REFUSE to fabricate numbers that cannot be
+honestly produced on the available hardware and say WHY (T3 correctly deferred the
+LL128 large-band table: no device kernel + symmetric memory unsupported), keeping the
+gate default-off rather than inventing an uplift. bob's RCCL T3 deliverable produced
+all four unprompted — encode them as REQUIRED deliverable structure so honest
+attribution is guaranteed, not luck. This is an anti-cheat requirement (it closes the
+misattribution hole that #wrong==0 alone leaves open), so it must never be relaxed.
