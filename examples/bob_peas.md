@@ -3942,3 +3942,6 @@ feature that has exhausted N spawn attempts with zero artifact/file progress, so
 sibling runnable features get scheduled; the starved feature is retried after
 siblings or routed to decomposition. A single hard feature must not monopolize the
 claim slot. (extends the stuck-readiness decomposer + F-R9-031 frozen-watchdog.)
+
+
+> F-R9-031 addendum (verified on bob97): the in-process idle-timeout approach (wrapping the SDK stream __anext__ in asyncio.wait_for) is a KNOWN TRAP — it violates anyio's cancel-scope rule ('exit cancel scope in a different task') and corrupts the stream/gather (bob72 regression). The real fix MUST be at the SDK transport layer (a per-request HTTP/gateway timeout inside claude-code-sdk), NOT an app-layer wait_for. Until then, an OUT-OF-PROCESS watchdog (kill the wedged bob-run pid) is the only safe mitigation.
