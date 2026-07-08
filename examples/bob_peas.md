@@ -3945,3 +3945,23 @@ claim slot. (extends the stuck-readiness decomposer + F-R9-031 frozen-watchdog.)
 
 
 > F-R9-031 addendum (verified on bob97): the in-process idle-timeout approach (wrapping the SDK stream __anext__ in asyncio.wait_for) is a KNOWN TRAP — it violates anyio's cancel-scope rule ('exit cancel scope in a different task') and corrupts the stream/gather (bob72 regression). The real fix MUST be at the SDK transport layer (a per-request HTTP/gateway timeout inside claude-code-sdk), NOT an app-layer wait_for. Until then, an OUT-OF-PROCESS watchdog (kill the wedged bob-run pid) is the only safe mitigation.
+
+> F-R9-031 addendum #2 (RCCL F004/T3, 2026-07-08): recent source-file writes MUST NOT be used as a liveness veto in the frozen-subagent watchdog. The mode-C hang's signature is that the subagent writes its LAST file and THEN freezes, so `find -mmin -N` keeps seeing those writes for N minutes after death — a watchdog that treats "any recent workspace write" as alive-skip will NEVER fire (observed: T3 wedged 16min while sym_kernels.cc's mtime lingered inside the 3-min window). Why writes are safe to demote: a genuinely-live agent waiting on the model still STREAMS tokens, so build.log mtime advances and the log-age<600 short-circuit fires first; a live compile/benchmark is caught by the compiler/perf pgrep. Therefore, once log_age>threshold AND no compiler AND no perf-binary, a recent source write is necessarily a stale just-before-hang artifact. The kill decision MUST rest solely on: streaming-stall (log mtime stale) + no external build process + BOTH orchestrator and subagent cputime frozen. File mtime is informational, never a veto.
+
+
+## Feature workspace MUST NOT revert WIP between attempts (or MUST checkpoint partial WIP per attempt)
+Tier: Core | Priority: high | Slot: F-R9-034
+Under a nonzero per-attempt crash/hang rate (the mode-C SDK hang), a hard multi-file
+feature whose single-attempt build time exceeds the mean-time-between-crashes can
+NEVER complete if each crashed attempt restarts from zero (the hippy commit-on-success
+completability-cliff, bob96 learning #7). Contrast (verified on RCCL, 2026-07-08):
+the rocm-systems workspace does NOT revert between attempts — after a SIGKILL, T3's
+33KB sym_kernels.cc + 5.8KB sym_kernels.h SURVIVED on disk and the next attempt's
+subagent RESUMED from that WIP instead of restarting. This is why T3 progressed
+cumulatively (orientation-only -> 33KB LL128 implementation) across the mode-C recycle
+where hippy.fft never converged. Fix: bob MUST either (a) keep the feature workspace
+non-reverting across attempts so a retry resumes from partial WIP, or (b) checkpoint/
+commit partial WIP per attempt and restore it on the next spawn. A retry that always
+starts from zero cannot converge a feature larger than the MTBF window; a resuming
+retry can. (Directly realizes bob96 learning #7 option (a)/(b) and pairs with
+F-R9-031 out-of-process watchdog to bound each attempt's wasted time.)
