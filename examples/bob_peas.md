@@ -4185,3 +4185,45 @@ budget, not a gate), never by weakening #wrong==0 or busbw ±2%. Also confirmed 
 diagnosis discipline: when a verifier reports a "timeout", first check whether the
 command is doing more work than the AC intends (all-arch vs host-arch) BEFORE raising
 the budget — the budget raise is the backstop, the scope fix is the real correction.
+
+---
+
+Tier: Core | Priority: high | Slot: F-R9-042
+
+## The out-of-process wedge-watcher must not kill an active REASONING/DELIVERABLE-WRITING turn — freeze-window + log-age must exceed the longest legit single SDK turn
+
+CONTEXT (RCCL T1a/F005, 2026-07-08): the stall_watcher (the F-R9-031 out-of-process
+mode-C reaper) FALSE-KILLED T1a on 4 consecutive attempts (13:24, 13:38, 13:52,
+14:06), each time mid pre-build reasoning or mid deliverable-writing, before it could
+be verified — one killed attempt had already achieved a passing codec accuracy
+(q8 mean_rel_err=0.0104). The feature never reached bob's verification path at all; the
+watcher SIGKILLed it, the supervisor reconciler reset executing->pending, and it
+re-ran from scratch in a ~14min false-kill loop.
+
+ROOT CAUSE: the kill predicate was (log_age>600s AND no-compiler AND no-perf-binary
+AND no-fresh-build-object AND both orchestrator+subagent cputime frozen over a 25s
+window). An Opus subagent doing a long single reasoning turn or writing a large
+deliverable legitimately satisfies ALL of these: no external build process, no token
+streaming to the log for >10min (one long generation), and ~0 cputime advance across
+any given 25s window (blocked in ep_poll awaiting the completion). The F-R9-031 #3
+build-artifact-churn guard protects the COMPILE phase, but there is no analogous
+external-evidence signal during pure reasoning/deliverable-writing.
+
+REQUIREMENT: the watchdog's freeze-confirmation window AND its log-age threshold MUST
+be LONGER than the longest legitimate single SDK reasoning turn. Since a real mode-C
+hang is effectively infinite (observed multi-hour), erring long costs almost nothing
+in detection latency but eliminates the false-kill class. Concretely: raise log-age to
+>=1200s and the cputime freeze window to >=90s (a live turn advances cputime within
+90s and resumes streaming; a true hang shows zero advance over 90s and stays frozen for
+minutes-to-hours). Prefer additionally keying the kill on a MINIMUM number of
+consecutive frozen samples rather than a single window.
+
+This is the third liveness lesson for the reaper, complementing F-R9-031 #2 (recent
+source-writes are not a liveness veto) and #3 (an active compile IS alive via
+build-artifact churn). #2 says "don't trust files the possibly-hung agent wrote"; #3
+says "do trust external build-process output"; #042 says "and don't guillotine a
+healthy long reasoning/writing turn — set the timers longer than the longest legit
+turn." All are watchdog TIMING/liveness fixes; NONE touch the #wrong==0 or busbw ±2%
+anti-cheat gates. A watchdog that kills healthy work before verification is strictly
+worse than one that waits a few extra minutes to confirm a (rare, effectively
+permanent) real hang.
