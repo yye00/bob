@@ -3928,3 +3928,17 @@ feature (observed: RCCL F007/T4). Fix: the extractor MUST rewrite File-exists/co
 AC paths to be workspace-root-relative (prepend the spec's project subdir), OR the
 verifier MUST resolve a bare relative path against the spec's declared project root
 before failing. A path that exists under the project subdir is satisfied.
+
+
+## Scheduler MUST NOT let one repeatedly-wedging feature starve sibling runnable features
+Tier: Core | Priority: high | Slot: F-R9-033
+With single-feature claim per run and lowest-id-first selection, a feature that
+deterministically wedges (mode-C hang in orientation, zero artifact progress) is
+re-claimed every cycle and STARVES sibling features that are fully runnable (deps
+met). Observed on RCCL: F003/T2 spawned 4x, watcher-killed 3x, produced ZERO files,
+while F004/T3 and F005/T1a (runnable, no unmet deps) never got a turn — all cycles
+burned on the stuck target. Fix: the scheduler MUST deprioritize (not abandon) a
+feature that has exhausted N spawn attempts with zero artifact/file progress, so
+sibling runnable features get scheduled; the starved feature is retried after
+siblings or routed to decomposition. A single hard feature must not monopolize the
+claim slot. (extends the stuck-readiness decomposer + F-R9-031 frozen-watchdog.)
