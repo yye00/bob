@@ -4087,3 +4087,49 @@ own tolerance — same discipline as F-R9-035 attribution and the frozen-exempti
 rule). Without this, every lossy target is structurally forced to honest-negative
 regardless of whether its codec is actually good — which is a safe default (nothing
 wrong ships) but blocks a genuinely-correct lossy win from ever being demonstrated.
+
+---
+
+Tier: Core | Priority: high | Slot: F-R9-039
+
+## Pin (or defensively guard) bob's own local-memory dependencies — mem0/openai API drift silently wedges every sub-agent
+
+CONTEXT (RCCL build, 2026-07-08): bob's persistent-memory layer (`bob.memory`)
+uses mem0ai with an in-process local stack (FastEmbed embeddings, on-disk Qdrant)
+and NEVER calls a hosted LLM (all `.add()` pass `infer=False`). The module docstring
+promises "No external API keys". mem0ai is UNPINNED in the build, and it drifted to
+2.0.11, which twice broke bob mid-build in ways that MASQUERADE as an SDK/gateway
+silent-hang:
+  1. `.search(...)` / `.get_all(...)` signatures changed (top-level `user_id` removed
+     → moved into `filters={"user_id": ...}`); the old calls raised ValueError that
+     got swallowed into a wedged MCP stream.
+  2. `Memory.from_config()` now EAGERLY constructs `OpenAI(api_key=...)` for the
+     (never-invoked) LLM slot and REJECTS the in-config `api_key` placeholder when
+     `OPENAI_API_KEY` is unset, raising `openai.OpenAIError: Missing credentials`.
+     The bob memory_mcp server lazy-inits `BobMemory()` on the sub-agent's FIRST
+     memory tool call, so that call never returns and the sub-agent blocks forever
+     in `ep_poll` on the MCP stdio pipe — a deterministic ~12s "freeze" that looks
+     identical to the mode-C gateway hang and cost ~13h of misdirected kill/re-roll.
+
+DIAGNOSIS TRAP worth encoding: when probing whether the model gateway is alive,
+NEVER filter the probe's stdout (we grepped out `retired|Consider` warning lines and
+the filter also ate the real response body, making a HEALTHY gateway look dead). Show
+raw bytes first; a "no output" verdict from a filtered probe is untrustworthy.
+
+REQUIREMENT for bob98:
+- The build spec MUST pin bob's own runtime deps that affect the memory/embedding
+  path (mem0ai, openai, qdrant-client, fastembed) to known-good versions, OR the
+  memory layer MUST be defensively guarded so a dep API/behavior change degrades
+  gracefully (memory disabled with a logged warning) instead of hanging a sub-agent.
+- Minimum immediate guard (applied): set a placeholder `OPENAI_API_KEY` at
+  `bob.memory` import (`os.environ.setdefault("OPENAI_API_KEY", "sk-unused-infer-false")`)
+  so mem0's OpenAI client can CONSTRUCT; no network call is ever made because the LLM
+  is never invoked (`infer=False`). This restores the "no external API keys" contract.
+- The memory_mcp init and every memory tool handler MUST be wrapped so that ANY
+  exception constructing or calling the backing store returns a fast, explicit error
+  to the sub-agent (which can then proceed without memory) rather than leaving the
+  MCP request unanswered — an unanswered MCP call is the actual wedge mechanism.
+
+INVARIANT: this is purely a toolchain-robustness fix. It touches NO anti-cheat gate
+and NO threshold. The `#wrong==0` bitwise gate (lossless targets) and busbw ±2%
+self-consistency gate remain exactly as specified.
