@@ -4301,3 +4301,43 @@ resolver NH-ing correct work. BEST long-term fix: resolve by actual `import_modu
 side-effectful modules, falling back to the regex when import is unsafe/unavailable.
 This makes the checker MATCH the AC's real meaning; it is NOT a gate weakening — a truly
 absent symbol must still fail.
+
+---
+
+Tier: Core | Priority: high | Slot: F-R9-045
+
+## Self-build convergence must include a GREEN self-test gate + test<->impl symbol-name reconciliation
+
+CONTEXT (bob98 self-build, 2026-07-08): bob98 converged cleanly — 194/194 features
+completed, zero needs_human/failed/gate_blocked, ALL_COMPLETED, imports OK, CLI works.
+But a sampled run of its OWN test suite was 2251 passed / 24 failed / 5 collection
+errors. EVERY failure was the SAME benign class: TEST<->IMPLEMENTATION NAMING DRIFT,
+not broken product code. When a feature AC says "Function defined: bob.X.Y", the
+sub-agent implements a module+symbol that satisfies the verifier (now
+annotated-assignment-aware, F-R9-044), but a sibling hand-written test file may assert
+a DIFFERENT exact importable name — so the feature's own AC passes while an unrelated
+test references the old/renamed/legacy-gen name (e.g. test imports `add_spec_slot_column`
+from `bob.features` but the built symbol is named differently; `bob72.integration_validator`
+vs `bob.integration_validator`; `bob.reviews.spec_findings_writer` vs
+`bob.spec_findings_writer`). Also 10 test files need `hypothesis`, a dev-extra not
+installed in the runner venv, so they fail at collection.
+
+Why this matters: a feature-level "completed" (its AC met) does NOT guarantee the
+self-authored TEST SUITE is green as-built. At bob98's scale (194 features) this drift
+becomes visible; smaller gens hid it.
+
+REQUIREMENT for bob99+:
+1. Add a CONVERGENCE GATE that runs the generation's OWN full test suite and requires
+   it to be green (or an explicitly-triaged allowlist) before declaring convergence —
+   not just "all features completed". This RAISES the bar; it does not touch any
+   anti-cheat gate.
+2. The AC synthesizer must PIN the exact importable module+symbol name that any
+   generated test will import, OR a post-build reconciliation pass must align stale
+   test imports to the implemented names (and purge legacy-gen package prefixes like
+   `bobNN.` left over from rsync-seeded tests).
+3. Pin test-only deps (`hypothesis`, etc.) in the build spec's dev extras so
+   property-based / spec tests collect and run.
+
+This is the natural next-gen quality improvement: bob has been gating on per-feature
+ACs; bob99 should also gate on its own suite being green. INVARIANT unchanged —
+#wrong==0 / busbw gates and all correctness thresholds stay exactly as specified.
