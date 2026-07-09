@@ -4375,3 +4375,40 @@ bob99 proved the capability COMPILES; bob100 must prove it GATES. This is the re
 meta-lesson of the self-build ladder: a spec feature is not a behavior until it is wired
 into the loop that runs every build. INVARIANT unchanged — no anti-cheat threshold
 touched; this strictly RAISES the convergence bar.
+
+---
+
+Tier: Core | Priority: high | Slot: F-R9-047
+
+## Symbol-alias reconciliation — close the remaining test↔impl drift (F-R9-046 solved prefixes; this solves renamed symbols)
+
+CONTEXT (bob100 self-build, 2026-07-09): F-R9-046's spawn-time test-import reconciler
+WORKED and produced a MEASURABLE generation-over-generation improvement — collection
+drift shrank from bob99's 18 errors to bob100's 8, tests-collected rose 34,652→35,629,
+and the legacy <code>bobNN.</code> prefix class is now ELIMINATED (0 residual in real
+test files). But ~8 residual errors remain: genuine SYMBOL RENAMES, not prefix drift.
+Example: test imports <code>SelfDiscoverMetaAgent</code> but the module implements
+<code>self_discover</code>/<code>run_focused_extractor</code>; test wants
+<code>atomic_write_yaml</code>, module has <code>atomic_write_findings</code>. The
+reconciler CORRECTLY refused to touch these (the module imports fine; only the symbol
+name differs) — blind-renaming product symbols could break real callers and is not a
+gate to lower.
+
+REQUIREMENT for bob101+ (the symbol-alias half of the green-self-test gate):
+1. SYMBOL-ALIAS RECONCILER: when a seeded test imports a symbol that does not exist on
+   an otherwise-importable module, resolve it by (a) concept-token match against the
+   module's actual exports (reuse F-R7-620's equivalence logic), and if a confident
+   single match exists, either add a thin backward-compat alias in the module
+   (<code>SelfDiscoverMetaAgent = self_discover</code>) OR rewrite the test's import to
+   the real name. Only act on a HIGH-CONFIDENCE unique match; ambiguous cases stay
+   failing (never guess a wrong binding).
+2. AC-SYNTHESIZER SYMBOL PINNING: when the synthesizer emits a "Function defined:
+   pkg.mod.Name" AC, the SAME exact <code>Name</code> must be what any generated test
+   imports — pin it once and reuse, so the implementer and the test agree by
+   construction. This prevents the drift at the source rather than reconciling after.
+3. Convergence gate then requires GREEN (0 collection errors) or a triaged allowlist.
+
+The trajectory is the point: bob98 exposed the gap (built≠enforced) → bob99 built the
+gate capability → bob100 operationalized the prefix reconciler and HALVED the drift →
+bob101 closes the symbol-alias remainder. Each gen measurably improves the next.
+INVARIANT unchanged — no anti-cheat threshold touched; high-confidence-only aliasing.
