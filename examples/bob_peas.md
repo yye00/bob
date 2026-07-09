@@ -4341,3 +4341,37 @@ REQUIREMENT for bob99+:
 This is the natural next-gen quality improvement: bob has been gating on per-feature
 ACs; bob99 should also gate on its own suite being green. INVARIANT unchanged —
 #wrong==0 / busbw gates and all correctness thresholds stay exactly as specified.
+
+---
+
+Tier: Core | Priority: high | Slot: F-R9-046
+
+## OPERATIONALIZE the green-self-test gate (F-R9-045 built the capability; it must actually RUN and GATE)
+
+CONTEXT (bob99 self-build, 2026-07-09): bob99 converged 196/196 at 32-wide, zero bad
+states, zero stall-kills, and it DID build F-R9-045's self-test-gate feature
+(<code>src/bob/self_test_gate.py</code> is present and imports). But bob99's own test
+suite still showed the SAME test↔impl naming drift as bob98 (~2053 pass / ~25 fail / 3
+collection-errors; 53 test files still carry legacy <code>bobNN.</code> / <code>bob.reviews.</code>
+import prefixes). Lesson: adding a gate FEATURE to the spec does not, by itself,
+enforce it — bob99 was not gated on green-self-test during its OWN build (that gate
+governs the next gen), and the drift did not self-reduce because the RECONCILIATION
+half of F-R9-045 never actually ran against the inherited tests.
+
+REQUIREMENT for bob100+ (operationalize, do not merely implement):
+1. SPAWN-TIME RECONCILER: the spawn/seed step (before the build starts) must run the
+   test-import reconciler on the rsync'd tests: purge legacy generation prefixes
+   (<code>bob72.</code>, <code>bob98.</code>, any <code>bobNN.</code>), remap moved
+   modules (e.g. <code>bob.reviews.spec_findings_writer</code> →
+   <code>bob.spec_findings_writer</code>), and align symbols the AC synthesizer renamed.
+   This turns inherited-but-stale tests green without touching product code.
+2. CONVERGENCE GATE ENFORCEMENT: the supervisor's "done" check must actually invoke
+   <code>self_test_gate</code> and require a green suite (or an explicitly-triaged
+   allowlist) BEFORE emitting ALL_COMPLETE — convergence = (all features complete) AND
+   (self-test green), not features-only.
+3. Pin test-only deps (hypothesis etc.) in the seed so property tests collect.
+
+bob99 proved the capability COMPILES; bob100 must prove it GATES. This is the recurring
+meta-lesson of the self-build ladder: a spec feature is not a behavior until it is wired
+into the loop that runs every build. INVARIANT unchanged — no anti-cheat threshold
+touched; this strictly RAISES the convergence bar.
