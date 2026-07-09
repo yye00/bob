@@ -177,6 +177,52 @@
 # access to pull the cited papers during Phase 3 research.
 
 # ============================================================================
+# EMPIRICAL RESULTS — mi355/gfx950 build (2026-07-08, this host) — GROUND TRUTH
+# ============================================================================
+# This spec was authored for MI300X/gfx942 but was BUILT AND BENCHMARKED on
+# 8x MI355X (gfx950 / CDNA4, ROCm 7.0.1). The full 9-feature build completed
+# (9/9, zero needs_human) and results are banked at
+# yye00/rocm-systems branch `rccl-single-node-opt`
+# (projects/rccl/perf_results/: baseline/, ab_bench.sh, T1a/T1b/T2/T3/T4_*.md,
+# IMPACT_SUMMARY.md). Update this spec's arch to gfx950 for reruns on this host
+# (--amdgpu_targets gfx950, /opt/rocm-7.0.1, hip-python 7.0.1.*). Findings:
+#
+#   * THE ONE REAL WIN — T3a `RCCL_DDA_NRANKS_RELAX` (AllReduce, low rank count):
+#     bit-exact (#wrong=0) AND faster than the default ring at 2/4 ranks.
+#     Raw before/after (perf_results/t3/, 64 MiB fp32, MPI 1proc/GPU):
+#       2 ranks: ring 7.54 GB/s  -> DDA 11.35 GB/s  (+50%)
+#       4 ranks: ring 10.99 GB/s -> DDA 22.67 GB/s  (+106%)
+#     Independent 8-rank spot rerun: 156.06 -> 176.09 GB/s (+12.8%), #wrong=0.
+#     MECHANISM: RCCL's default AllReduce is a RING (p-1 sequential hops). At low
+#     rank counts the collective is LATENCY-bound, not bandwidth-bound, so the DDA
+#     direct-peer-IPC one-shot/two-shot kernel beats the ring. Engagement PROVEN
+#     via NCCL_DEBUG=INFO: with gate ON all N ranks log ncclDdaIpcCommInit +
+#     directMode 0; with gate OFF, 0 ranks init DDA (gate is the only difference).
+#     At 8 ranks the advantage vanishes (ring becomes bandwidth-bound) — so the
+#     recommendation is auto-select DDA SCOPED TO 2/4 ranks only. DDA IPC engages
+#     ONLY with 1-process-per-GPU (mpirun); single-process -g N sets directMode=1
+#     and skips DDA (gate-on == gate-off) — a measurement trap to avoid.
+#
+#   * HONEST NEGATIVES (measured regressions, correctly shipped default-OFF, NOT
+#     fabricated): T4/RHD recursive-halving = 5-6x SLOWER (extra rounds hurt on a
+#     bandwidth-saturated 8-way XGMI clique); T1a/QuickReduce fp4 = 8-12x slower +
+#     4-bit codecs can't meet 2e-2 rel-err (info-theoretic limit; q8 passes at
+#     0.0104); T1b/quant-AllToAll = 30-160x slower. All are correct-but-slow on an
+#     intra-node XGMI clique; retained default-off as substrate for future
+#     vectorized-codec / inter-node work.
+#
+#   * DEFERRED (not measurable on this host, NOT faked): T2/chiplet-tuner CPX 2x
+#     small-msg latency (needs a CPX-partitioned host; this node is SPX);
+#     T3b/symmetric-LL128 (no LL128 device kernel + symmetric memory unsupported).
+#
+#   * KEY DISCIPLINE THAT HELD: #wrong==0 lossless gate + busbw +/-2% self-consistency
+#     gate were NEVER weakened. They caught 3 would-be false positives (T3 single-proc
+#     misattribution, T1b broken-validator, T1a 4-bit over-tolerance). Only the
+#     genuinely-bit-exact-and-faster T3a passed. NET: all 5 targets ship default-off;
+#     production path is bit-identical to baseline; one real +12.8% win recommended
+#     for regime-scoped auto-selection. Do NOT lower these gates on rerun.
+
+# ============================================================================
 # PHASE 0 — harness: build, benchmark protocol, correctness gate
 # ============================================================================
 
