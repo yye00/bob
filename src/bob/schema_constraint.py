@@ -39,13 +39,12 @@ from typing import Any
 
 import jsonschema
 
+from bob.package_resources import spec_schema_path
+
 logger = logging.getLogger(__name__)
 
-# Default schema path — resolved relative to the workspace root.
-# __file__ = src/bob/schema_constraint.py → 3 parents up = workspace root
-_DEFAULT_SCHEMA_PATH: Path = (
-    Path(__file__).parent.parent.parent / "schemas" / "spec.v1.json"
-)
+# Source checkouts use ``schemas/spec.v1.json``; wheels use the embedded copy.
+_DEFAULT_SCHEMA_PATH: Path = spec_schema_path()
 
 __all__ = [
     "validate_spec_against_schema",

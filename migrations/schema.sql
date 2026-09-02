@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS projects (
 
     -- Resource tracking
     total_cost_usd REAL DEFAULT 0.0,
-    max_cost_usd REAL DEFAULT 1000000.0,
+    max_cost_usd REAL DEFAULT 1.0e300,
 
     -- Spec change detection (F115)
     spec_hash TEXT,                    -- SHA256 of spec file for change detection

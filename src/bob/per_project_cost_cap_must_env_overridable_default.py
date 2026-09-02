@@ -9,7 +9,7 @@ EVERY remaining ready feature was mass-NH'd with "cost-cap projection blocked".
 This violates the operator directive that bob-chain development has no $ budget.
 
 Fix applied across THREE sources (all must be correct simultaneously):
-  1. ``schema.sql`` — ``projects.max_cost_usd`` column DEFAULT changed to 1_000_000.0
+  1. ``schema.sql`` — ``projects.max_cost_usd`` uses the canonical 1.0e300 sentinel.
   2. ``cli/__init__.py`` ``bob init`` command — sets max_cost_usd from BOB_MAX_COST_USD
      on the INSERT, not relying on the schema default.
   3. ``db.create_project`` — env-aware default when max_cost_usd is None.
@@ -21,7 +21,7 @@ which validates that all three constraints are satisfied in the running process.
 
 Rules
 -----
-- Empty or malformed ``BOB_MAX_COST_USD`` → unlimited (1_000_000.0), NEVER 0.
+- Empty or malformed ``BOB_MAX_COST_USD`` → canonical 1.0e300 sentinel, NEVER 0.
 - Per-attempt cap (``BOB_PER_ATTEMPT_COST_CAP``) and per-feature telemetry
   ceiling (``BOB_PER_FEATURE_COST_CEILING``) remain in force.
 """
@@ -30,33 +30,7 @@ from __future__ import annotations
 
 import os
 
-
-_UNLIMITED = 1_000_000.0
-
-
-def resolve_max_cost_usd() -> float:
-    """Return the effective per-project cost ceiling.
-
-    Reads ``BOB_MAX_COST_USD`` from the environment.  An absent, empty, or
-    non-numeric value returns the effectively-unlimited default (1_000_000.0).
-
-    Returns
-    -------
-    float
-        The cost ceiling in USD.  Always >= 0.0.
-    """
-    import math as _math
-
-    raw = os.environ.get("BOB_MAX_COST_USD", "")
-    if not raw or not raw.strip():
-        return _UNLIMITED
-    try:
-        val = float(raw)
-        if _math.isnan(val) or _math.isinf(val):
-            return _UNLIMITED
-        return max(0.0, val)
-    except ValueError:
-        return _UNLIMITED
+from bob.models import UNLIMITED_MAX_COST_USD, resolve_max_cost_usd
 
 
 def per_project_cost_cap_must_env_overridable_default() -> dict[str, object]:
@@ -64,14 +38,14 @@ def per_project_cost_cap_must_env_overridable_default() -> dict[str, object]:
 
     Checks that:
     1. ``resolve_max_cost_usd()`` returns the env-specified value when set.
-    2. The default (no env var) is effectively-unlimited (>= 1_000_000.0).
+    2. The default (no env var) is the canonical finite unlimited sentinel.
     3. ``models.Project`` default_factory delegates to the same resolver.
 
     Returns a status dict suitable for inclusion in healthcheck output::
 
         {
             "ok": True,
-            "max_cost_usd": 1000000.0,
+            "max_cost_usd": 1.0e300,
             "source": "default",   # or "BOB_MAX_COST_USD"
         }
 
@@ -98,6 +72,7 @@ def per_project_cost_cap_must_env_overridable_default() -> dict[str, object]:
 
 
 __all__ = [
+    "UNLIMITED_MAX_COST_USD",
     "resolve_max_cost_usd",
     "per_project_cost_cap_must_env_overridable_default",
 ]

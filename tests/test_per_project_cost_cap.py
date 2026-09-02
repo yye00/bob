@@ -3,7 +3,7 @@
 Validates the three-source fix:
 1. models.Project.max_cost_usd uses env-aware default_factory
 2. db.create_project writes env-aware max_cost_usd to the DB
-3. schema.sql DEFAULT is 1_000_000.0, not 500.0
+3. schema.sql DEFAULT is the canonical finite unlimited sentinel, not 500.0
 
 And that bob.models.resolve_max_cost_usd is importable and correct.
 """
@@ -16,6 +16,10 @@ import sqlite3
 import tempfile
 
 import pytest
+from bob.models import UNLIMITED_MAX_COST_USD
+
+
+UNLIMITED = UNLIMITED_MAX_COST_USD
 
 
 # ---------------------------------------------------------------------------
@@ -42,10 +46,10 @@ def test_resolve_max_cost_usd_importable():
 
 
 def test_resolve_max_cost_usd_default_is_unlimited():
-    """Default (no env var) returns effectively-unlimited 1_000_000.0."""
+    """Default (no env var) returns the canonical unlimited sentinel."""
     from bob.models import resolve_max_cost_usd
 
-    assert resolve_max_cost_usd() == 1_000_000.0
+    assert resolve_max_cost_usd() == UNLIMITED
 
 
 def test_resolve_max_cost_usd_not_500():
@@ -69,7 +73,7 @@ def test_resolve_max_cost_usd_empty_env_returns_unlimited(monkeypatch):
     from bob.models import resolve_max_cost_usd
 
     result = resolve_max_cost_usd()
-    assert result == 1_000_000.0
+    assert result == UNLIMITED
     assert result != 0.0
 
 
@@ -79,7 +83,7 @@ def test_resolve_max_cost_usd_malformed_env_returns_unlimited(monkeypatch):
     from bob.models import resolve_max_cost_usd
 
     result = resolve_max_cost_usd()
-    assert result == 1_000_000.0
+    assert result == UNLIMITED
 
 
 def test_resolve_max_cost_usd_nan_returns_unlimited(monkeypatch):
@@ -88,7 +92,7 @@ def test_resolve_max_cost_usd_nan_returns_unlimited(monkeypatch):
     from bob.models import resolve_max_cost_usd
 
     result = resolve_max_cost_usd()
-    assert result == 1_000_000.0
+    assert result == UNLIMITED
 
 
 def test_resolve_max_cost_usd_inf_returns_unlimited(monkeypatch):
@@ -97,7 +101,7 @@ def test_resolve_max_cost_usd_inf_returns_unlimited(monkeypatch):
     from bob.models import resolve_max_cost_usd
 
     result = resolve_max_cost_usd()
-    assert result == 1_000_000.0
+    assert result == UNLIMITED
 
 
 def test_resolve_max_cost_usd_zero_is_honored(monkeypatch):
@@ -122,11 +126,11 @@ def test_resolve_max_cost_usd_negative_clamped_to_zero(monkeypatch):
 
 
 def test_project_default_max_cost_usd_is_unlimited():
-    """Project() without explicit max_cost_usd gets 1_000_000.0, not 500."""
+    """Project() without explicit max_cost_usd gets the unlimited sentinel."""
     from bob.models import Project
 
     p = Project(id="t1", name="t1", workspace_path="/tmp")
-    assert p.max_cost_usd == 1_000_000.0
+    assert p.max_cost_usd == UNLIMITED
     assert p.max_cost_usd != 500.0
 
 
@@ -143,12 +147,12 @@ def test_project_default_max_cost_usd_reads_env(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# AC: schema.sql DEFAULT is 1_000_000.0
+# AC: schema.sql DEFAULT is the canonical finite unlimited sentinel
 # ---------------------------------------------------------------------------
 
 
 def test_schema_sql_default_is_unlimited():
-    """schema.sql projects.max_cost_usd DEFAULT must be 1_000_000.0, not 500.0."""
+    """schema.sql uses the canonical finite unlimited sentinel, not 500.0."""
     schema_candidates = [
         pathlib.Path("migrations/schema.sql"),
         pathlib.Path("src/bob/schema.sql"),
@@ -160,10 +164,10 @@ def test_schema_sql_default_is_unlimited():
     content = schema_path.read_text()
     # Must not contain the old hardcoded 500.0 default for max_cost_usd
     assert "DEFAULT 500" not in content, (
-        "schema.sql still has DEFAULT 500 — must be 1_000_000.0"
+        "schema.sql still has the obsolete DEFAULT 500"
     )
-    assert "1000000" in content or "1_000_000" in content.replace(",", ""), (
-        "schema.sql must set max_cost_usd DEFAULT to 1000000.0"
+    assert "1.0e300" in content.lower(), (
+        "schema.sql must use the canonical 1.0e300 unlimited sentinel"
     )
 
 
@@ -173,7 +177,7 @@ def test_schema_sql_default_is_unlimited():
 
 
 def test_db_create_project_default_unlimited():
-    """create_project without max_cost_usd writes 1_000_000.0 to the DB."""
+    """create_project persists the canonical unlimited sentinel."""
     from bob.db import create_project, init_database
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -184,7 +188,7 @@ def test_db_create_project_default_unlimited():
             workspace_path=tmpdir,
             db_path=db_path,
         )
-        assert p.max_cost_usd == 1_000_000.0
+        assert p.max_cost_usd == UNLIMITED
         assert p.max_cost_usd != 500.0
 
         # Verify it was persisted to the DB row, not just the model
@@ -192,7 +196,7 @@ def test_db_create_project_default_unlimited():
         row = conn.execute("SELECT max_cost_usd FROM projects WHERE id=?", (p.id,)).fetchone()
         conn.close()
         assert row is not None
-        assert row[0] == 1_000_000.0
+        assert row[0] == UNLIMITED
 
 
 def test_db_create_project_honors_env(monkeypatch):
@@ -250,4 +254,4 @@ def test_orchestrator_imports_resolve_max_cost_usd():
     assert p.max_cost_usd > 0, (
         "Default max_cost_usd must be > 0 so the orchestrator cost gate works correctly"
     )
-    assert p.max_cost_usd == 1_000_000.0
+    assert p.max_cost_usd == UNLIMITED

@@ -6,9 +6,9 @@ delegate to this function so the policy is consistent.
 
 Rules
 -----
-- ``BOB_MAX_COST_USD`` absent/empty/whitespace → 1_000_000.0 (unlimited).
-- NaN or Inf value → 1_000_000.0 (unlimited).
-- Malformed string → 1_000_000.0 (unlimited, NEVER 0 — zero blocks all spawns).
+- ``BOB_MAX_COST_USD`` absent/empty/whitespace → canonical ``1.0e300`` sentinel.
+- NaN or Inf value → canonical ``1.0e300`` sentinel.
+- Malformed string → canonical ``1.0e300`` sentinel, never 0.
 - Valid numeric value → clamped to >= 0.0.
 - Per-attempt cap (``BOB_PER_ATTEMPT_COST_CAP``) and per-feature telemetry
   ceiling (``BOB_PER_FEATURE_COST_CEILING``) remain in force; only the
@@ -17,35 +17,7 @@ Rules
 
 from __future__ import annotations
 
-import math
-import os
+from bob.models import UNLIMITED_MAX_COST_USD, resolve_max_cost_usd
 
 
-_UNLIMITED: float = 1_000_000.0
-
-
-def resolve_max_cost_usd() -> float:
-    """Return the effective per-project cost ceiling in USD.
-
-    Reads ``BOB_MAX_COST_USD`` from the environment.  Falls back to the
-    effectively-unlimited default (1_000_000.0) for any absent, empty,
-    whitespace-only, non-numeric, NaN, or Inf value.
-
-    Returns
-    -------
-    float
-        Cost ceiling in USD.  Always >= 0.0.  Never NaN or Inf.
-    """
-    raw = os.environ.get("BOB_MAX_COST_USD", "")
-    if not raw or not raw.strip():
-        return _UNLIMITED
-    try:
-        val = float(raw)
-        if math.isnan(val) or math.isinf(val):
-            return _UNLIMITED
-        return max(0.0, val)
-    except ValueError:
-        return _UNLIMITED
-
-
-__all__ = ["resolve_max_cost_usd"]
+__all__ = ["UNLIMITED_MAX_COST_USD", "resolve_max_cost_usd"]

@@ -37,15 +37,12 @@ from typing import Any
 
 import jsonschema
 
+from bob.package_resources import spec_schema_path
 from spec_synthesis.constrained_emit import emit_with_schema as _emit_with_schema
 
 logger = logging.getLogger(__name__)
 
-# Default schema path — resolved relative to the workspace root.
-# __file__ = src/bob/schema_constrained_emission.py → 3 parents up = workspace root
-_DEFAULT_SCHEMA_PATH: Path = (
-    Path(__file__).parent.parent.parent / "schemas" / "spec.v1.json"
-)
+_DEFAULT_SCHEMA_PATH: Path = spec_schema_path()
 
 __all__ = [
     "emit_constrained_spec",

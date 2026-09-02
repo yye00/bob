@@ -82,20 +82,24 @@ class TestParseSpecAndPDF:
         )
         assert result.exit_code != 0
 
-    def test_invalid_yaml_shows_error(self, tmp_path):
-        """generate-features with invalid YAML shows error."""
+    def test_non_yaml_text_is_passed_to_planner(self, tmp_path):
+        """generate-features treats non-YAML content as free-form requirements."""
         from bob.cli import main
 
-        spec_file = tmp_path / "bad.yaml"
-        spec_file.write_text("{{{{invalid yaml::::}}}")
+        spec_file = tmp_path / "requirements.md"
+        source = "Use the literal template {{{{invalid yaml::::}}} in the UI."
+        spec_file.write_text(source)
         output_file = tmp_path / "features.yaml"
 
         runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["generate-features", str(spec_file), "--output", str(output_file)],
-        )
-        assert result.exit_code != 0 or "error" in result.output.lower()
+        with patch("bob.cli._run_generate_features", return_value=[]) as mock_gen:
+            result = runner.invoke(
+                main,
+                ["generate-features", str(spec_file), "--output", str(output_file)],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert mock_gen.call_args.args[0] == source
 
     def test_refs_option_accepts_pdf_paths(self, tmp_path):
         """--refs option accepts file paths for reference documents."""

@@ -25,13 +25,11 @@ from typing import Any
 
 import jsonschema
 
+from bob.package_resources import spec_schema_path
+
 logger = logging.getLogger(__name__)
 
-# Default schema path — resolved relative to this file's package root.
-# src/spec_synthesis/constrained_emit.py → workspace root = ../../../../
-_DEFAULT_SCHEMA_PATH: Path = (
-    Path(__file__).parent.parent.parent / "schemas" / "spec.v1.json"
-)
+_DEFAULT_SCHEMA_PATH: Path = spec_schema_path()
 
 
 def _load_schema(schema_path: Path) -> dict[str, Any]:

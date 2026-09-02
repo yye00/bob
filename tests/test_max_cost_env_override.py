@@ -6,8 +6,8 @@ Covers the three persisted sources of the max_cost_usd default:
   3. the `bob init` CLI command (raw INSERT sets max_cost_usd from env)
 
 The old hardcoded 500.0 ceiling mass-NH'd every remaining feature once a long
-run approached it; the effective default MUST now be effectively-unlimited
-(1_000_000.0) unless BOB_MAX_COST_USD is set to a finite value.
+run approached it; the effective default MUST now use Bob's canonical finite
+unlimited sentinel unless BOB_MAX_COST_USD is set to a finite value.
 """
 
 from __future__ import annotations
@@ -15,9 +15,10 @@ from __future__ import annotations
 import pathlib
 
 import pytest
+from bob.models import UNLIMITED_MAX_COST_USD
 
 
-UNLIMITED = 1_000_000.0
+UNLIMITED = UNLIMITED_MAX_COST_USD
 
 
 @pytest.fixture(autouse=True)

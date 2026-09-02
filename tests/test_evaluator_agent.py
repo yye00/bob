@@ -177,6 +177,7 @@ class TestPromptBoundaryIsolation:
             "workspace",
             "target_type",
             "target_id",
+            "change_bundle_sha256",
             "max_turns",
             "session_isolation_hint",
             "on_message",
@@ -328,6 +329,18 @@ class TestParseEvaluatorVerdict:
         v = parse_evaluator_verdict(text)
         assert v["verdict"] == "PASS"
         assert v["confidence"] == 1.0
+
+    @pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+    def test_nonfinite_confidence_is_rejected(self, constant):
+        text = (
+            '```json\n{"verdict": "PASS", "findings": [], '
+            f'"confidence": {constant}, "evidence": {{}}}}\n```'
+        )
+
+        verdict = parse_evaluator_verdict(text)
+
+        assert verdict["verdict"] == "INSUFFICIENT_EVIDENCE"
+        assert verdict["confidence"] == 0.0
 
 
 # ---------------------------------------------------------------------------

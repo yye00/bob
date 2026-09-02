@@ -12,6 +12,10 @@ from __future__ import annotations
 import math
 
 import pytest
+from bob.models import UNLIMITED_MAX_COST_USD
+
+
+UNLIMITED = UNLIMITED_MAX_COST_USD
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +29,7 @@ class TestResolveMaxCostUsdDefault:
     def test_no_env_var_returns_unlimited(self):
         from bob.cost_config import resolve_max_cost_usd
 
-        assert resolve_max_cost_usd() == 1_000_000.0
+        assert resolve_max_cost_usd() == UNLIMITED
 
     def test_return_type_is_float(self):
         from bob.cost_config import resolve_max_cost_usd
@@ -80,27 +84,27 @@ class TestResolveMaxCostUsdMalformedEnv:
         monkeypatch.setenv("BOB_MAX_COST_USD", "")
         from bob.cost_config import resolve_max_cost_usd
 
-        assert resolve_max_cost_usd() == 1_000_000.0
+        assert resolve_max_cost_usd() == UNLIMITED
 
     def test_whitespace_only_returns_unlimited(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "   ")
         from bob.cost_config import resolve_max_cost_usd
 
-        assert resolve_max_cost_usd() == 1_000_000.0
+        assert resolve_max_cost_usd() == UNLIMITED
 
     def test_non_numeric_string_returns_unlimited(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "not_a_number")
         from bob.cost_config import resolve_max_cost_usd
 
         result = resolve_max_cost_usd()
-        assert result == 1_000_000.0
+        assert result == UNLIMITED
 
     def test_nan_string_returns_unlimited(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "NaN")
         from bob.cost_config import resolve_max_cost_usd
 
         result = resolve_max_cost_usd()
-        assert result == 1_000_000.0
+        assert result == UNLIMITED
         assert not math.isnan(result)
 
     def test_inf_string_returns_unlimited(self, monkeypatch):
@@ -108,7 +112,7 @@ class TestResolveMaxCostUsdMalformedEnv:
         from bob.cost_config import resolve_max_cost_usd
 
         result = resolve_max_cost_usd()
-        assert result == 1_000_000.0
+        assert result == UNLIMITED
         assert not math.isinf(result)
 
     def test_none_like_string_returns_unlimited(self, monkeypatch):
@@ -116,7 +120,7 @@ class TestResolveMaxCostUsdMalformedEnv:
         from bob.cost_config import resolve_max_cost_usd
 
         result = resolve_max_cost_usd()
-        assert result == 1_000_000.0
+        assert result == UNLIMITED
 
     def test_malformed_never_returns_zero(self, monkeypatch):
         """Malformed env must not silently produce 0.0 — that blocks all spawns."""

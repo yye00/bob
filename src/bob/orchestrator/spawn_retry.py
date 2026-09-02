@@ -36,6 +36,8 @@ from typing import Any, Awaitable, Callable, Deque, Literal
 
 import yaml
 
+from bob.package_resources import spawn_retry_config_path
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -68,7 +70,7 @@ class RetryState:
 # Configuration loading
 # ---------------------------------------------------------------------------
 
-_CONFIG_PATH = Path(__file__).parents[3] / "config" / "spawn_retry.yaml"
+_CONFIG_PATH = spawn_retry_config_path()
 _DEFAULT_PATTERNS: list[str] = [
     "429",
     "rate.?limit",

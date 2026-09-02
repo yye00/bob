@@ -33,14 +33,11 @@ from typing import Any
 import jsonschema
 
 import bob.spec_critic  # noqa: F401 — integration: validated specs feed into spec_critic
+from bob.package_resources import spec_schema_path
 
 logger = logging.getLogger(__name__)
 
-# Default schema path — resolved relative to the workspace root.
-# __file__ = src/bob/schema_constrained_spec.py → 3 parents up = workspace root
-_DEFAULT_SCHEMA_PATH: Path = (
-    Path(__file__).parent.parent.parent / "schemas" / "spec.v1.json"
-)
+_DEFAULT_SCHEMA_PATH: Path = spec_schema_path()
 
 __all__ = [
     "emit_constrained_spec",

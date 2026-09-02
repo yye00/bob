@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
+import math
 import os
 import re
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import IO, Any, AsyncIterator, Awaitable, Callable
@@ -64,6 +66,7 @@ from bob.orchestrator.crash_classifier import (  # noqa: E402
 _CANONICAL_ANTHROPIC_IDS: frozenset[str] = frozenset({
     "claude-sonnet-4-5-20250929",
     "claude-opus-4-6",
+    "claude-opus-4-8",
     "claude-haiku-4-5-20251001",
     "claude-fable-5",
 })
@@ -89,23 +92,104 @@ VALID_MODEL_IDS: frozenset[str] = frozenset(MODEL_ALIASES.values()) | _CANONICAL
 
 DEFAULT_SUB_AGENT_MODEL = "sonnet"
 DEFAULT_SUB_AGENT_MAX_TURNS_FALLBACK = 25
+DEFAULT_EVALUATOR_MAX_TURNS = 15
+DEFAULT_RCA_MAX_TURNS = 10
+
+AGENT_ROLES: frozenset[str] = frozenset(
+    {
+        "independent_test_writer",
+        "implementer",
+        "evaluator",
+        "rca",
+        "research",
+        "puppeteer",
+        "planner",
+        "packet_compiler",
+        "packet_reviewer",
+        "subagent",
+    }
+)
+
+_HERMETIC_CLAUDE_EXTRA_ARGS: dict[str, str | None] = {
+    # Empty means do not load user, project, or local settings.  Bob's explicit
+    # ``settings`` payload (used for provider-compatible thinking) remains in
+    # force because that is a separate Claude Code option.
+    "setting-sources": "",
+    "strict-mcp-config": None,
+    "no-session-persistence": None,
+    "bare": None,
+}
 
 
-def resolve_sub_agent_max_turns() -> int:
+def resolve_claude_hermetic() -> bool:
+    """Resolve the fail-closed ``BOB_CLAUDE_HERMETIC`` process policy.
+
+    The variable is deliberately read at call time so an unattended campaign
+    can set it per run.  An unset variable retains Bob's legacy behavior;
+    explicit true/false spellings are accepted, and every other value is a
+    configuration error.  In particular, a typo must not silently re-enable
+    persistent Claude configuration or sessions.
+    """
+
+    raw = os.environ.get("BOB_CLAUDE_HERMETIC")
+    if raw is None:
+        return False
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        "BOB_CLAUDE_HERMETIC must be a boolean "
+        f"(1/0, true/false, yes/no, on/off), got {raw!r}"
+    )
+
+
+def resolve_required_model() -> str | None:
+    """Return the canonical model pinned by ``BOB_REQUIRED_MODEL``.
+
+    The pin is resolved at call time so a campaign can set it after importing
+    Bob.  An unset variable preserves Bob's legacy model-selection behaviour.
+    Once the variable is present, however, empty and unknown values are
+    configuration errors: silently falling back would defeat the purpose of an
+    exact-model campaign.
+    """
+    raw = os.environ.get("BOB_REQUIRED_MODEL")
+    if raw is None:
+        return None
+    if not raw.strip():
+        raise ValueError("BOB_REQUIRED_MODEL must be a known, non-empty model")
+    try:
+        return resolve_model_name(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid BOB_REQUIRED_MODEL={raw!r}: {exc}") from exc
+
+
+def _required_model_or(default_model: str) -> str:
+    """Use the campaign-wide pin for an internal role, when configured."""
+    return resolve_required_model() or default_model
+
+
+def resolve_sub_agent_max_turns() -> int | None:
     """Resolve the sub-agent turn budget from ``BOB_SUB_AGENT_MAX_TURNS`` live.
 
     Read at CALL TIME, not import time, so a per-run override set after this
     module is imported is honored (the define-vs-honor gap: a value defined at
-    import cannot be tuned per run). Unset / empty / whitespace falls back to
-    the default. Any other malformed value (non-integer, zero, negative) raises
-    ``ValueError`` rather than silently reverting to the default and masking a
-    misconfiguration that would otherwise wedge a run.
+    import cannot be tuned per run). ``unlimited`` and ``none`` return ``None``;
+    callers MUST translate that value by omitting the SDK ``max_turns`` option.
+    Unset / empty / whitespace falls back to the default. Any other malformed
+    value (non-integer, zero, negative) raises ``ValueError`` rather than
+    silently reverting to the default and masking a misconfiguration that would
+    otherwise wedge a run.
     """
     raw = os.environ.get("BOB_SUB_AGENT_MAX_TURNS")
     if raw is None or not raw.strip():
         return DEFAULT_SUB_AGENT_MAX_TURNS_FALLBACK
+    normalized = raw.strip().lower()
+    if normalized in {"unlimited", "none"}:
+        return None
     try:
-        value = int(raw.strip())
+        value = int(normalized)
     except (TypeError, ValueError):
         raise ValueError(
             f"BOB_SUB_AGENT_MAX_TURNS must be a positive integer, got {raw!r}"
@@ -113,6 +197,62 @@ def resolve_sub_agent_max_turns() -> int:
     if value < 1:
         raise ValueError(
             f"BOB_SUB_AGENT_MAX_TURNS must be >= 1, got {value}"
+        )
+    return value
+
+
+def resolve_evaluator_max_turns() -> int | None:
+    """Resolve the independent evaluator's turn budget at call time.
+
+    ``unlimited`` and ``none`` deliberately omit the Claude SDK turn cap.
+    Unset/blank retains the historical 15-turn evaluator limit.  Any other
+    malformed, zero, or negative value is rejected so a typo cannot silently
+    weaken or unexpectedly truncate the independent acceptance principal.
+    """
+    raw = os.environ.get("BOB_EVALUATOR_MAX_TURNS")
+    if raw is None or not raw.strip():
+        return DEFAULT_EVALUATOR_MAX_TURNS
+    normalized = raw.strip().lower()
+    if normalized in {"unlimited", "none"}:
+        return None
+    try:
+        value = int(normalized)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"BOB_EVALUATOR_MAX_TURNS must be a positive integer, got {raw!r}"
+        )
+    if value < 1:
+        raise ValueError(
+            f"BOB_EVALUATOR_MAX_TURNS must be >= 1, got {value}"
+        )
+    return value
+
+
+def resolve_rca_max_turns() -> int | None:
+    """Resolve the RCA agent turn budget at call time.
+
+    Unset/blank retains the historical ten-turn RCA limit.  ``unlimited`` and
+    ``none`` omit the SDK ``max_turns`` field.  Invalid explicit values fail
+    closed before an RCA provider process is started.
+    """
+
+    raw = os.environ.get("BOB_RCA_MAX_TURNS")
+    if raw is None or not raw.strip():
+        return DEFAULT_RCA_MAX_TURNS
+    normalized = raw.strip().lower()
+    if normalized in {"unlimited", "none"}:
+        return None
+    try:
+        value = int(normalized)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "BOB_RCA_MAX_TURNS must be a positive integer, "
+            f"'unlimited', or 'none'; got {raw!r}"
+        ) from exc
+    if value < 1:
+        raise ValueError(
+            "BOB_RCA_MAX_TURNS must be >= 1, or be 'unlimited'/'none'; "
+            f"got {value}"
         )
     return value
 
@@ -216,12 +356,14 @@ def resolve_model_name(model: str | None) -> str | None:
 # Sub-agent options builder
 # ---------------------------------------------------------------------------
 
+_MAX_TURNS_UNSET = object()
+
 
 def build_sub_agent_options(
     *,
     cwd: str | Path | None = None,
     model: str | None = None,
-    max_turns: int | None = None,
+    max_turns: int | None | object = _MAX_TURNS_UNSET,
     system_prompt: str | None = None,
     append_system_prompt: str | None = None,
     allowed_tools: list[str] | None = None,
@@ -229,13 +371,66 @@ def build_sub_agent_options(
     permission_mode: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
     env: dict[str, str] | None = None,
+    extra_args: dict[str, str | None] | None = None,
+    agent_role: str | None = None,
 ) -> ClaudeCodeOptions:
     """Build a ClaudeCodeOptions for spawning a Bob sub-agent.
 
     Applies Bob defaults (permission mode "bypassPermissions", default
     max turns, model resolution from aliases).
     """
+    # Resolve security policy before model handling or workspace skill
+    # installation.  An invalid operator value therefore has no filesystem or
+    # provider side effects.
+    hermetic = resolve_claude_hermetic()
+    merged_extra_args = dict(extra_args) if extra_args else {}
+    if hermetic:
+        # Hermetic values win on conflicts: callers may add unrelated CLI
+        # switches, but cannot opt a supposedly-hermetic role back into user
+        # settings or session persistence.
+        merged_extra_args.update(_HERMETIC_CLAUDE_EXTRA_ARGS)
+
     kwargs: dict[str, Any] = {}
+
+    # Resolve the campaign pin before touching the workspace (skill
+    # installation) so an invalid/mismatched model fails without side effects.
+    required_model = resolve_required_model()
+    if required_model is not None:
+        if model is None:
+            resolved_model = required_model
+        else:
+            try:
+                resolved_model = resolve_model_name(model)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Requested model {model!r} is invalid while "
+                    f"BOB_REQUIRED_MODEL pins {required_model!r}: {exc}"
+                ) from exc
+            if resolved_model != required_model:
+                raise ValueError(
+                    f"Requested model {resolved_model!r} does not match "
+                    f"BOB_REQUIRED_MODEL {required_model!r}"
+                )
+    else:
+        try:
+            resolved_model = resolve_model_name(model)
+        except ValueError as exc:
+            # Legacy compatibility when no strict pin is configured: unknown
+            # worker models fall back to Bob's normal default.
+            logger.warning(
+                "Unknown model %r (%s); falling back to default %r",
+                model,
+                exc,
+                DEFAULT_SUB_AGENT_MODEL,
+            )
+            resolved_model = resolve_model_name(DEFAULT_SUB_AGENT_MODEL)
+
+    if resolved_model == "claude-opus-4-8":
+        # Claude Code 2.1.251 supports an explicit 1M autocompaction boundary.
+        # Pin it at the same trusted option builder as model/role so every
+        # campaign principal receives the full Opus 4.8 context window and a
+        # caller cannot silently request earlier compaction.
+        merged_extra_args["autocompact"] = "1M"
 
     if cwd is not None:
         kwargs["cwd"] = str(cwd)
@@ -259,23 +454,19 @@ def build_sub_agent_options(
         except Exception as exc:
             logger.debug("Skill installation skipped: %s", exc)
 
-    try:
-        resolved_model = resolve_model_name(model)
-    except ValueError as exc:
-        # Unknown model: fall back to the default rather than crashing the
-        # entire orchestration. The caller may have supplied a stale or
-        # typo'd alias; log a warning and continue with the safe default.
-        logger.warning(
-            "Unknown model %r (%s); falling back to default %r",
-            model,
-            exc,
-            DEFAULT_SUB_AGENT_MODEL,
-        )
-        resolved_model = resolve_model_name(DEFAULT_SUB_AGENT_MODEL)
     if resolved_model is not None:
         kwargs["model"] = resolved_model
 
-    kwargs["max_turns"] = max_turns if max_turns is not None else resolve_sub_agent_max_turns()
+    resolved_max_turns = (
+        resolve_sub_agent_max_turns()
+        if max_turns is _MAX_TURNS_UNSET
+        else max_turns
+    )
+    # ``None`` is the SDK's unlimited/default sentinel, but explicitly passing
+    # ``max_turns=None`` is not equivalent across SDK releases.  Omit the field
+    # entirely so the Claude Code SDK cannot impose Bob's normal 25-turn cap.
+    if resolved_max_turns is not None:
+        kwargs["max_turns"] = resolved_max_turns
 
     if system_prompt is not None:
         kwargs["system_prompt"] = system_prompt
@@ -298,6 +489,14 @@ def build_sub_agent_options(
 
     env_dict: dict[str, str] = dict(env) if env else {}
 
+    if agent_role is not None:
+        if agent_role not in AGENT_ROLES:
+            raise ValueError(
+                f"agent_role must be one of {sorted(AGENT_ROLES)}, got {agent_role!r}"
+            )
+        # Controller provenance wins over inherited/caller environment.
+        env_dict["BOB_AGENT_ROLE"] = agent_role
+
     # F081: Forward CLAUDE_API_KEY / ANTHROPIC_API_KEY to sub-agent env
     if "ANTHROPIC_API_KEY" not in env_dict:
         api_key = validate_api_key()
@@ -307,7 +506,120 @@ def build_sub_agent_options(
     if env_dict:
         kwargs["env"] = env_dict
 
+    if merged_extra_args:
+        kwargs["extra_args"] = merged_extra_args
+
     return ClaudeCodeOptions(**kwargs)
+
+
+def with_agent_role(
+    options: ClaudeCodeOptions | None,
+    role: str,
+) -> ClaudeCodeOptions:
+    """Clone *options* with a controller-owned ``BOB_AGENT_ROLE`` marker."""
+    if role not in AGENT_ROLES:
+        raise ValueError(f"unknown Bob agent role: {role!r}")
+    if options is None:
+        return build_sub_agent_options(agent_role=role)
+
+    kwargs: dict[str, Any] = {}
+    if options.cwd is not None:
+        kwargs["cwd"] = options.cwd
+    if options.model is not None:
+        kwargs["model"] = options.model
+    if options.max_turns is not None:
+        kwargs["max_turns"] = options.max_turns
+    if options.system_prompt is not None:
+        kwargs["system_prompt"] = options.system_prompt
+    if options.append_system_prompt is not None:
+        kwargs["append_system_prompt"] = options.append_system_prompt
+    if options.allowed_tools is not None:
+        kwargs["allowed_tools"] = list(options.allowed_tools)
+    if options.disallowed_tools is not None:
+        kwargs["disallowed_tools"] = list(options.disallowed_tools)
+    if options.permission_mode is not None:
+        kwargs["permission_mode"] = options.permission_mode
+    env = dict(options.env) if options.env else {}
+    env["BOB_AGENT_ROLE"] = role
+    kwargs["env"] = env
+    if options.mcp_servers is not None:
+        kwargs["mcp_servers"] = dict(options.mcp_servers)
+    if options.extra_args:
+        kwargs["extra_args"] = dict(options.extra_args)
+    if getattr(options, "settings", None) is not None:
+        kwargs["settings"] = options.settings
+    return ClaudeCodeOptions(**kwargs)
+
+
+def _role_for_purpose(purpose: str) -> str:
+    """Map database purpose labels onto the trusted role vocabulary."""
+    normalized = (purpose or "").strip().lower()
+    if normalized == "implement_feature" or "implement" in normalized:
+        return "implementer"
+    if normalized == "evaluator" or "evaluat" in normalized:
+        return "evaluator"
+    if "rca" in normalized or "root_cause" in normalized:
+        return "rca"
+    if "research" in normalized:
+        return "research"
+    if normalized in {"browser_test", "screenshot_evidence"} or any(
+        token in normalized for token in ("puppeteer", "browser", "screenshot")
+    ):
+        return "puppeteer"
+    if any(token in normalized for token in ("planner", "decompose")):
+        return "planner"
+    return "subagent"
+
+
+def _enforce_required_model_on_options(
+    options: ClaudeCodeOptions | None,
+) -> ClaudeCodeOptions | None:
+    """Enforce the exact campaign model at the final SDK boundary.
+
+    Most Bob paths construct options through :func:`build_sub_agent_options`,
+    but public executor/spawn helpers also accept caller-built SDK options.
+    Checking those options again prevents a direct caller or later mutation
+    from bypassing ``BOB_REQUIRED_MODEL``.
+    """
+    required_model = resolve_required_model()
+    if required_model is None and options is None:
+        return None
+    if options is None:
+        return build_sub_agent_options(model=required_model)
+
+    requested = getattr(options, "model", None)
+    if required_model is not None and (
+        not isinstance(requested, str) or not requested.strip()
+    ):
+        raise ValueError(
+            "Claude options do not request a model while "
+            f"BOB_REQUIRED_MODEL pins {required_model!r}"
+        )
+    resolved_requested: str | None = None
+    if isinstance(requested, str) and requested.strip():
+        try:
+            resolved_requested = resolve_model_name(requested)
+        except ValueError as exc:
+            if required_model is not None:
+                raise ValueError(
+                    f"Claude options request invalid model {requested!r} while "
+                    f"BOB_REQUIRED_MODEL pins {required_model!r}: {exc}"
+                ) from exc
+    if required_model is not None and resolved_requested != required_model:
+        raise ValueError(
+            f"Claude options request model {resolved_requested!r}, which does "
+            f"not match BOB_REQUIRED_MODEL {required_model!r}"
+        )
+    if resolved_requested == "claude-opus-4-8":
+        extra_args = dict(options.extra_args or {})
+        if extra_args.get("autocompact") != "1M":
+            extra_args["autocompact"] = "1M"
+            # ``dataclasses.replace`` preserves every current/future SDK field
+            # (including debug stderr, hooks, tool callbacks, and settings)
+            # while preventing a caller mutation from changing the trusted
+            # final-boundary value in place.
+            options = replace(options, extra_args=extra_args)
+    return options
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +657,12 @@ _FORCE_THINKING_SETTINGS: str = '{"alwaysThinkingEnabled": true}'
 # ``_thinking_env_for_model()`` returns the right combination for the
 # spawn's model so opus/sonnet keep thinking-with-budget while haiku
 # drops thinking entirely (only path that works against Vertex).
-_THINKING_ADAPTIVE_GATED_MODELS = ("opus-4-6", "opus-4-7", "sonnet-4-6")
+_THINKING_ADAPTIVE_GATED_MODELS = (
+    "opus-4-6",
+    "opus-4-7",
+    "opus-4-8",
+    "sonnet-4-6",
+)
 
 
 def _thinking_env_for_model(model: str | None) -> dict[str, str]:
@@ -446,7 +763,14 @@ def _attach_stderr_capture(
         kwargs["settings"] = _FORCE_THINKING_SETTINGS
     try:
         return ClaudeCodeOptions(**kwargs)
-    except TypeError:
+    except TypeError as exc:
+        if resolve_claude_hermetic():
+            # Dropping ``extra_args`` here would silently discard the
+            # hermetic CLI boundary.  Older SDKs must be upgraded rather than
+            # weakening an explicitly requested security policy.
+            raise RuntimeError(
+                "installed Claude SDK cannot preserve hermetic CLI options"
+            ) from exc
         # Older SDK versions may not accept every key here. Drop the
         # debug fields and return the original options on the assumption
         # that capturing stderr is best-effort.
@@ -721,6 +1045,8 @@ async def stream_query(
 
     Yields each Message exactly as returned by the SDK's async iterator.
     """
+    options = _enforce_required_model_on_options(options)
+
     # F-R7-645 (completability-cliff fix): retry a TRANSPORT-TRANSIENT stream
     # failure IN-PROCESS so a large feature whose build spans multiple transport
     # crashes still finishes — its partial WIP on disk is preserved and the
@@ -908,7 +1234,7 @@ class ClaudeExecutor:
         Returns:
             ExecutionResult with accumulated text, cost, and metadata.
         """
-        opts = options or self.default_options
+        opts = _enforce_required_model_on_options(options or self.default_options)
 
         handler = MessageStreamHandler()
         if on_message is not None:
@@ -973,6 +1299,12 @@ async def spawn_sub_agent(
     Returns:
         SpawnResult containing the execution result and the agent run record.
     """
+    # Reject invalid caller-built options before MCP/disk checks, audit writes,
+    # or provider interaction. ``stream_query`` repeats this at the final SDK
+    # boundary as defense in depth.
+    options = _enforce_required_model_on_options(options)
+    options = with_agent_role(options, _role_for_purpose(purpose))
+
     from bob import db
     from bob.orchestrator.mcp_config import (
         build_perplexity_mcp_dict,
@@ -1004,6 +1336,12 @@ async def spawn_sub_agent(
             kwargs["permission_mode"] = opts.permission_mode
         if opts.env is not None:
             kwargs["env"] = dict(opts.env)
+        if getattr(opts, "settings", None) is not None:
+            kwargs["settings"] = opts.settings
+        if opts.extra_args:
+            # In particular, retain the central BOB_CLAUDE_HERMETIC flags
+            # when an MCP-enabled role needs a reconstructed options object.
+            kwargs["extra_args"] = dict(opts.extra_args)
         kwargs["mcp_servers"] = existing_servers
         return ClaudeCodeOptions(**kwargs)
 
@@ -1034,6 +1372,10 @@ async def spawn_sub_agent(
 
     # Truncate prompt for summary (first 200 chars)
     prompt_summary = prompt[:200] if len(prompt) > 200 else prompt
+    spawn_agent_role = str((options.env or {}).get("BOB_AGENT_ROLE", "") or "")
+    spawn_model = str(options.model or "")
+    spawn_cwd = str(options.cwd or "")
+    spawn_prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
     # F-R6-303: Pre-spawn disk-quota gate. Round 5 saw free disk drop
     # from ~25 GB to 18 MB in a few hours because per-sub-agent session
@@ -1082,6 +1424,10 @@ async def spawn_sub_agent(
                 parent_run_id=parent_run_id,
                 prompt_summary=prompt_summary,
                 mcp_enabled=mcp_enabled,
+                model=spawn_model or None,
+                agent_role=spawn_agent_role or None,
+                cwd=spawn_cwd or None,
+                prompt_sha256=spawn_prompt_sha256,
                 status="failed",
             )
         except BaseException:  # noqa: BLE001 — audit best-effort
@@ -1097,6 +1443,10 @@ async def spawn_sub_agent(
         parent_run_id=parent_run_id,
         prompt_summary=prompt_summary,
         mcp_enabled=mcp_enabled,
+        model=spawn_model or None,
+        agent_role=spawn_agent_role or None,
+        cwd=spawn_cwd or None,
+        prompt_sha256=spawn_prompt_sha256,
         status="running",
     )
 
@@ -1158,8 +1508,26 @@ async def spawn_sub_agent(
     updated_run = None
     try:
         handler = MessageStreamHandler()
-        if on_message is not None:
-            handler.on_any_message = on_message
+
+        async def _persist_live_usage_and_forward(
+            msg: Message,
+            live_result: ExecutionResult,
+        ) -> None:
+            # Persist usage while the SDK stream is still open so the
+            # per-attempt monitor can observe a running row.  The SDK commonly
+            # attaches cost on ResultMessage; custom/provider adapters may
+            # expose cumulative usage earlier, and this path supports both.
+            if live_result.total_cost_usd is not None:
+                db.update_agent_run(
+                    agent_run.id,
+                    cost_usd=live_result.total_cost_usd,
+                )
+            if on_message is not None:
+                forwarded = on_message(msg, live_result)
+                if forwarded is not None and hasattr(forwarded, "__await__"):
+                    await forwarded
+
+        handler.on_any_message = _persist_live_usage_and_forward
 
         with _stripped_parent_session_env():
             stream = stream_query(prompt, options=options)
@@ -1308,6 +1676,13 @@ async def spawn_sub_agent(
         else:
             final_status = "failed"
 
+        provenance_required = bool(
+            os.environ.get("BOB_REQUIRED_MODEL", "").strip()
+            or os.environ.get("BOB_EXTERNAL_VERIFIER_REQUIRED", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+            or os.environ.get("BOB_INDEPENDENT_TEST_WRITER", "").strip().lower()
+            == "required"
+        )
         try:
             now = datetime.now()
             updated_run = db.update_agent_run(
@@ -1317,6 +1692,20 @@ async def spawn_sub_agent(
                 duration_ms=result.duration_ms,
                 completed_at=now.isoformat(),
             )
+            if result.session_id:
+                finalized = db.finalize_agent_run_provenance(
+                    agent_run.id,
+                    provider_session_id=result.session_id,
+                    result_sha256=hashlib.sha256(
+                        (result.text or "").encode("utf-8")
+                    ).hexdigest(),
+                )
+                if finalized is not None:
+                    updated_run = finalized
+                elif provenance_required:
+                    raise RuntimeError("agent-run provenance row disappeared")
+            elif provenance_required:
+                raise RuntimeError("provider returned no session id for required provenance")
         except BaseException:  # noqa: BLE001 — last-ditch cleanup
             logger.warning(
                 "Failed to finalize sub_agent_runs row %s to status=%s; "
@@ -1326,6 +1715,21 @@ async def spawn_sub_agent(
                 final_status,
                 exc_info=True,
             )
+            if not cancelled and provenance_required:
+                result.is_error = True
+                result.error_message = (
+                    "required provider provenance finalization failed"
+                )
+                try:
+                    updated_run = db.update_agent_run(
+                        agent_run.id,
+                        status="failed",
+                        cost_usd=result.total_cost_usd,
+                        duration_ms=result.duration_ms,
+                        completed_at=datetime.now().isoformat(),
+                    )
+                except BaseException:
+                    pass
 
         # F-R6-302: Reap any MCP subprocesses registered to this
         # sub-agent. Round 5 accumulated 59 orphan bob.memory_mcp
@@ -1375,6 +1779,32 @@ async def spawn_sub_agent(
 # ---------------------------------------------------------------------------
 # Research agent spawning (F101)
 # ---------------------------------------------------------------------------
+
+
+class ResearchDisabledError(RuntimeError):
+    """Raised before provider contact when Bob research agents are disabled."""
+
+
+def research_agent_enabled() -> bool:
+    """Return whether Bob may spawn a dedicated Anthropic research agent.
+
+    ``BOB_RESEARCH_MODE=disabled`` is a provider-contact boundary: it prevents
+    the dedicated research-agent path from invoking ``spawn_sub_agent`` at all.
+    It does not remove ordinary web/MCP tools from implementation agents, so a
+    campaign may still use operator-approved web search without paying for a
+    second Anthropic agent.  Invalid values fail closed instead of silently
+    enabling provider calls.
+    """
+    mode = os.environ.get("BOB_RESEARCH_MODE", "enabled").strip().lower()
+    if mode == "enabled":
+        return True
+    if mode == "disabled":
+        return False
+    raise ValueError(
+        "BOB_RESEARCH_MODE must be 'enabled' or 'disabled', "
+        f"got {mode!r}"
+    )
+
 
 RESEARCH_SYSTEM_PROMPT = (
     "You are a research agent. Use the Perplexity MCP tools to search the web "
@@ -1437,6 +1867,19 @@ async def spawn_research_agent(
     Returns:
         SpawnResult containing the execution result and agent run record.
     """
+    if not research_agent_enabled():
+        logger.info(
+            "Dedicated research-agent provider call suppressed by "
+            "BOB_RESEARCH_MODE=disabled (purpose=%s, target=%s/%s)",
+            purpose,
+            target_type,
+            target_id,
+        )
+        raise ResearchDisabledError(
+            "Dedicated Anthropic research agents are disabled by "
+            "BOB_RESEARCH_MODE=disabled"
+        )
+
     from bob.orchestrator.mcp_config import build_perplexity_mcp_dict
 
     # Build options with Perplexity MCP configured
@@ -1444,10 +1887,11 @@ async def spawn_research_agent(
 
     options = build_sub_agent_options(
         cwd=workspace,
-        model=DEFAULT_SUB_AGENT_MODEL,
+        model=_required_model_or(DEFAULT_SUB_AGENT_MODEL),
         max_turns=max_turns,
         system_prompt=RESEARCH_SYSTEM_PROMPT,
         mcp_servers=mcp_servers,
+        agent_role="research",
     )
 
     # Build research prompt
@@ -1605,10 +2049,11 @@ async def spawn_puppeteer_agent(
     mcp_servers = build_puppeteer_mcp_dict()
 
     options = build_sub_agent_options(
-        model=DEFAULT_SUB_AGENT_MODEL,
+        model=_required_model_or(DEFAULT_SUB_AGENT_MODEL),
         max_turns=max_turns,
         system_prompt=PUPPETEER_SYSTEM_PROMPT,
         mcp_servers=mcp_servers,
+        agent_role="puppeteer",
     )
 
     # Build browser automation prompt
@@ -1727,7 +2172,12 @@ def parse_rca_result(response_text: str) -> dict[str, str]:
         return defaults
 
     try:
-        parsed = json.loads(json_str)
+        parsed = json.loads(
+            json_str,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON number: {value}")
+            ),
+        )
     except (json.JSONDecodeError, ValueError):
         return defaults
 
@@ -1785,7 +2235,7 @@ async def spawn_rca_agent(
     target_type: str | None = None,
     target_id: str | None = None,
     parent_run_id: str | None = None,
-    max_turns: int = 10,
+    max_turns: int | None | object = _MAX_TURNS_UNSET,
     on_message: MessageCallback | None = None,
 ) -> SpawnResult:
     """Spawn an RCA (Root Cause Analysis) sub-agent.
@@ -1801,13 +2251,22 @@ async def spawn_rca_agent(
         target_type: Optional target type (e.g. "task", "feature").
         target_id: Optional target ID (e.g. task or feature ID).
         parent_run_id: Optional parent agent run ID for hierarchy.
-        max_turns: Maximum turns for the RCA agent (default: 10).
+        max_turns: Maximum turns for the RCA agent. Omission reads
+            ``BOB_RCA_MAX_TURNS``; explicit ``None`` removes the SDK cap.
         on_message: Optional callback invoked for each message received.
 
     Returns:
         SpawnResult containing the execution result and agent run record,
         with rca_blame_target and rca_recommended_action populated.
     """
+    # Resolve before constructing prompts, touching the database, or invoking
+    # the provider.  Explicit ``None`` remains the no-cap value for callers.
+    rca_max_turns = (
+        resolve_rca_max_turns()
+        if max_turns is _MAX_TURNS_UNSET
+        else max_turns
+    )
+
     from bob import db
 
     prompt = (
@@ -1830,9 +2289,10 @@ async def spawn_rca_agent(
     )
 
     options = build_sub_agent_options(
-        model=DEFAULT_SUB_AGENT_MODEL,
-        max_turns=max_turns,
+        model=_required_model_or(DEFAULT_SUB_AGENT_MODEL),
+        max_turns=rca_max_turns,
         system_prompt=RCA_SYSTEM_PROMPT,
+        agent_role="rca",
     )
 
     # Spawn the sub-agent with purpose="rca_analyst"
@@ -1968,6 +2428,8 @@ def parse_evaluator_verdict(response_text: str) -> dict[str, Any]:
         confidence = float(parsed.get("confidence", 0.0))
     except (TypeError, ValueError):
         confidence = 0.0
+    if not math.isfinite(confidence):
+        return default
     confidence = max(0.0, min(1.0, confidence))
 
     evidence_raw = parsed.get("evidence") or {}
@@ -1993,7 +2455,8 @@ async def spawn_evaluator_agent(
     workspace: str | Path,
     target_type: str | None = None,
     target_id: str | None = None,
-    max_turns: int = 15,
+    change_bundle_sha256: str | None = None,
+    max_turns: int | None | object = _MAX_TURNS_UNSET,
     session_isolation_hint: str | None = None,
     on_message: MessageCallback | None = None,
 ) -> SpawnResult:
@@ -2035,6 +2498,16 @@ async def spawn_evaluator_agent(
     the raw evaluator response. Use :func:`parse_evaluator_verdict` to
     extract the structured verdict.
     """
+    # Resolve this policy before touching the evaluator workspace. A malformed
+    # campaign control therefore fails closed without installing skills or
+    # starting the provider process. Explicit ``None`` remains available to
+    # callers as the no-cap value; omission reads BOB_EVALUATOR_MAX_TURNS.
+    evaluator_max_turns = (
+        resolve_evaluator_max_turns()
+        if max_turns is _MAX_TURNS_UNSET
+        else max_turns
+    )
+
     # Force the evaluator workspace to receive the adversarial-review
     # skill (the only place it is now installed). The default
     # ``build_sub_agent_options`` path (called by ``spawn_sub_agent``)
@@ -2058,11 +2531,12 @@ async def spawn_evaluator_agent(
 
     options = build_sub_agent_options(
         cwd=workspace_path,
-        model=DEFAULT_SUB_AGENT_MODEL,
-        max_turns=max_turns,
+        model=_required_model_or(DEFAULT_SUB_AGENT_MODEL),
+        max_turns=evaluator_max_turns,
         system_prompt=EVALUATOR_SYSTEM_PROMPT,
         allowed_tools=list(EVALUATOR_ALLOWED_TOOLS),
         disallowed_tools=list(EVALUATOR_DISALLOWED_TOOLS),
+        agent_role="evaluator",
     )
 
     isolation_line = (
@@ -2070,6 +2544,11 @@ async def spawn_evaluator_agent(
         if session_isolation_hint
         else ""
     )
+    diff_sha256 = hashlib.sha256(diff.encode("utf-8")).hexdigest()
+    bundle_sha256 = change_bundle_sha256 or diff_sha256
+    if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha256):
+        raise ValueError("change_bundle_sha256 must be a lowercase SHA-256 digest")
+    feature_binding = target_id or "(no target id supplied)"
 
     prompt = (
         f"{isolation_line}"
@@ -2080,6 +2559,9 @@ async def spawn_evaluator_agent(
         "## Acceptance criteria\n\n"
         f"{acceptance_criteria}\n\n"
         "## Diff (changed files in the workspace)\n\n"
+        f"Expected feature_id binding: {feature_binding}\n"
+        f"Expected change_bundle_sha256 binding: {bundle_sha256}\n"
+        f"Expected diff_sha256 binding: {diff_sha256}\n\n"
         "```diff\n"
         f"{diff}\n"
         "```\n\n"
@@ -2090,7 +2572,14 @@ async def spawn_evaluator_agent(
         "look at the actual files, etc.). Do NOT edit anything.\n"
         "3. Apply the adversarial-self-review checklist if installed in "
         "your workspace at .claude/skills/adversarial-self-review/.\n"
-        "4. Return a single JSON object inside a ```json fence with the "
+        "4. Include evidence entries whose exact keys are `feature_id`, "
+        "`change_bundle_sha256`, and `diff_sha256`, with the exact expected "
+        "values above, plus at least "
+        "one concrete entry per acceptance criterion. Name those keys "
+        "`criterion_0`, `criterion_1`, and so on in criterion order. Each "
+        "criterion entry must cite a changed bundle path plus a line number "
+        "or that file's SHA-256, or a controller command-receipt SHA-256.\n"
+        "5. Return a single JSON object inside a ```json fence with the "
         "fields described in your system prompt: "
         "verdict, findings, confidence, evidence.\n"
     )

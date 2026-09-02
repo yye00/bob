@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS projects (
 
     -- Resource tracking
     total_cost_usd REAL DEFAULT 0.0,
-    max_cost_usd REAL DEFAULT 1000000.0,
+    -- Canonical finite representation of an operator-selected unlimited cap.
+    max_cost_usd REAL DEFAULT 1.0e300,
 
     -- Spec change detection (F115)
     spec_hash TEXT,                    -- SHA256 of spec file for change detection
@@ -68,6 +69,9 @@ CREATE TABLE IF NOT EXISTS features (
 
     -- Refinement tracking
     refinement_attempts INTEGER DEFAULT 0,
+    -- The DB API materializes BOB_MAX_REFINEMENT_ATTEMPTS=unlimited|none as
+    -- 9223372036854775807, SQLite's largest signed INT64. Raw SQL inserts keep
+    -- the conservative legacy default because SQL defaults cannot read env.
     max_refinement_attempts INTEGER DEFAULT 5,
     last_improvement_type TEXT,
     research_iterations INTEGER DEFAULT 0,           -- CORNER CASE #18
@@ -485,6 +489,15 @@ CREATE TABLE IF NOT EXISTS sub_agent_runs (
 
     -- Bob addition: MCP plugin tracking
     mcp_enabled TEXT,                  -- JSON: ["perplexity", "puppeteer"]
+
+    -- Immutable provider/session provenance.  Spawn-time fields are written
+    -- with the row; provider_session_id/result_sha256 are finalized once.
+    provider_session_id TEXT,
+    model TEXT,
+    agent_role TEXT,
+    cwd TEXT,
+    prompt_sha256 TEXT,
+    result_sha256 TEXT,
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMP

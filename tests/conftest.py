@@ -66,10 +66,25 @@ _BOB_ENV_VARS_TO_SNAPSHOT = (
     "BOB_FAILURE_THRESHOLD_FOR_RESEARCH",
     "BOB_CONFIDENCE_DECAY_PER_FAILURE",
     "BOB_RCA_TIMEOUT_SECONDS",
+    "BOB_RCA_MAX_TURNS",
     "BOB_RCA_ENABLED",
     # Round 0 Task 1 (Gap #1): independent evaluator agent
     "BOB_EVALUATOR_ENABLED",
+    "BOB_EVALUATOR_REQUIRED",
     "BOB_EVALUATOR_TIMEOUT_SECONDS",
+    "BOB_EVALUATOR_MAX_TURNS",
+    "BOB_INDEPENDENT_TEST_WRITER",
+    "BOB_TEST_ROOTS",
+    "BOB_FEATURE_TIMEOUT_SECONDS",
+    "BOB_MAX_REFINEMENT_ATTEMPTS",
+    "BOB_MAX_COST_USD",
+    # Autonomous runtime: dedicated research-agent provider boundary and
+    # optional unlimited Claude Code turn budget.
+    "BOB_RESEARCH_MODE",
+    "BOB_CLAUDE_HERMETIC",
+    "BOB_REQUIRED_MODEL",
+    "BOB_SUB_AGENT_MAX_TURNS",
+    "BOB_PER_ATTEMPT_COST_CAP",
     # Frozen-registry mode
     "BOB_FROZEN_REGISTRY",
     # F-R6-307: pre-spawn cost projection gate. Default-disabled in tests

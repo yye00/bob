@@ -22,9 +22,11 @@ This module provides three functions called by run_loop periodically (every
 Environment variable
 --------------------
 ``BOB_PER_ATTEMPT_COST_CAP`` (float, USD) — overrides the default 10.0.
-Clamped to [0.5, 100].  Values outside the range are silently clamped (not
-rejected) so operators can safely set ``0`` (→ 0.5) or ``9999`` (→ 100)
-without crashing the orchestrator.
+``unlimited`` or ``none`` disables per-attempt termination. Numeric values are
+clamped to [0.5, 100]. Values outside the range are silently clamped (not
+rejected) so operators can safely set ``0`` (→ 0.5) or ``9999`` (→ 100).
+Malformed and non-finite values fail closed to the default $10 cap rather than
+accidentally disabling the guard.
 
 Lossless-cost invariant (F-R7-561)
 -----------------------------------
@@ -37,6 +39,7 @@ attempts cap is exhausted).  We do NOT grant a free retry.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import signal
 import time
@@ -57,26 +60,43 @@ _SIGTERM_GRACE_SECONDS = 15
 # ---------------------------------------------------------------------------
 
 
-def get_per_attempt_cap() -> float:
+def get_per_attempt_cap() -> float | None:
     """Return the per-attempt cost cap in USD.
 
     Reads ``BOB_PER_ATTEMPT_COST_CAP`` from the environment, applies
-    [0.5, 100] clamping, and returns the result.  Returns 10.0 when the
-    variable is unset or not a valid float.
+    [0.5, 100] clamping, and returns the result. Returns ``None`` only for the
+    explicit ``unlimited``/``none`` spellings and 10.0 when unset/blank.
+    Malformed values fall back to the default cap so configuration errors fail
+    closed without disabling unattended cost enforcement.
 
     Returns
     -------
-    float
-        Per-attempt cap in USD, always in [0.5, 100].
+    float | None
+        Per-attempt cap in USD, always in [0.5, 100], or ``None`` when the
+        operator explicitly disabled this termination policy.
     """
     raw = os.environ.get("BOB_PER_ATTEMPT_COST_CAP", "").strip()
-    if raw:
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            return _DEFAULT_CAP
-        return max(_MIN_CAP, min(_MAX_CAP, value))
-    return _DEFAULT_CAP
+    if not raw:
+        return _DEFAULT_CAP
+    if raw.lower() in {"unlimited", "none"}:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.error(
+            "Invalid BOB_PER_ATTEMPT_COST_CAP=%r; failing closed to $%.2f",
+            raw,
+            _DEFAULT_CAP,
+        )
+        return _DEFAULT_CAP
+    if not math.isfinite(value):
+        logger.error(
+            "Non-finite BOB_PER_ATTEMPT_COST_CAP=%r; failing closed to $%.2f",
+            raw,
+            _DEFAULT_CAP,
+        )
+        return _DEFAULT_CAP
+    return max(_MIN_CAP, min(_MAX_CAP, value))
 
 
 def should_terminate_subagent(reported_attempt_cost: float) -> bool:
@@ -97,6 +117,8 @@ def should_terminate_subagent(reported_attempt_cost: float) -> bool:
     """
     cost = max(0.0, float(reported_attempt_cost))
     cap = get_per_attempt_cap()
+    if cap is None:
+        return False
     return cost > cap
 
 
@@ -127,6 +149,16 @@ def terminate_subagent_on_cost_cap(
     reported_cost:
         The cost that triggered the termination (for audit log).
     """
+    cap = get_per_attempt_cap()
+    if cap is None:
+        logger.debug(
+            "per_attempt_cost_cap: explicit unlimited policy; not terminating "
+            "feature %s PID %d",
+            feature_id[:8],
+            pid,
+        )
+        return
+
     own_pid = os.getpid()
     if pid <= 1 or pid == own_pid:
         logger.warning(
@@ -137,7 +169,6 @@ def terminate_subagent_on_cost_cap(
         )
         return
 
-    cap = get_per_attempt_cap()
     logger.warning(
         "per_attempt_cost_cap: feature %s cost=%.4f exceeded cap=%.4f; "
         "sending SIGTERM to PID %d",

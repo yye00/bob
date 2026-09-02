@@ -21,8 +21,10 @@ import os
 import pathlib
 import re
 import sys
+from typing import Sequence
 
 from bob.ast_checks import verify_no_stubs_or_mocks
+from bob.candidate_exec import candidate_argv, external_verifier_required
 from bob.subagent_observability import forbid_pytest_stdout_redirection  # noqa: F401
 from bob.subagent_observability import validate_pytest_command
 from bob.enhanced_verification import (
@@ -238,6 +240,7 @@ def _check_tests_pass(
     recently_modified_files: set[pathlib.Path] | None = None,
     feature_id: str | None = None,
     feature_acs: list[str] | None = None,
+    exact_test_command: Sequence[str] | None = None,
 ) -> dict:
     """Run pytest in the workspace and return a verification check entry.
 
@@ -339,7 +342,7 @@ def _check_tests_pass(
     target_rel = target_dir.relative_to(workspace).as_posix()
 
     _pytest_targets = [target_rel]
-    if feature_id and feature_acs:
+    if exact_test_command is None and feature_id and feature_acs:
         try:
             from bob.verification.per_feature_test_scope import (
                 scope_pytest_to_feature as _scope,
@@ -353,23 +356,18 @@ def _check_tests_pass(
     # Probe whether pytest-xdist is available in this interpreter. If not,
     # fall back to sequential execution with a warning rather than failing.
     _xdist_flags: list[str] = []
-    try:
-        import xdist  # noqa: F401
-        _n_workers = _select_xdist_workers()
-        _xdist_flags = ["-n", str(_n_workers), "--dist=loadfile"]
-    except ImportError:
-        logger.warning(
-            "pytest-xdist is not installed; falling back to sequential pytest execution"
-        )
+    if exact_test_command is None:
+        try:
+            import xdist  # noqa: F401
+            _n_workers = _select_xdist_workers()
+            _xdist_flags = ["-n", str(_n_workers), "--dist=loadfile"]
+        except ImportError:
+            logger.warning(
+                "pytest-xdist is not installed; falling back to sequential pytest execution"
+            )
 
-    cmd = [
-        sys.executable,
-        "-m",
-        "pytest",
-        *_pytest_targets,
-        "--tb=line",
-        "-q",
-        "--maxfail=20",
+    default_cmd = [
+        sys.executable, "-m", "pytest", *_pytest_targets, "--tb=line", "-q", "--maxfail=20",
         # In multi-feature workspaces, sibling features' test files may import
         # not-yet-implemented modules. Without this flag, one ImportError during
         # collection aborts the whole run with exit=2, marking unrelated
@@ -382,14 +380,30 @@ def _check_tests_pass(
         "--color=no",
         *_xdist_flags,
     ]
+    if exact_test_command is not None:
+        if not exact_test_command or not all(
+            isinstance(token, str) and token and "\x00" not in token
+            for token in exact_test_command
+        ):
+            raise ValueError("exact_test_command must be a non-empty safe argv")
+        cmd = list(exact_test_command)
+    else:
+        cmd = default_cmd
     try:
         stdout, stderr, returncode, timed_out = _run_with_pgroup_timeout(
-            cmd,
+            candidate_argv(cmd),
             cwd=str(workspace),
             timeout_s=timeout_s,
         )
     except FileNotFoundError as e:
         # Python interpreter not on PATH (extremely unlikely but defensive).
+        if external_verifier_required():
+            return {
+                "name": check_name,
+                "passed": False,
+                "severity": "error",
+                "details": f"external candidate verifier executable vanished: {e}",
+            }
         return {
             "name": check_name,
             "passed": True,
@@ -397,6 +411,16 @@ def _check_tests_pass(
             "details": f"python interpreter not available: {e}",
         }
     except (OSError, ValueError) as e:
+        if external_verifier_required():
+            return {
+                "name": check_name,
+                "passed": False,
+                "severity": "error",
+                "details": (
+                    "external candidate verifier failed closed: "
+                    f"{type(e).__name__}: {e}"
+                ),
+            }
         return {
             "name": check_name,
             "passed": True,
@@ -1404,6 +1428,8 @@ def run_verification_checklist(
     pre_snapshot: dict[str, bool] | None = None,
     feature_start_time: float | None = None,
     feature_id: str | None = None,
+    independent_test_gate_passed: bool = False,
+    exact_test_command: Sequence[str] | None = None,
 ) -> dict:
     """Run the verification-before-completion checklist on the workspace.
 
@@ -1935,6 +1961,7 @@ def run_verification_checklist(
         recently_modified_files=_recent_files or None,
         feature_id=feature_id,
         feature_acs=_feature_acs_list,
+        exact_test_command=exact_test_command,
     )
     checks.append(tests_pass_check)
 
@@ -2018,6 +2045,26 @@ def run_verification_checklist(
                     "spine is the authoritative gate."
                 ),
             })
+        elif external_verifier_required():
+            # The legacy acceptance dispatcher contains many historical
+            # in-process import/probe fallbacks. Candidate code must never be
+            # imported into Bob's trusted parent in hardened mode. A completed
+            # independent red/green gate already gives one controller-run test
+            # mapping for every criterion, so record that delegation instead of
+            # entering the unsafe legacy dispatcher. Without that witness, fail
+            # closed.
+            checks.append({
+                "name": "acceptance_criteria_met",
+                "passed": bool(independent_test_gate_passed),
+                "details": (
+                    "Acceptance criteria witnessed by the frozen independent "
+                    "test-writer red/green node set; legacy in-process "
+                    "candidate probes disabled in hardened mode"
+                    if independent_test_gate_passed
+                    else "Hardened verification forbids the legacy acceptance "
+                    "dispatcher without a completed independent test gate"
+                ),
+            })
         else:
             ac_passed, ac_details = validate_acceptance_criteria(
                 workspace=ws,
@@ -2067,17 +2114,29 @@ def run_verification_checklist(
                 timeout=security_timeout,
             )
         except Exception as exc:  # noqa: BLE001 - never let security crash the checklist
-            logger.warning(
-                "security_scan: run_security_checks raised %s: %s; recording as warning",
-                type(exc).__name__,
-                exc,
-            )
-            checks.append({
-                "name": "security_scan",
-                "passed": True,
-                "severity": "warning",
-                "details": f"security_scan unavailable: {type(exc).__name__}: {exc}",
-            })
+            if external_verifier_required():
+                checks.append({
+                    "name": "security_scan",
+                    "passed": False,
+                    "severity": "error",
+                    "details": (
+                        "external candidate verifier failed closed during "
+                        f"security scan: {type(exc).__name__}: {exc}"
+                    ),
+                })
+                sec_result = None
+            else:
+                logger.warning(
+                    "security_scan: run_security_checks raised %s: %s; recording as warning",
+                    type(exc).__name__,
+                    exc,
+                )
+                checks.append({
+                    "name": "security_scan",
+                    "passed": True,
+                    "severity": "warning",
+                    "details": f"security_scan unavailable: {type(exc).__name__}: {exc}",
+                })
         else:
             blocking = [
                 f for f in sec_result.findings

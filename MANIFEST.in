@@ -1,0 +1,3 @@
+include .claude/hooks/context_budget.py
+include config/spawn_retry.yaml
+include schemas/spec.v1.json

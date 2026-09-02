@@ -27,6 +27,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,13 @@ from typing import Any
 # Re-export hook functions from .claude/hooks/context_budget.py
 # ---------------------------------------------------------------------------
 
-_HOOK_PATH = Path(__file__).parents[2] / ".claude" / "hooks" / "context_budget.py"
+_SOURCE_HOOK_PATH = (
+    Path(__file__).parents[2] / ".claude" / "hooks" / "context_budget.py"
+)
+_INSTALLED_HOOK_PATH = Path(sys.prefix) / ".claude" / "hooks" / "context_budget.py"
+_HOOK_PATH = (
+    _SOURCE_HOOK_PATH if _SOURCE_HOOK_PATH.is_file() else _INSTALLED_HOOK_PATH
+)
 
 
 def _load_hook_module():

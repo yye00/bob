@@ -17,7 +17,7 @@ def get_max_cost_usd() -> float:
 
     Reads ``BOB_MAX_COST_USD`` from the environment.  An absent, empty,
     whitespace-only, non-numeric, NaN, or Inf value returns the effectively-
-    unlimited default (1_000_000.0).  A valid numeric value is clamped to
+    unlimited finite sentinel (1.0e300).  A valid numeric value is clamped to
     >= 0.0.  Never returns 0.0 for a malformed env var (which would block
     every spawn).
 

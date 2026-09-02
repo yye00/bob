@@ -7,6 +7,10 @@ db.create_project max_cost_usd behaviour.
 from __future__ import annotations
 
 import pytest
+from bob.models import UNLIMITED_MAX_COST_USD
+
+
+UNLIMITED = UNLIMITED_MAX_COST_USD
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +23,7 @@ class TestResolveMaxCostUsd:
 
     def test_no_env_returns_unlimited(self):
         from bob.models import resolve_max_cost_usd
-        assert resolve_max_cost_usd() == 1_000_000.0
+        assert resolve_max_cost_usd() == UNLIMITED
 
     def test_env_set_returns_that_value(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "250.0")
@@ -29,29 +33,29 @@ class TestResolveMaxCostUsd:
     def test_empty_env_returns_unlimited(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "")
         from bob.models import resolve_max_cost_usd
-        assert resolve_max_cost_usd() == 1_000_000.0
+        assert resolve_max_cost_usd() == UNLIMITED
 
     def test_whitespace_only_env_returns_unlimited(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "   ")
         from bob.models import resolve_max_cost_usd
-        assert resolve_max_cost_usd() == 1_000_000.0
+        assert resolve_max_cost_usd() == UNLIMITED
 
     def test_non_numeric_env_returns_unlimited_not_zero(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "invalid")
         from bob.models import resolve_max_cost_usd
         result = resolve_max_cost_usd()
-        assert result == 1_000_000.0
+        assert result == UNLIMITED
         assert result != 0.0
 
     def test_nan_env_returns_unlimited(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "NaN")
         from bob.models import resolve_max_cost_usd
-        assert resolve_max_cost_usd() == 1_000_000.0
+        assert resolve_max_cost_usd() == UNLIMITED
 
     def test_inf_env_returns_unlimited(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "inf")
         from bob.models import resolve_max_cost_usd
-        assert resolve_max_cost_usd() == 1_000_000.0
+        assert resolve_max_cost_usd() == UNLIMITED
 
     def test_negative_env_clamped_to_zero(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "-50.0")
@@ -78,7 +82,7 @@ class TestProjectMaxCostUsdDefault:
     def test_default_is_unlimited_when_no_env(self):
         from bob.models import Project
         p = Project(id="p1", name="test", workspace_path="/tmp")
-        assert p.max_cost_usd == 1_000_000.0
+        assert p.max_cost_usd == UNLIMITED
 
     def test_default_reflects_env_var(self, monkeypatch):
         monkeypatch.setenv("BOB_MAX_COST_USD", "750.0")
@@ -122,7 +126,7 @@ class TestDbCreateProjectMaxCostUsd:
     def test_create_project_default_unlimited_when_no_env(self, _db):
         from bob.db import create_project
         project = create_project(name="p", workspace_path="/tmp", db_path=_db)
-        assert project.max_cost_usd == 1_000_000.0
+        assert project.max_cost_usd == UNLIMITED
 
     def test_create_project_not_500_by_default(self, _db):
         from bob.db import create_project

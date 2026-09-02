@@ -24,6 +24,7 @@ The lower-level signal delivery and audit-log sentinel are handled by
 from __future__ import annotations
 
 import logging
+import math
 
 from bob.orchestrator.per_attempt_cost_cap import (
     get_per_attempt_cap,
@@ -50,7 +51,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-def get_cost_cap_from_env() -> float:
+def get_cost_cap_from_env() -> float | None:
     """Return the per-attempt cost cap by reading BOB_PER_ATTEMPT_COST_CAP.
 
     Reads ``BOB_PER_ATTEMPT_COST_CAP`` from the environment, clamps the
@@ -64,7 +65,7 @@ def get_cost_cap_from_env() -> float:
     return get_per_attempt_cap()
 
 
-def get_cost_cap_limit() -> float:
+def get_cost_cap_limit() -> float | None:
     """Return the current per-attempt cost cap limit in USD.
 
     Reads ``BOB_PER_ATTEMPT_COST_CAP`` from the environment and returns the
@@ -82,7 +83,7 @@ def get_cost_cap_limit() -> float:
     return get_per_attempt_cap()
 
 
-def get_cost_cap_threshold() -> float:
+def get_cost_cap_threshold() -> float | None:
     """Return the current per-attempt cost cap threshold in USD.
 
     Reads ``BOB_PER_ATTEMPT_COST_CAP`` from the environment and returns the
@@ -100,7 +101,7 @@ def get_cost_cap_threshold() -> float:
     return get_per_attempt_cap()
 
 
-def parse_cost_cap_config(env_value: str | None = None) -> float:
+def parse_cost_cap_config(env_value: str | None = None) -> float | None:
     """Parse and validate a cost cap configuration value.
 
     Accepts a raw string (e.g. from an environment variable), converts it to
@@ -114,8 +115,9 @@ def parse_cost_cap_config(env_value: str | None = None) -> float:
 
     Returns
     -------
-    float
-        Validated cap in USD, always in [0.5, 100].
+    float | None
+        Validated cap in USD, always in [0.5, 100], or ``None`` for the
+        explicit ``unlimited``/``none`` policy.
 
     Raises
     ------
@@ -136,9 +138,13 @@ def parse_cost_cap_config(env_value: str | None = None) -> float:
     stripped = env_value.strip()
     if not stripped:
         return _DEFAULT
+    if stripped.lower() in {"unlimited", "none"}:
+        return None
     try:
         value = float(stripped)
     except (TypeError, ValueError):
+        return _DEFAULT
+    if not math.isfinite(value):
         return _DEFAULT
     return max(_MIN, min(_MAX, value))
 

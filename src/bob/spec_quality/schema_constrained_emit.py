@@ -28,6 +28,7 @@ from typing import Any
 
 import jsonschema
 
+from bob.package_resources import spec_schema_path
 from spec_synthesis.constrained_emit import emit_with_schema as _emit_with_schema
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,7 @@ logger = logging.getLogger(__name__)
 # Schema loading
 # ---------------------------------------------------------------------------
 
-# Canonical path, resolved relative to this file's package root.
-_SCHEMA_PATH: Path = Path(__file__).parent.parent.parent.parent / "schemas" / "spec.v1.json"
+_SCHEMA_PATH: Path = spec_schema_path()
 
 
 def _load_schema(schema_path: Path | None = None) -> dict[str, Any]:

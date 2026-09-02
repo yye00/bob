@@ -23,6 +23,7 @@ import subprocess
 import sys
 from typing import Any
 
+from bob.candidate_exec import candidate_argv
 from bob.verification.prose_ac_demotion import (
     is_executable_or_structural_criterion,
 )
@@ -425,7 +426,11 @@ def _run_with_pgroup_timeout(
     if os.name == "posix":
         popen_kwargs["start_new_session"] = True
 
-    proc = subprocess.Popen(cmd, **popen_kwargs)  # nosec B603 - controlled args list, no shell.
+    # Candidate code executes behind the controller-owned argv wrapper when
+    # configured.  In hardened mode ``candidate_argv`` fails closed before a
+    # process is created if the wrapper is absent or malformed.
+    wrapped_cmd = candidate_argv(cmd)
+    proc = subprocess.Popen(wrapped_cmd, **popen_kwargs)  # nosec B603 - direct argv, no shell.
     try:
         stdout, stderr = proc.communicate(timeout=timeout_s)
         return stdout or "", stderr or "", proc.returncode, False
@@ -483,14 +488,20 @@ def _run_shell_with_pgroup_timeout(
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
-        "shell": True,
     }
     if env is not None:
         popen_kwargs["env"] = env
     if os.name == "posix":
         popen_kwargs["start_new_session"] = True
 
-    proc = subprocess.Popen(command, **popen_kwargs)  # nosec B602 - intentional shell, pgroup-killed on timeout.
+    shell_argv = (
+        ["/bin/sh", "-c", command]
+        if os.name == "posix"
+        else [os.environ.get("COMSPEC", "cmd.exe"), "/c", command]
+    )
+    # The shell is itself an explicit argv member.  Never pass candidate text
+    # through ``shell=True`` in Bob's trusted parent process.
+    proc = subprocess.Popen(candidate_argv(shell_argv), **popen_kwargs)  # nosec B603
     try:
         stdout, stderr = proc.communicate(timeout=timeout_s)
         return stdout or "", stderr or "", proc.returncode, False

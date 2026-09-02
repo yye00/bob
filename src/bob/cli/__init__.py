@@ -4,6 +4,7 @@ Command-line interface using Click for managing Bob projects,
 planning features, running builds, and checking status.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +24,23 @@ from rich.text import Text
 from bob import __version__
 from bob import db as _db
 from bob.db import compute_spec_hash, create_features_from_spec, get_connection, get_feature, init_database, list_calibration_alerts, list_features, query_active_regressions, query_calibration_drift_summary, query_evidence
+from bob.feature_planner import (
+    FeaturePlanValidationError,
+    PLANNER_ALLOWED_TOOLS,
+    PLANNER_CLI_EXTRA_ARGS,
+    PLANNER_DISALLOWED_TOOLS,
+    PLANNER_SOURCE_PRECEDENCE_ENV,
+    PlannerSourceFile,
+    build_file_backed_feature_planner_prompt,
+    create_ephemeral_planner_environment,
+    materialize_feature_planner_sources,
+    parse_and_validate_feature_plan,
+    planner_source_manifest_sha256,
+    project_name_from_source,
+    resolve_planner_source_precedence,
+    sanitize_planner_diagnostic,
+)
+from bob.models import resolve_max_cost_usd
 from bob.progress_events import get_progress_path
 
 
@@ -190,15 +208,9 @@ def init(project_path, name, spec, brownfield):
             )
         else:
             project_id = str(uuid.uuid4())
-            # F-R7-619: set max_cost_usd from BOB_MAX_COST_USD (else effectively
-            # unlimited), NOT the schema default of 500.0 which mass-NH'd every
-            # remaining feature once a long run approached it. No bob-chain budget.
-            import os as _os
-            _raw = _os.environ.get("BOB_MAX_COST_USD", "")
-            try:
-                _max_cost = max(0.0, float(_raw)) if _raw else 1_000_000.0
-            except ValueError:
-                _max_cost = 1_000_000.0
+            # Use the shared resolver so ``unlimited`` / ``none`` and numeric
+            # values persist exactly as they do through create_project().
+            _max_cost = resolve_max_cost_usd()
             conn.execute(
                 "INSERT INTO projects (id, name, workspace_path, spec_path, status, max_cost_usd) VALUES (?, ?, ?, ?, ?, ?)",
                 (project_id, project_name, str(project_path), spec_path_str, "planning", _max_cost),
@@ -1465,62 +1477,152 @@ def _parse_features_from_output(agent_output: str) -> list[dict]:
 def _run_generate_features(
     spec_content: str,
     ref_texts: list[str] | None = None,
+    model: str | None = None,
+    source_precedence: str | None = None,
 ) -> list[dict]:
-    """Spawn a research sub-agent to generate features from a project spec.
+    """Spawn a planning sub-agent and return a validated feature DAG.
 
-    This function builds a prompt from the spec content and optional reference
-    document texts, then calls the Claude Code SDK to generate features.
+    ``spec_content`` is free-form requirement text, not trusted YAML or Bob
+    configuration.  The model response is parsed under the strict planner
+    contract before any caller can persist it.
 
     In production, this spawns a real Claude sub-agent. For testing, this
     function is mocked.
 
     Args:
-        spec_content: The raw YAML spec file content.
+        spec_content: Raw Markdown, plain text, or YAML application description.
         ref_texts: Optional list of extracted text from reference PDFs.
+        model: Optional Claude model ID/alias.  Defaults to
+            ``BOB_FEATURE_PLANNER_MODEL`` or exact ``claude-opus-4-8``.
 
     Returns:
-        A list of feature dicts with keys like name, description, priority,
-        acceptance_criteria.
+        A validated list of feature mappings forming an acyclic DAG.
+
+    Raises:
+        FeaturePlanValidationError: If the model output is missing, ambiguous,
+            malformed, or violates the feature-DAG contract.
+        ValueError: If the configured planner model is unknown.
     """
     import asyncio
+    import tempfile
 
     from bob.orchestrator.claude_executor import (
         ClaudeExecutor,
+        _attach_stderr_capture,
+        _format_spawn_exception,
         build_sub_agent_options,
+        resolve_model_name,
     )
 
-    prompt_parts = [
-        "You are a feature generation assistant. Analyze the following project "
-        "specification and generate a list of features needed to build it.\n\n"
-        "For each feature, provide:\n"
-        "- name: A concise feature name\n"
-        "- description: What the feature does\n"
-        "- priority: A number (lower = higher priority, starting at 10)\n"
-        "- acceptance_criteria: A list of testable criteria\n\n"
-        "Return your features in a YAML code block with a 'features' key.\n\n"
-        "## Project Specification\n\n",
-        spec_content,
-    ]
-
-    if ref_texts:
-        prompt_parts.append("\n\n## Reference Documents\n\n")
-        for i, text in enumerate(ref_texts, 1):
-            prompt_parts.append(f"### Reference {i}\n\n{text}\n\n")
-
-    prompt = "".join(prompt_parts)
-
-    options = build_sub_agent_options(
-        model="sonnet",
-        max_turns=10,
+    source_precedence = resolve_planner_source_precedence(source_precedence)
+    configured_model = model or os.environ.get(
+        "BOB_FEATURE_PLANNER_MODEL", "claude-opus-4-8"
     )
+    if not isinstance(configured_model, str) or not configured_model.strip():
+        raise ValueError("feature planner model must be a non-empty string")
+    # Resolve first so a typo fails closed.  ``build_sub_agent_options`` has a
+    # compatibility fallback for ordinary workers, which is inappropriate for
+    # a planner explicitly pinned by an autonomous campaign.
+    resolved_model = resolve_model_name(configured_model.strip())
+    if resolved_model is None:  # defensive: non-empty input always resolves
+        raise ValueError("feature planner model did not resolve")
 
-    executor = ClaudeExecutor(default_options=options)
+    # Always file-back requirement sources.  Claude Code transports the user
+    # prompt as one argv element, whose Linux ceiling is typically 128 KiB;
+    # PPAT's spec + review corpus legitimately exceeds it.  A private ephemeral
+    # cwd also gives the planning agent only the sources it must read.
+    with tempfile.TemporaryDirectory(prefix="bob-feature-planner-") as temp_dir:
+        planner_workspace = pathlib.Path(temp_dir)
+        sources = materialize_feature_planner_sources(
+            planner_workspace,
+            spec_content,
+            ref_texts,
+            source_precedence=source_precedence,
+        )
+        prompt = build_file_backed_feature_planner_prompt(
+            sources, source_precedence=source_precedence
+        )
+        planner_env = create_ephemeral_planner_environment(planner_workspace)
 
-    async def _run():
-        result = await executor.execute(prompt)
-        return _parse_features_from_output(result.text)
+        base_options = build_sub_agent_options(
+            cwd=planner_workspace,
+            model=resolved_model,
+            allowed_tools=list(PLANNER_ALLOWED_TOOLS),
+            disallowed_tools=list(PLANNER_DISALLOWED_TOOLS),
+            permission_mode="default",
+            mcp_servers={},
+            env=planner_env,
+            agent_role="planner",
+        )
+        base_options.extra_args = {
+            **(dict(base_options.extra_args) if base_options.extra_args else {}),
+            **dict(PLANNER_CLI_EXTRA_ARGS),
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w+",
+            encoding="utf-8",
+            errors="replace",
+            prefix="bob-feature-planner-stderr-",
+            suffix=".log",
+        ) as stderr_buffer:
+            os.chmod(stderr_buffer.name, 0o600)
+            options = _attach_stderr_capture(base_options, stderr_buffer)
+            executor = ClaudeExecutor(default_options=options)
 
-    return asyncio.run(_run())
+            async def _run():
+                result = await executor.execute(prompt)
+                if result.is_error:
+                    raise RuntimeError(
+                        result.error_message or "Claude planner returned an error result"
+                    )
+                # Only the final response text crosses out of the ephemeral
+                # source workspace; Read results are never appended here.
+                return result.text
+
+            try:
+                response_text = asyncio.run(_run())
+            except Exception as exc:
+                # Read a bounded head+tail from the real file-backed stream. The
+                # SDK requires fileno(), so StringIO cannot be used here.
+                try:
+                    stderr_buffer.flush()
+                    with open(stderr_buffer.name, "rb") as capture_reader:
+                        capture_reader.seek(0, os.SEEK_END)
+                        capture_size = capture_reader.tell()
+                        capture_reader.seek(0)
+                        if capture_size <= 32 * 1024:
+                            captured_bytes = capture_reader.read()
+                        else:
+                            head = capture_reader.read(16 * 1024)
+                            capture_reader.seek(-16 * 1024, os.SEEK_END)
+                            tail = capture_reader.read(16 * 1024)
+                            captured_bytes = (
+                                head
+                                + b"\n<stderr capture middle omitted>\n"
+                                + tail
+                            )
+                    captured_stderr = captured_bytes.decode(
+                        "utf-8", errors="replace"
+                    )
+                except OSError:
+                    captured_stderr = ""
+
+                raw_diagnostic = _format_spawn_exception(
+                    exc,
+                    captured_stderr=captured_stderr,
+                    max_stderr_chars=2000,
+                )
+                safe_diagnostic = sanitize_planner_diagnostic(
+                    raw_diagnostic,
+                    prompt=prompt,
+                    source_texts=(spec_content, *(ref_texts or ())),
+                    workspace=planner_workspace,
+                )
+                raise FeaturePlanValidationError(
+                    "Claude planner execution failed:\n" + safe_diagnostic
+                ) from exc
+
+    return parse_and_validate_feature_plan(response_text, sources=sources)
 
 
 @main.command("generate-features")
@@ -1529,14 +1631,14 @@ def _run_generate_features(
     "--refs",
     multiple=True,
     type=click.Path(),
-    help="Reference document paths (PDFs) to include as context.",
+    help="Reference paths (PDF or UTF-8 text/Markdown/YAML) to include as context.",
 )
 @click.option(
     "--output",
     "-o",
     type=click.Path(),
     default="features.yaml",
-    help="Output YAML file path (default: features.yaml).",
+    help="Output path: canonical JSON for .json, YAML otherwise (default: features.yaml).",
 )
 @click.option(
     "--auto-continue",
@@ -1544,57 +1646,161 @@ def _run_generate_features(
     default=False,
     help="Skip human review and proceed to plan automatically.",
 )
-def generate_features(spec_file, refs, output, auto_continue):
+@click.option(
+    "--model",
+    envvar="BOB_FEATURE_PLANNER_MODEL",
+    default="claude-opus-4-8",
+    show_default=True,
+    show_envvar=True,
+    help="Claude model ID or alias used only for feature planning.",
+)
+@click.option(
+    "--source-precedence",
+    envvar=PLANNER_SOURCE_PRECEDENCE_ENV,
+    default=None,
+    show_envvar=True,
+    help="Trusted controller rule describing precedence among requirement sources.",
+)
+def generate_features(
+    spec_file, refs, output, auto_continue, model, source_precedence
+):
     """Generate features from a project spec using AI.
 
-    Reads SPEC_FILE (a YAML file), optionally extracts content from
-    reference PDFs (--refs), spawns a research sub-agent to generate
-    features, and writes the result to an output YAML file.
+    Reads SPEC_FILE as Markdown, plain text, or YAML, optionally extracts content from
+    reference PDFs or UTF-8 text documents (--refs), spawns a planning
+    sub-agent to generate
+    features, and writes canonical JSON for a .json output or YAML otherwise.
 
-    Usage: bob generate-features spec.yaml --refs paper.pdf --output features.yaml
+    Usage: bob generate-features requirements.md --refs paper.pdf --output features.yaml
     """
     logger.info("Generating features from spec: %s", spec_file)
     console = Console()
     spec_path = pathlib.Path(spec_file)
 
-    # Step 1: Parse spec file
-    try:
-        spec_content = spec_path.read_text()
-        spec = yaml.safe_load(spec_content)
-    except yaml.YAMLError as exc:
-        logger.error("Invalid YAML in %s: %s", spec_path.name, exc)
-        console.print(f"[red]Error: Invalid YAML in {spec_path.name}: {exc}[/red]")
-        raise SystemExit(1)
-
-    if spec is None:
-        spec = {}
-
-    project_name = spec.get("name", spec_path.stem)
+    # Step 1: Read the application description as opaque requirement text.
+    # YAML name extraction is best-effort only; invalid YAML is perfectly valid
+    # Markdown/plain-English input for this command.
+    spec_content = spec_path.read_text()
+    project_name = project_name_from_source(spec_content, spec_path.stem)
     console.print(f"[bold]Spec file:[/bold] {spec_path.name}")
     console.print(f"[bold]Project:[/bold] {project_name}")
 
-    # Step 2: Extract PDF content from --refs
+    # Step 2: Load every normative reference.  References are all-or-nothing:
+    # silently dropping an unreadable review/spec would produce an apparently
+    # valid plan derived from incomplete authority.
     ref_texts: list[str] = []
     for ref_path_str in refs:
         ref_path = pathlib.Path(ref_path_str)
         try:
-            pdf_content = extract_pdf_text(ref_path)
-            ref_texts.append(pdf_content.text)
+            if ref_path.suffix.lower() == ".pdf":
+                pdf_content = extract_pdf_text(ref_path)
+                ref_texts.append(pdf_content.text)
+                detail = f"{pdf_content.metadata.get('page_count', '?')} pages"
+            else:
+                text_content = ref_path.read_text(encoding="utf-8")
+                ref_texts.append(text_content)
+                detail = f"{len(text_content.splitlines())} lines"
             console.print(
-                f"[dim]Loaded reference: {ref_path.name} "
-                f"({pdf_content.metadata.get('page_count', '?')} pages)[/dim]"
+                f"[dim]Loaded reference: {ref_path.name} ({detail})[/dim]"
             )
-        except (FileNotFoundError, ValueError) as exc:
-            console.print(f"[yellow]Warning: Could not read {ref_path.name}: {exc}[/yellow]")
+        except (OSError, UnicodeError, ValueError) as exc:
+            logger.error("Could not read normative reference %s: %s", ref_path, exc)
+            console.print(
+                f"[red]Error: Could not read normative reference "
+                f"{ref_path.name}: {exc}[/red]"
+            )
+            raise SystemExit(1)
 
-    # Step 3: Spawn research sub-agent
-    console.print("[bold]Generating features...[/bold]")
-    features = _run_generate_features(spec_content, ref_texts or None)
+    # Step 3: Spawn planning sub-agent
+    console.print(f"[bold]Generating features with {model}...[/bold]")
+    try:
+        resolved_precedence = resolve_planner_source_precedence(source_precedence)
+        features = _run_generate_features(
+            spec_content,
+            ref_texts or None,
+            model=model,
+            source_precedence=resolved_precedence,
+        )
+    except (FeaturePlanValidationError, ValueError) as exc:
+        logger.error("Feature planning failed closed: %s", exc)
+        console.print(f"[red]Error: feature plan rejected: {exc}[/red]")
+        raise SystemExit(1)
 
     # Step 4: Write output file
     output_path = pathlib.Path(output)
     output_data = {"name": project_name, "features": features}
-    output_path.write_text(yaml.dump(output_data, default_flow_style=False, sort_keys=False))
+    if resolved_precedence is not None:
+        source_payloads = (("spec", spec_content),) + tuple(
+            (f"reference-{index}", text)
+            for index, text in enumerate(ref_texts, 1)
+        )
+        source_provenance = [
+            {
+                "source_id": source_id,
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "line_count": len(text.splitlines()) or 1,
+            }
+            for source_id, text in source_payloads
+        ]
+        manifest_sources = tuple(
+            PlannerSourceFile(
+                source_id=item["source_id"],
+                filename=(
+                    "application-spec.txt"
+                    if item["source_id"] == "spec"
+                    else f"reference-{int(item['source_id'].split('-')[1]):03d}.txt"
+                ),
+                sha256=item["sha256"],
+                line_count=item["line_count"],
+            )
+            for item in source_provenance
+        )
+        assignment = {
+            "model": model,
+            "source_precedence": resolved_precedence,
+            "sources": source_provenance,
+        }
+        output_data["planner_provenance"] = {
+            "schema_version": 1,
+            **assignment,
+            "source_precedence_sha256": hashlib.sha256(
+                resolved_precedence.encode("utf-8")
+            ).hexdigest(),
+            "source_manifest_sha256": planner_source_manifest_sha256(
+                manifest_sources, source_precedence=resolved_precedence
+            ),
+            "planner_assignment_sha256": hashlib.sha256(
+                json.dumps(
+                    assignment, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest(),
+            "feature_plan_sha256": hashlib.sha256(
+                json.dumps(
+                    features, sort_keys=True, separators=(",", ":")
+                ).encode("utf-8")
+            ).hexdigest(),
+        }
+    if output_path.suffix.lower() == ".json":
+        output_path.write_text(
+            json.dumps(
+                output_data,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    else:
+        output_path.write_text(
+            yaml.safe_dump(
+                output_data,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
 
     console.print(
         f"[green]Generated {len(features)} features -> {output_path}[/green]"
@@ -3281,3 +3487,15 @@ def verify_mutmut_cmd(
                 f"< {threshold_used}. See runs/{feature_id}/mutation_report.json."
             )
             raise SystemExit(1)
+
+
+# Proposal-only task-packet compilation/review live in a separate module so
+# their strict model schemas cannot be confused with Bob's legacy feature YAML
+# parser.  Registration adds commands without changing existing entry points.
+from bob.atomic_packet_planner import (  # noqa: E402
+    propose_task_packets_command,
+    review_task_packets_command,
+)
+
+main.add_command(propose_task_packets_command)
+main.add_command(review_task_packets_command)

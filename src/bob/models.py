@@ -11,31 +11,84 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
+# SQLite stores INTEGER values as signed 64-bit numbers.  Bob persists this
+# largest representable value for ``BOB_MAX_REFINEMENT_ATTEMPTS=unlimited`` (or
+# ``none``), rather than using a negative magic number that would already look
+# exhausted to the existing ``attempts >= max_attempts`` checks.
+SQLITE_INT64_MAX = (1 << 63) - 1
+DEFAULT_MAX_REFINEMENT_ATTEMPTS = 5
+
+# SQLite REAL and Pydantic both handle this finite value portably.  It is the
+# deliberately practical persisted representation of an unlimited project cost
+# budget: close to the upper end of ordinary finite IEEE-754 arithmetic while
+# avoiding NaN/Inf comparison, JSON, and database round-trip edge cases.  This
+# also matches the external PPAT campaign's controller-owned database seed.
+UNLIMITED_MAX_COST_USD = 1.0e300
+
+_UNLIMITED_ENV_VALUES = frozenset({"unlimited", "none"})
+
+
+def resolve_max_refinement_attempts() -> int:
+    """Resolve ``BOB_MAX_REFINEMENT_ATTEMPTS`` for a newly-created feature.
+
+    Unset means the legacy five-attempt default.  ``unlimited`` and ``none``
+    (case-insensitive, surrounding whitespace ignored) resolve to
+    :data:`SQLITE_INT64_MAX`, which can be persisted losslessly in every SQLite
+    ``INTEGER`` column.  A numeric override must be a positive signed-INT64
+    integer.  Invalid explicit configuration is rejected instead of silently
+    reinstating a small retry cap on an autonomous run.
+    """
+    raw = os.environ.get("BOB_MAX_REFINEMENT_ATTEMPTS")
+    if raw is None or not raw.strip():
+        return DEFAULT_MAX_REFINEMENT_ATTEMPTS
+
+    normalized = raw.strip().lower()
+    if normalized in _UNLIMITED_ENV_VALUES:
+        return SQLITE_INT64_MAX
+
+    try:
+        value = int(normalized, 10)
+    except ValueError as exc:
+        raise ValueError(
+            "BOB_MAX_REFINEMENT_ATTEMPTS must be a positive integer, "
+            "'unlimited', or 'none'"
+        ) from exc
+    if not 1 <= value <= SQLITE_INT64_MAX:
+        raise ValueError(
+            "BOB_MAX_REFINEMENT_ATTEMPTS must be between 1 and "
+            f"{SQLITE_INT64_MAX}, or be 'unlimited'/'none'"
+        )
+    return value
+
+
 # Default per-project cost ceiling (USD). Env-overridable: bob-chain dev work has
-# no $ budget (operator directive — never NH a feature merely for projected cost).
-# The old hardcoded 500.0 mass-NH'd every remaining feature once a long run
-# approached it. Set BOB_MAX_COST_USD very high (or leave the high default) to
-# disable cost-based NH; the per-attempt cap (BOB_PER_ATTEMPT_COST_CAP) still
-# guards runaway single sub-agents.
+# no practical $ budget (operator directive — never NH a feature merely for
+# projected cost).  The old hardcoded 500.0 mass-NH'd every remaining feature
+# once a long run approached it.  The finite sentinel avoids persisting Inf.
 def resolve_max_cost_usd() -> float:
     """Return the effective per-project cost ceiling read from BOB_MAX_COST_USD.
 
-    An absent, empty, whitespace-only, non-numeric, NaN, or Inf value returns
-    the effectively-unlimited default (1_000_000.0).  A valid numeric value is
+    ``unlimited`` and ``none`` explicitly select the finite persisted sentinel.
+    An absent, empty, whitespace-only, non-numeric, NaN, or Inf value also
+    returns that backwards-compatible sentinel.  A valid numeric value is
     clamped to >= 0.0 and returned.  Never returns 0.0 from a malformed env var
-    (which would block every spawn).
+    (which would block every spawn), and never returns a non-finite float that
+    could be rejected during project initialization or round-trip poorly.
     """
     import math as _math
     raw = os.environ.get("BOB_MAX_COST_USD", "")
     if not raw or not raw.strip():
-        return 1_000_000.0
+        return UNLIMITED_MAX_COST_USD
+    normalized = raw.strip().lower()
+    if normalized in _UNLIMITED_ENV_VALUES:
+        return UNLIMITED_MAX_COST_USD
     try:
-        val = float(raw)
+        val = float(normalized)
         if _math.isnan(val) or _math.isinf(val):
-            return 1_000_000.0
+            return UNLIMITED_MAX_COST_USD
         return max(0.0, val)
     except ValueError:
-        return 1_000_000.0
+        return UNLIMITED_MAX_COST_USD
 
 
 def _default_max_cost_usd() -> float:
@@ -110,7 +163,11 @@ class Feature(BaseModel):
     readiness_components: str | None = None
 
     refinement_attempts: int = 0
-    max_refinement_attempts: int = 5
+    max_refinement_attempts: int = Field(
+        default_factory=resolve_max_refinement_attempts,
+        ge=1,
+        le=SQLITE_INT64_MAX,
+    )
     last_improvement_type: str | None = None
     research_iterations: int = 0
 
@@ -559,6 +616,13 @@ class SubAgentRun(BaseModel):
     duration_ms: int | None = None
 
     mcp_enabled: str | None = None
+
+    provider_session_id: str | None = None
+    model: str | None = None
+    agent_role: str | None = None
+    cwd: str | None = None
+    prompt_sha256: str | None = None
+    result_sha256: str | None = None
 
     created_at: datetime = Field(default_factory=datetime.now)
     completed_at: datetime | None = None

@@ -46,6 +46,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from bob.candidate_exec import candidate_argv
 from bob.models import SecurityFinding, SecurityResult
 
 logger = logging.getLogger(__name__)
@@ -298,8 +299,8 @@ def _run_pip_audit(workspace: Path, *, timeout: int) -> tuple[list[SecurityFindi
         pass
 
     try:
-        proc = subprocess.run(  # nosec B603 - args are a fixed list
-            cmd,
+        proc = subprocess.run(  # nosec B603 - direct fixed argv
+            candidate_argv(cmd),
             cwd=str(workspace),
             capture_output=True,
             text=True,
@@ -545,8 +546,8 @@ def _run_bandit(workspace: Path, *, timeout: int) -> tuple[list[SecurityFinding]
         ),
     ]
     try:
-        proc = subprocess.run(  # nosec B603 - args are a fixed list
-            cmd,
+        proc = subprocess.run(  # nosec B603 - direct fixed argv
+            candidate_argv(cmd),
             cwd=str(workspace),
             capture_output=True,
             text=True,

@@ -38,18 +38,19 @@ __all__ = [
 ]
 
 
-def resolve_cost_cap() -> float:
+def resolve_cost_cap() -> float | None:
     """Resolve the effective per-attempt cost cap in USD.
 
     Reads ``BOB_PER_ATTEMPT_COST_CAP`` (default 10.0), clamps it to the valid
-    range [0.5, 100], and returns the result. Never raises: an unset, empty,
-    or non-numeric env var falls back to the default. Canonical public name
-    for the cap-resolution step required by the feature's acceptance criteria.
+    range [0.5, 100], and returns the result. ``unlimited``/``none`` returns
+    ``None``; malformed configuration raises so it cannot silently disable the
+    guard. Canonical public name for the cap-resolution step required by the
+    feature's acceptance criteria.
 
     Returns
     -------
-    float
-        The per-attempt cap in USD, always within [0.5, 100].
+    float | None
+        The per-attempt cap in USD, or ``None`` for explicit unlimited mode.
     """
     return get_per_attempt_cap()
 

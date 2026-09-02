@@ -74,11 +74,17 @@ bob7 = "bob.cli:main"
 bob8 = "bob.cli:main"
 bob9 = "bob.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
 [tool.setuptools.package-data]
-"bob" = ["schema.sql", "skills/**/SKILL.md"]
+"bob" = [
+    "schema.sql",
+    "migrations/*.sql",
+    "skills/*/SKILL.md",
+    "agents/prompts/*.txt",
+    "agents/prompts/*.md",
+    "skill_bundles/*/*.md",
+    "spec_constitution.md",
+    "spec_quality/spec_constitution.md",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"  # explicit @pytest.mark.asyncio required (current behavior)

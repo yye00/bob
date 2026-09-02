@@ -11,6 +11,7 @@ import logging
 import os
 import pathlib
 import platform
+import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -18,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from bob import get_package_dir
-from bob.models import BugLedger, CalibrationAlert, CalibrationData, ConfidenceHistory, EvidenceArtifact, ExecutionLog, Feature, FeatureDependency, FeatureReviewIssue, FlakyTestRun, ForgettingEvent, Project, ReadinessHistory, RegressionEvent, ResourceCheckpoint, RollbackEvent, ResearchResult, ReviewHistory, ScopeChange, SubAgentRun, Task
+from bob.models import BugLedger, CalibrationAlert, CalibrationData, ConfidenceHistory, EvidenceArtifact, ExecutionLog, Feature, FeatureDependency, FeatureReviewIssue, FlakyTestRun, ForgettingEvent, Project, ReadinessHistory, RegressionEvent, ResourceCheckpoint, RollbackEvent, ResearchResult, ReviewHistory, SQLITE_INT64_MAX, ScopeChange, SubAgentRun, Task, resolve_max_cost_usd, resolve_max_refinement_attempts
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,24 @@ def init_database(*, db_path: pathlib.Path | None = None) -> None:
     conn = get_connection(db_path=db_path)
     try:
         conn.executescript(schema_sql)
+        # ``CREATE TABLE IF NOT EXISTS`` does not add columns to databases
+        # created by earlier Bob versions. Keep provenance upgrades additive
+        # and idempotent so unattended resumes gain the same evidence schema.
+        existing_agent_run_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(sub_agent_runs)").fetchall()
+        }
+        for column in (
+            "provider_session_id",
+            "model",
+            "agent_role",
+            "cwd",
+            "prompt_sha256",
+            "result_sha256",
+        ):
+            if column not in existing_agent_run_columns:
+                conn.execute(f"ALTER TABLE sub_agent_runs ADD COLUMN {column} TEXT")
+        conn.commit()
     finally:
         conn.close()
 
@@ -141,21 +160,10 @@ def create_project(
             database MUST pass it here so the project row and subsequent
             agent_run rows target the same database.
     """
-    # No bob-chain $ budget (operator directive): default the per-project cap to
-    # BOB_MAX_COST_USD or effectively-unlimited, NOT the old hardcoded 500.0
-    # that mass-NH'd every remaining feature once a long run approached it.
+    # Resolve in one place so numeric values and the explicit ``unlimited`` /
+    # ``none`` spellings behave identically in the model, DB API, and CLI.
     if max_cost_usd is None:
-        import math as _math
-        import os as _os
-        _raw = _os.environ.get("BOB_MAX_COST_USD", "")
-        if not _raw or not _raw.strip():
-            max_cost_usd = 1_000_000.0
-        else:
-            try:
-                _val = float(_raw)
-                max_cost_usd = 1_000_000.0 if (_math.isnan(_val) or _math.isinf(_val)) else max(0.0, _val)
-            except ValueError:
-                max_cost_usd = 1_000_000.0
+        max_cost_usd = resolve_max_cost_usd()
     project_id = str(uuid.uuid4())
     now = datetime.now()
 
@@ -354,6 +362,7 @@ def create_feature(
     conf_test_adequacy: float = 0.0,
     readiness_score: float = 0.0,
     spec_quality_score: float | None = None,
+    max_refinement_attempts: int | None = None,
 ) -> Feature:
     """Create a new feature and persist it to the database.
 
@@ -361,6 +370,8 @@ def create_feature(
     """
     fid = feature_id or str(uuid.uuid4())
     now = datetime.now()
+    if max_refinement_attempts is None:
+        max_refinement_attempts = resolve_max_refinement_attempts()
 
     with connect() as conn:
         conn.execute(
@@ -370,14 +381,16 @@ def create_feature(
                 priority, tdd_mode, sub_agent_mode, risk_category, spec_slot, test_files,
                 permanent_forward_carry,
                 conf_spec_understanding, conf_impl_correctness, conf_test_adequacy, readiness_score,
+                max_refinement_attempts,
                 spec_quality_score,
                 created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (fid, project_id, parent_feature_id, decomposition_depth,
              name, description, acceptance_criteria, status,
              priority, tdd_mode, sub_agent_mode, risk_category, spec_slot, test_files,
              permanent_forward_carry,
              conf_spec_understanding, conf_impl_correctness, conf_test_adequacy, readiness_score,
+             max_refinement_attempts,
              spec_quality_score,
              now.isoformat(), now.isoformat()),
         )
@@ -402,6 +415,7 @@ def create_feature(
         conf_impl_correctness=conf_impl_correctness,
         conf_test_adequacy=conf_test_adequacy,
         readiness_score=readiness_score,
+        max_refinement_attempts=max_refinement_attempts,
         spec_quality_score=spec_quality_score,
         created_at=now,
         updated_at=now,
@@ -826,6 +840,82 @@ def complete_feature_and_cascade(feature_id: str) -> list[str]:
             )
             if update_cursor.rowcount == 1:
                 updated_features.append(dependent_feature_id)
+
+    return updated_features
+
+
+def complete_feature_hierarchy_and_cascade(feature_id: str) -> list[str]:
+    """Complete a leaf, eligible decomposed ancestors, and cascades atomically.
+
+    Unlike the legacy composition of ``complete_feature_and_cascade`` and
+    ``check_parent_completion``, every status transition uses one SQLite
+    transaction.  A process crash therefore cannot leave the leaf completed
+    while an eligible parent or its dependents remain stranded.
+    """
+
+    updated_features: list[str] = []
+    now_iso = datetime.now().isoformat()
+
+    with connect() as conn:
+        def _complete_and_cascade(current_id: str) -> bool:
+            cursor = conn.execute(
+                "UPDATE features SET status = 'completed', updated_at = ? "
+                "WHERE id = ?",
+                (now_iso, current_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+            dependents = conn.execute(
+                "SELECT feature_id FROM feature_dependencies "
+                "WHERE depends_on_feature_id = ?",
+                (current_id,),
+            ).fetchall()
+            for (dependent_id,) in dependents:
+                statuses = conn.execute(
+                    "SELECT f.status FROM feature_dependencies fd "
+                    "JOIN features f ON f.id = fd.depends_on_feature_id "
+                    "WHERE fd.feature_id = ?",
+                    (dependent_id,),
+                ).fetchall()
+                if statuses and all(status == "completed" for (status,) in statuses):
+                    promoted = conn.execute(
+                        "UPDATE features SET status = 'ready', updated_at = ? "
+                        "WHERE id = ? AND status = 'pending'",
+                        (now_iso, dependent_id),
+                    )
+                    if promoted.rowcount == 1:
+                        updated_features.append(dependent_id)
+            return True
+
+        current_id = feature_id
+        if not _complete_and_cascade(current_id):
+            return updated_features
+
+        while True:
+            row = conn.execute(
+                "SELECT parent_feature_id FROM features WHERE id = ?",
+                (current_id,),
+            ).fetchone()
+            parent_id = row[0] if row is not None else None
+            if not parent_id:
+                break
+            parent = conn.execute(
+                "SELECT status FROM features WHERE id = ?", (parent_id,)
+            ).fetchone()
+            if parent is None or parent[0] != "pending_decomposition":
+                break
+            child_counts = conn.execute(
+                "SELECT COUNT(*), SUM(CASE WHEN status = 'completed' THEN 0 ELSE 1 END) "
+                "FROM features WHERE parent_feature_id = ?",
+                (parent_id,),
+            ).fetchone()
+            child_total = int(child_counts[0] or 0)
+            incomplete = int(child_counts[1] or 0)
+            if child_total == 0 or incomplete != 0:
+                break
+            if not _complete_and_cascade(parent_id):
+                break
+            current_id = parent_id
 
     return updated_features
 
@@ -1685,20 +1775,85 @@ def increment_refinement_attempts(feature_id: str) -> Feature | None:
     """
     with connect() as conn:
         cursor = conn.execute(
-            "UPDATE features SET refinement_attempts = refinement_attempts + 1, "
-            "updated_at = ? WHERE id = ?",
-            (datetime.now().isoformat(), feature_id),
+            "UPDATE features SET refinement_attempts = CASE "
+            "WHEN refinement_attempts >= ? THEN ? "
+            "ELSE refinement_attempts + 1 END, updated_at = ? WHERE id = ?",
+            (
+                SQLITE_INT64_MAX,
+                SQLITE_INT64_MAX,
+                datetime.now().isoformat(),
+                feature_id,
+            ),
         )
         if cursor.rowcount == 0:
             return None
 
     # Check if the limit has been reached and update status if needed
     feature = get_feature(feature_id)
-    if feature is not None and feature.refinement_attempts >= feature.max_refinement_attempts:
+    if (
+        feature is not None
+        and feature.max_refinement_attempts != SQLITE_INT64_MAX
+        and feature.refinement_attempts >= feature.max_refinement_attempts
+    ):
         update_feature(feature_id, status="needs_human")
         feature = get_feature(feature_id)
 
     return feature
+
+
+def charge_refinement_attempt(
+    feature_id: str,
+    *,
+    under_limit_status: str = "ready",
+    exhausted_status: str = "needs_human",
+) -> tuple[str, Feature | None]:
+    """Atomically charge one feature attempt and route its next status.
+
+    Returns ``("UNDER_LIMIT", feature)``, ``("EXHAUSTED", feature)``, or
+    ``("MISSING", None)``.  The explicit outcome avoids the historical bug
+    where callers interpreted ``increment_refinement_attempts() is None`` as
+    exhaustion even though ``None`` means only that the row is missing.
+    Unlimited counters saturate at SQLite INT64_MAX and never exhaust.
+    """
+
+    allowed_statuses = {
+        "pending",
+        "ready",
+        "executing",
+        "completed",
+        "failed",
+        "interrupted",
+        "needs_human",
+        "pending_decomposition",
+    }
+    if under_limit_status not in allowed_statuses:
+        raise ValueError(f"invalid under-limit status: {under_limit_status}")
+    if exhausted_status not in allowed_statuses:
+        raise ValueError(f"invalid exhausted status: {exhausted_status}")
+    now = datetime.now().isoformat()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT refinement_attempts, max_refinement_attempts "
+            "FROM features WHERE id = ?",
+            (feature_id,),
+        ).fetchone()
+        if row is None:
+            return ("MISSING", None)
+        current, maximum = int(row[0]), int(row[1])
+        updated = (
+            SQLITE_INT64_MAX
+            if current >= SQLITE_INT64_MAX
+            else current + 1
+        )
+        exhausted = maximum != SQLITE_INT64_MAX and updated >= maximum
+        outcome = "EXHAUSTED" if exhausted else "UNDER_LIMIT"
+        next_status = exhausted_status if exhausted else under_limit_status
+        conn.execute(
+            "UPDATE features SET refinement_attempts = ?, status = ?, "
+            "updated_at = ? WHERE id = ?",
+            (updated, next_status, now, feature_id),
+        )
+    return (outcome, get_feature(feature_id))
 
 
 def check_refinement_limit(feature_id: str) -> bool | None:
@@ -1710,6 +1865,8 @@ def check_refinement_limit(feature_id: str) -> bool | None:
     feature = get_feature(feature_id)
     if feature is None:
         return None
+    if feature.max_refinement_attempts == SQLITE_INT64_MAX:
+        return False
     return feature.refinement_attempts >= feature.max_refinement_attempts
 
 
@@ -1923,6 +2080,7 @@ def create_evidence(
     iteration_created: int | None = None,
     environment_fingerprint: str | None = None,
     environment_matches_current: bool = True,
+    supersede_current: bool = False,
 ) -> EvidenceArtifact:
     """Create a new evidence artifact and persist it to the database.
 
@@ -1932,6 +2090,13 @@ def create_evidence(
     now = datetime.now()
 
     with connect() as conn:
+        if supersede_current and is_current:
+            conn.execute(
+                """UPDATE evidence_artifacts SET is_current = 0
+                   WHERE project_id = ? AND feature_id IS ? AND task_id IS ?
+                     AND type = ? AND is_current = 1""",
+                (project_id, feature_id, task_id, type),
+            )
         conn.execute(
             """INSERT INTO evidence_artifacts
                (id, project_id, feature_id, task_id, attempt_number,
@@ -3661,6 +3826,8 @@ _AGENT_RUN_COLUMNS = (
     "improvement_type", "improvement_evidence",
     "tokens_in", "tokens_out", "cost_usd", "duration_ms",
     "mcp_enabled",
+    "provider_session_id", "model", "agent_role", "cwd",
+    "prompt_sha256", "result_sha256",
     "created_at", "completed_at",
 )
 
@@ -3685,6 +3852,10 @@ def create_agent_run(
     target_id: str | None = None,
     prompt_summary: str | None = None,
     mcp_enabled: str | None = None,
+    model: str | None = None,
+    agent_role: str | None = None,
+    cwd: str | None = None,
+    prompt_sha256: str | None = None,
     status: str = "running",
     db_path: pathlib.Path | None = None,
 ) -> SubAgentRun:
@@ -3713,11 +3884,13 @@ def create_agent_run(
                (id, project_id, parent_run_id,
                 purpose, target_type, target_id,
                 status, prompt_summary, mcp_enabled,
+                model, agent_role, cwd, prompt_sha256,
                 created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (rid, project_id, parent_run_id,
              purpose, target_type, target_id,
              status, prompt_summary, mcp_enabled,
+             model, agent_role, cwd, prompt_sha256,
              now.isoformat()),
         )
 
@@ -3731,8 +3904,47 @@ def create_agent_run(
         status=status,
         prompt_summary=prompt_summary,
         mcp_enabled=mcp_enabled,
+        model=model,
+        agent_role=agent_role,
+        cwd=cwd,
+        prompt_sha256=prompt_sha256,
         created_at=now,
     )
+
+
+def finalize_agent_run_provenance(
+    run_id: str,
+    *,
+    provider_session_id: str,
+    result_sha256: str,
+) -> SubAgentRun | None:
+    """Write provider-finalized provenance exactly once.
+
+    Repeating the same values is idempotent. Conflicting values are rejected;
+    ordinary ``update_agent_run`` deliberately cannot mutate these columns.
+    """
+    if not provider_session_id.strip():
+        raise ValueError("provider_session_id must be non-empty")
+    if not re.fullmatch(r"[0-9a-f]{64}", result_sha256):
+        raise ValueError("result_sha256 must be a lowercase SHA-256 digest")
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT provider_session_id, result_sha256 FROM sub_agent_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        existing_session, existing_result = row
+        if existing_session not in (None, provider_session_id):
+            raise ValueError("provider_session_id provenance is immutable")
+        if existing_result not in (None, result_sha256):
+            raise ValueError("result_sha256 provenance is immutable")
+        conn.execute(
+            "UPDATE sub_agent_runs SET provider_session_id = COALESCE(provider_session_id, ?), "
+            "result_sha256 = COALESCE(result_sha256, ?) WHERE id = ?",
+            (provider_session_id, result_sha256, run_id),
+        )
+    return get_agent_run(run_id)
 
 
 def get_agent_run(run_id: str) -> SubAgentRun | None:
