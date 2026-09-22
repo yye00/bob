@@ -29,14 +29,14 @@
     "bounded_bootstrap": "Use an independently bounded public maintenance route for initial Bob repairs; broken admitted path cannot authorize its own repair. If no healthy Bob route exists, explicitly record direct maintenance exception rather than fabricate a Bob run.",
     "selected_model": "Exact downgraded model ID and finite cost allowance selected at implementation dispatch, then verified at actual call site.",
     "artifact_network": "Satisfied for this session by owner instruction 2026-09-22: network-enabled acquisition authorized. Retain per-artifact origin, hashes and actual transfer results; availability is not dependency admission.",
-    "owner_sst_version": "Owner AMD model compatibility declaration is needed before choosing SST versions; generic discovery can proceed.",
+    "owner_sst_version": "Owner chose latest stable matching public Core/Elements on 2026-09-22; 16.0.0 acquired/built in D04. Actual AMD model compatibility remains D05/S07, not a blocker to the chosen public release.",
     "owner_sst": "Actual owner-approved AMD model source/config/native fixtures.",
     "target_platform": "Exact target OS/CPU/ABI/driver-runtime is required for target-specific binaries and images. Host native builds and portable source recipes can proceed with the host ABI recorded; mark target compatibility pending.",
     "app_workspace": "Exact new application root and write allowlist resolved, preserving old baseline.",
     "reference_data": "Pinned published code/config/measurements with complete external-data hashes and exposure labels.",
     "workload_identity": "Authoritative exact model/precision/tokenizer/KV/request definition and selected assets.",
     "complete_contracts": "Complete authoritative schemas/evidence profiles or explicit approved disposition of missing definitions.",
-    "capable_isolation_host": "Local/CI environment that permits the required actual separate identities and namespaces; denied here."
+    "capable_isolation_host": "Owner accepted this machine on 2026-09-22; actual local role boundaries must be tested. R00 round 2 records Docker UID/mount/network enforcement and trusted-host limits; no separate host is required."
   },
   "tasks": [
     {
@@ -273,8 +273,8 @@
       "execution": {
         "actor": "direct_codex",
         "claim": "public_local_only_not_independent_acceptance",
-        "receipt": "third_party/receipts/implementation-2026-09-22/D00/README.md",
-        "summary": "132 pinned wheels plus runtimes/source bundle restored; 38 tests pass; Hypothesis source and native rebuild/target closure remain unresolved"
+        "receipt": "third_party/receipts/implementation-2026-09-22-round2/D00/README.md",
+        "summary": "Exact Hypothesis source and four frozen offline native rebuilds verified; 361 installed app tests; full source-bootstrap and MI355 target closure remain partial"
       }
     },
     {
@@ -441,15 +441,14 @@
         "native-tools"
       ],
       "external_gates": [
-        "artifact_network",
-        "owner_sst_version"
+        "artifact_network"
       ],
       "proposed_outputs": [
         "third_party/recipes/power-spec-2/sst.*",
         "Installed core/elements native test inventory and outputs"
       ],
       "implementation_steps": [
-        "Resolve matching owner-supported release pair; prefer release sources if avoiding absent autotools is supported",
+        "Owner decision 2026-09-22 selects latest stable matching SST Core/Elements; official releases resolve to 16.0.0, pinned original release archives with published SHA256",
         "Build core first in private prefix, then required elements with explicit core location",
         "Use bounded serial CPU configuration where valid; add MPI only for required model tests",
         "Discover installed native tests and selected memHierarchy cases rather than assume suite completeness"
@@ -457,11 +456,11 @@
       "validation": [
         "sst --version, sst-test-core and selected sst-test-elements execute with nonzero collection",
         "Installed small configuration works outside source",
-        "Missing element and incompatible core rejected",
+        "Native missing element rejected; installed Core version mismatch guard tested (no incompatible plugin ABI claim)",
         "Record optional disabled elements and all skipped cases"
       ],
       "acceptance_limit": "Public SST software only; missing owner model does not become a generic substitute.",
-      "status": "BLOCKED_OWNER",
+      "status": "LOCAL_DONE",
       "dispatch_ready": false,
       "build_before_mi355": true,
       "model_id": null,
@@ -472,8 +471,8 @@
       "execution": {
         "actor": "direct_codex",
         "claim": "public_local_only_not_independent_acceptance",
-        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
-        "summary": "owner SST compatibility/source"
+        "receipt": "third_party/receipts/implementation-2026-09-22-round2/D04/README.md",
+        "summary": "SST 16.0.0 Core/Elements source build; 207 Core passes plus 20 declared skips, nine Elements passes, 17 recipe tests and four caught mutations"
       }
     },
     {
@@ -1194,15 +1193,15 @@
         "Use separate actual principals, storage and credentials for preparer/predictor/scorer/validator",
         "Test public canaries for sealed-label paths, scorer writes, device/network access and shared cache",
         "Do not equate test function mocks or role labels with privileges",
-        "Record denied namespace capability in this sandbox; run on authorized capable local CI instead"
+        "Owner accepted this sandboxed machine as R00 host on 2026-09-22; implement actual local process/principal/container separation, test denials, and disclose only the boundary exercised"
       ],
       "validation": [
-        "Actual OS denies all prohibited reads/writes/network/devices",
+        "Actual OS denies tested canary reads/writes and cross-role network; device paths/capabilities restricted, no actual device opened",
         "Allowed inputs still available and successful immutable submission scores",
         "No unrestricted-host fallback or shared writable cache"
       ],
-      "acceptance_limit": "Pre-MI355 deployment gate; not scientific or GPU evidence.",
-      "status": "BLOCKED_OWNER",
+      "acceptance_limit": "Owner-accepted local Docker role boundary only; controller/daemon/host administrators trusted, no separate user namespace or independent scientific/GPU acceptance.",
+      "status": "LOCAL_DONE",
       "dispatch_ready": false,
       "build_before_mi355": true,
       "model_id": null,
@@ -1213,8 +1212,8 @@
       "execution": {
         "actor": "direct_codex",
         "claim": "public_local_only_not_independent_acceptance",
-        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
-        "summary": "capable isolation host"
+        "receipt": "third_party/receipts/implementation-2026-09-22-round2/R00/README.md",
+        "summary": "Owner-accepted local Docker host; four role UIDs, 21 tests, four caught mutations, 64 denial observations and exact S01/S02/S05 invocation custody"
       }
     },
     {

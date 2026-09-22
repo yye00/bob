@@ -14,7 +14,7 @@ Generated from [local-build-queue.json](local-build-queue.json). Read [how to ru
 | [D01](#d01) | LOCAL_DONE | Construct clean portable Bob environment | B00, D00 | artifact_network |
 | [D02](#d02) | LOCAL_DONE | Freeze application numerical/test environment | D00 | artifact_network |
 | [D03](#d03) | LOCAL_DONE | Build minimal Accelergy/HWComponents comparison | D00 | artifact_network |
-| [D04](#d04) | BLOCKED_OWNER | Build SST Core and only required Elements | D00 | artifact_network, owner_sst_version |
+| [D04](#d04) | LOCAL_DONE | Build SST Core and only required Elements | D00 | artifact_network |
 | [D05](#d05) | BLOCKED_OWNER | Audit and run owner AMD SST native model | D04 | owner_sst |
 | [D06](#d06) | LOCAL_DONE | Prepare Perfetto and observation import | D00 | artifact_network |
 | [D07](#d07) | BLOCKED_OWNER | Complete AMD SMI and profiler build prerequisites | D00 | artifact_network, target_platform |
@@ -29,7 +29,7 @@ Generated from [local-build-queue.json](local-build-queue.json). Read [how to ru
 | [S05](#s05) | LOCAL_DONE | Implement UQ, calibration and reduction software fixtures | S03, D02 | Shared dispatch requirements |
 | [S06](#s06) | PLANNED | Implement control protocol and trial scheduling replay | None | Shared dispatch requirements |
 | [S07](#s07) | BLOCKED_OWNER | Bind open power actions to native execution | S01, D03, D05 | owner_sst |
-| [R00](#r00) | BLOCKED_OWNER | Qualify local deployed role separation | B03, D01, S02 | capable_isolation_host |
+| [R00](#r00) | LOCAL_DONE | Qualify local deployed role separation | B03, D01, S02 | capable_isolation_host |
 | [R01](#r01) | BLOCKED_OWNER | Run local synthetic end-to-end software rehearsal | B03, D01, D02, S02, S03, S04, S05, S06, R00 | selected_model |
 | [R02](#r02) | BLOCKED_OWNER | Assemble and rehearse MI355 handoff | D01, D02, D07, D10, R01 | target_platform |
 
@@ -47,14 +47,14 @@ Generated from [local-build-queue.json](local-build-queue.json). Read [how to ru
 - **bounded_bootstrap:** Use an independently bounded public maintenance route for initial Bob repairs; broken admitted path cannot authorize its own repair. If no healthy Bob route exists, explicitly record direct maintenance exception rather than fabricate a Bob run.
 - **selected_model:** Exact downgraded model ID and finite cost allowance selected at implementation dispatch, then verified at actual call site.
 - **artifact_network:** Satisfied for this session by owner instruction 2026-09-22: network-enabled acquisition authorized. Retain per-artifact origin, hashes and actual transfer results; availability is not dependency admission.
-- **owner_sst_version:** Owner AMD model compatibility declaration is needed before choosing SST versions; generic discovery can proceed.
+- **owner_sst_version:** Owner chose latest stable matching public Core/Elements on 2026-09-22; 16.0.0 acquired/built in D04. Actual AMD model compatibility remains D05/S07, not a blocker to the chosen public release.
 - **owner_sst:** Actual owner-approved AMD model source/config/native fixtures.
 - **target_platform:** Exact target OS/CPU/ABI/driver-runtime is required for target-specific binaries and images. Host native builds and portable source recipes can proceed with the host ABI recorded; mark target compatibility pending.
 - **app_workspace:** Exact new application root and write allowlist resolved, preserving old baseline.
 - **reference_data:** Pinned published code/config/measurements with complete external-data hashes and exposure labels.
 - **workload_identity:** Authoritative exact model/precision/tokenizer/KV/request definition and selected assets.
 - **complete_contracts:** Complete authoritative schemas/evidence profiles or explicit approved disposition of missing definitions.
-- **capable_isolation_host:** Local/CI environment that permits the required actual separate identities and namespaces; denied here.
+- **capable_isolation_host:** Owner accepted this machine on 2026-09-22; actual local role boundaries must be tested. R00 round 2 records Docker UID/mount/network enforcement and trusted-host limits; no separate host is required.
 
 ## B00
 
@@ -222,9 +222,9 @@ Validation:
 
 Acceptance limit: Selected acquisition is now authorized and evidenced as of 2026-09-22. Artifact custody is not dependency admission, clean offline runtime validation, complete native source rebuild closure or target compatibility.
 
-Local status: **PARTIAL** — 132 pinned wheels plus runtimes/source bundle restored; 38 tests pass; Hypothesis source and native rebuild/target closure remain unresolved
+Local status: **PARTIAL** — Exact Hypothesis source and four frozen offline native rebuilds verified; 361 installed app tests; full source-bootstrap and MI355 target closure remain partial
 
-Evidence: [README.md](../../../third_party/receipts/implementation-2026-09-22/D00/README.md). Direct Codex work; not Bob-authored or independently accepted.
+Evidence: [README.md](../../../third_party/receipts/implementation-2026-09-22-round2/D00/README.md). Direct Codex work; not Bob-authored or independently accepted.
 
 ## D01
 
@@ -334,7 +334,7 @@ Evidence: [README.md](../../../third_party/receipts/implementation-2026-09-22/D0
 
 Canonical parents: F-02, F-04. Asset IDs: sst-core, sst-elements, native-tools.
 
-Software prerequisites: D00. Explicit external gates: artifact_network, owner_sst_version.
+Software prerequisites: D00. Explicit external gates: artifact_network.
 
 Final contract-integration prerequisites: None beyond software prerequisites.
 
@@ -345,7 +345,7 @@ Proposed outputs:
 
 Implementation:
 
-1. Resolve matching owner-supported release pair; prefer release sources if avoiding absent autotools is supported
+1. Owner decision 2026-09-22 selects latest stable matching SST Core/Elements; official releases resolve to 16.0.0, pinned original release archives with published SHA256
 2. Build core first in private prefix, then required elements with explicit core location
 3. Use bounded serial CPU configuration where valid; add MPI only for required model tests
 4. Discover installed native tests and selected memHierarchy cases rather than assume suite completeness
@@ -354,14 +354,14 @@ Validation:
 
 - sst --version, sst-test-core and selected sst-test-elements execute with nonzero collection
 - Installed small configuration works outside source
-- Missing element and incompatible core rejected
+- Native missing element rejected; installed Core version mismatch guard tested (no incompatible plugin ABI claim)
 - Record optional disabled elements and all skipped cases
 
 Acceptance limit: Public SST software only; missing owner model does not become a generic substitute.
 
-Local status: **BLOCKED_OWNER** — owner SST compatibility/source
+Local status: **LOCAL_DONE** — SST 16.0.0 Core/Elements source build; 207 Core passes plus 20 declared skips, nine Elements passes, 17 recipe tests and four caught mutations
 
-Evidence: [README.md](../../../third_party/receipts/implementation-2026-09-22/owner-blocked/README.md). Direct Codex work; not Bob-authored or independently accepted.
+Evidence: [README.md](../../../third_party/receipts/implementation-2026-09-22-round2/D04/README.md). Direct Codex work; not Bob-authored or independently accepted.
 
 ## D05
 
@@ -853,19 +853,19 @@ Implementation:
 1. Use separate actual principals, storage and credentials for preparer/predictor/scorer/validator
 2. Test public canaries for sealed-label paths, scorer writes, device/network access and shared cache
 3. Do not equate test function mocks or role labels with privileges
-4. Record denied namespace capability in this sandbox; run on authorized capable local CI instead
+4. Owner accepted this sandboxed machine as R00 host on 2026-09-22; implement actual local process/principal/container separation, test denials, and disclose only the boundary exercised
 
 Validation:
 
-- Actual OS denies all prohibited reads/writes/network/devices
+- Actual OS denies tested canary reads/writes and cross-role network; device paths/capabilities restricted, no actual device opened
 - Allowed inputs still available and successful immutable submission scores
 - No unrestricted-host fallback or shared writable cache
 
-Acceptance limit: Pre-MI355 deployment gate; not scientific or GPU evidence.
+Acceptance limit: Owner-accepted local Docker role boundary only; controller/daemon/host administrators trusted, no separate user namespace or independent scientific/GPU acceptance.
 
-Local status: **BLOCKED_OWNER** — capable isolation host
+Local status: **LOCAL_DONE** — Owner-accepted local Docker host; four role UIDs, 21 tests, four caught mutations, 64 denial observations and exact S01/S02/S05 invocation custody
 
-Evidence: [README.md](../../../third_party/receipts/implementation-2026-09-22/owner-blocked/README.md). Direct Codex work; not Bob-authored or independently accepted.
+Evidence: [README.md](../../../third_party/receipts/implementation-2026-09-22-round2/R00/README.md). Direct Codex work; not Bob-authored or independently accepted.
 
 ## R01
 

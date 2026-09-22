@@ -5,7 +5,38 @@ The [local queue](BUILD_QUEUE.md) records local execution status as of the owner
 instruction on 2026-09-22; the canonical backlog remains a planning baseline. No
 canonical scientific task is accepted by these software results.
 
-## Current status: 2026-09-22 direct work complete within local scope
+## Current round 2: D04 → R00 → D00 finished within local scope
+
+The owner chose the latest stable matching SST releases and accepted this machine
+as the R00 host on 2026-09-22. D04 is complete locally: verified Core/Elements
+16.0.0 sources, serial Core and only merlin/memHierarchy. **207 Core passes,
+20 declared skips, nine Elements passes, 17 recipe tests and four caught mutations**.
+[The D04 receipt](../../../third_party/receipts/implementation-2026-09-22-round2/D04/README.md)
+retains all failed attempts and the verified source bundle.
+
+R00 is also complete for the accepted local scope: **four actual Docker role
+UIDs, 21 policy tests, four caught mutations and 64 denial observations**, including
+two roles alive together in different PID/mount/network/IPC namespaces. Existing
+S01/S02/S05 components execute through the role pipeline; exact invocation
+provenance and a tampered binding are checked. [R00 receipts](../../../third_party/receipts/implementation-2026-09-22-round2/R00/README.md)
+record the Podman uid-map failure and explicit trust limits: host controller,
+Docker daemon and administrators remain trusted; no separate user namespace or
+independent scientific acceptance is claimed.
+
+D00's exact Hypothesis source gap is closed. The frozen compiler image rebuilds
+Hypothesis, SST, DRAMPower and MGPUSim offline: **70 native Hypothesis tests +
+361 installed application tests**, **207 Core + nine Elements passes** (20 Core
+skips), **336 DRAMPower tests**, and **23 MGPUSim test packages** (MCCL excluded).
+Sixteen recipe tests and four caught mutations pass. A fresh 159-file bundle
+restoration repeats the Hypothesis/application checks; exact original source,
+registry crates, 71 signed Debian packages and compiler archives are retained.
+[D00 round-2 receipts](../../../third_party/receipts/implementation-2026-09-22-round2/D00/README.md)
+record all failed attempts and remaining full source-bootstrap/target boundaries.
+D00 remains PARTIAL for those broader boundaries; no slice is IN_PROGRESS.
+No Git commands ran in the operator-managed root or Bob repositories. D05/S07, D07/D10 and
+R01/R02 remain outside this work order.
+
+## Round 1 status: 2026-09-22 direct work complete within local scope
 
 The owner's requested order is finished: Bob provider-error fix → S05 → S00 →
 S01 → S02 → D00 → D02 → D01 → D08 → D03 → D06 → D09. No slice remains
@@ -15,11 +46,12 @@ overlap earlier checkpoints and must not be added to them. Native provider,
 negative-control and mutation results are recorded in each slice's receipt below.
 
 S00 and S01 are PARTIAL only for missing complete normative authority; their
-local workspace/contracts are implemented. D00 is PARTIAL for the unavailable
-exact Hypothesis source release and remaining native source-rebuild/target
-closure; selected binary environments install offline from retained hash locks.
-D04/D05/S07 await owner SST; D07/D10/R02 await the target platform; R00 awaits
-an isolation host and separate principals; R01 awaits a funded model key.
+local workspace/contracts are implemented. At the end of round 1, D00 was PARTIAL for unavailable exact Hypothesis source
+and native/target closure, D04/R00 were owner-blocked, and selected binary
+environments installed offline. **The round-2 section above supersedes those
+Hypothesis, D04 and R00 blockers.** Current owner blockers are D05/S07 (AMD SST
+model), D07/D10 (target platform) and R01/R02 (funded model key/handoff; R02 also
+requires the target).
 
 All Bob controllers are stopped per the owner's 2026-09-22 report. Controller 04
 reached the API and received insufficient credit; its ledger is preserved.

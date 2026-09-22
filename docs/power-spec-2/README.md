@@ -36,7 +36,11 @@ supersede historical operability assumptions for the tested configurations only.
 Every backlog task now names its pre-MI355 work and remaining input/device/deployment
 gate. Canonical task status remains PLANNED; the separate
 [local queue](BUILD_QUEUE.md) records implemented, partial and owner-blocked slices.
-Local builds do not confer scientific acceptance.
+Local builds do not confer scientific acceptance. The owner's round-2 decisions
+are implemented: SST 16.0.0, tested roles on this accepted local host, and selected
+frozen offline native rebuilds. [Implementation progress](IMPLEMENTATION_PROGRESS.md)
+and the [current results index](../../../third_party/planning/power-spec-2/LOCAL_BUILD_RESULTS_2026-09-22.md)
+record the completed local scope and remaining source/owner/target boundaries.
 
 `backlog.json` is a **local planning projection**, not the missing release's
 `evidence/backlog.json`, a Bob runnable feature spec, or a controller-admitted packet.
