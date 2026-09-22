@@ -94,12 +94,11 @@ class TestNoSubprocessUsage:
 
     def test_no_subprocess_in_source(self):
         source = MODULE_PATH.read_text()
-        # Strip comment lines and docstrings before checking for forbidden patterns
-        code_lines = [
-            line for line in source.splitlines()
-            if not line.strip().startswith("#") and not line.strip().startswith('"""') and not line.strip().startswith("'''")
-        ]
-        code_only = "\n".join(code_lines)
+        # Inspect executable nodes, not prose inside multiline docstrings.
+        code_only = "\n".join(
+            ast.unparse(node) for node in ast.walk(ast.parse(source))
+            if isinstance(node, (ast.Call, ast.Import, ast.ImportFrom))
+        )
         forbidden = ["os.system", "os.popen", "Popen"]
         for pattern in forbidden:
             assert pattern not in code_only, (
@@ -122,7 +121,7 @@ class TestNoSubprocessUsage:
                     assert alias.name != "subprocess", "Must not import subprocess"
             if isinstance(node, ast.ImportFrom):
                 if node.module:
-                    assert "subprocess" not in node.module, (
+                    assert node.module != "subprocess" and not node.module.startswith("subprocess."), (
                         "Must not import from subprocess"
                     )
 

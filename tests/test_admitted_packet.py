@@ -10,12 +10,18 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from claude_code_sdk import ClaudeCodeOptions
 
 from bob.admitted_packet import (
     AdmittedPacketError,
+    AdmittedPacketContext,
+    LoadedAdmittedPacketContext,
+    TARGET_MATERIALIZATION_SHA256_ENV,
+    assert_materialized_target_custody,
+    materialize_admitted_packet_targets,
     assert_exact_writer_result,
     assert_feature_matches_packet,
     assert_packet_change_paths,
@@ -24,6 +30,7 @@ from bob.admitted_packet import (
     packet_binding_payload,
 )
 from bob.git_ops import get_exact_workspace_base
+from bob.git_ops import get_exact_workspace_changes
 from bob.orchestrator.claude_executor import ExecutionResult
 from bob.orchestrator.independent_test_writer import (
     ROLE_NAME,
@@ -115,6 +122,13 @@ def _documents(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str], dict, 
     workspace.mkdir()
     (workspace / "app" / "src" / "ppat").mkdir(parents=True)
     (workspace / "app" / "tests").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+    subprocess.run(["git", "config", "user.email", "bob@example.invalid"], cwd=workspace, check=True)
+    subprocess.run(["git", "config", "user.name", "Bob Test"], cwd=workspace, check=True)
+    (workspace / "README").write_text("public baseline\n")
+    subprocess.run(["git", "add", "README"], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "baseline"], cwd=workspace, check=True)
+    base = get_exact_workspace_base(workspace=str(workspace))
     publication = tmp_path / "controller" / "packets" / "projection-engine"
     route_path = publication / "source-route" / "application-L1-L2.txt"
     route_path.parent.mkdir(parents=True)
@@ -186,8 +200,8 @@ def _documents(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str], dict, 
         "spec_admission_sha256": SHA_D,
         "policy_lock_sha256": "e" * 64,
         "catalog_lock_sha256": "7" * 64,
-        "base": {"commit": "1" * 40, "tree": "2" * 40},
-        "attempt_base": {"commit": "1" * 40, "tree": "2" * 40},
+        "base": {"commit": base["commit"], "tree": base["tree"]},
+        "attempt_base": {"commit": base["commit"], "tree": base["tree"]},
         "runtime_identity_sha256": "f" * 64,
         "model": {"id": "claude-opus-4-8"},
         "target_paths": ["app/src/ppat/projection.py"],
@@ -287,19 +301,19 @@ def _documents(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str], dict, 
         "packet_id": PACKET_ID,
         "previous_attempt_receipt_sha256": None,
         "registry_entry_sha256": SHA_B,
-        "attempt_base_commit": "1" * 40,
-        "attempt_base_tree": "2" * 40,
+        "attempt_base_commit": base["commit"],
+        "attempt_base_tree": base["tree"],
     }
     attempt_digest = hashlib.sha256(
         json.dumps(attempt_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     profile["trusted_lineage"] = {
         "admitted_family_sha256": SHA_A,
-        "attempt_base_commit": "1" * 40,
-        "attempt_base_tree": "2" * 40,
+        "attempt_base_commit": base["commit"],
+        "attempt_base_tree": base["tree"],
         "attempt_lineage_sha256": attempt_digest,
-        "base_commit": "1" * 40,
-        "base_tree": "2" * 40,
+        "base_commit": base["commit"],
+        "base_tree": base["tree"],
         "campaign_identity_sha256": "4" * 64,
         "catalog_lock_sha256": "7" * 64,
         "family_id": FAMILY_ID,
@@ -332,6 +346,268 @@ def _rewrite(path: Path, value: dict, env: dict[str, str], digest_name: str) -> 
     env[digest_name] = hashlib.sha256(raw).hexdigest()
 
 
+def test_load_is_read_only_and_cannot_issue_an_execution_binding(tmp_path):
+    workspace, _, profile_path, env, _, _ = _documents(tmp_path)
+    loaded = load_admitted_packet_context(workspace=workspace, environ=env)
+    assert isinstance(loaded, LoadedAdmittedPacketContext)
+    assert not isinstance(loaded, AdmittedPacketContext)
+    assert not (workspace / loaded.production_target_paths[0]).exists()
+    assert not (profile_path.parent / "bob-target-materialization.json").exists()
+    assert get_exact_workspace_base(workspace=str(workspace))["clean"] is True
+    with pytest.raises(AdmittedPacketError, match="not materialized"):
+        loaded.safe_model_assignment()
+    with pytest.raises(AdmittedPacketError, match="not materialized"):
+        packet_binding_payload(loaded, role="controller_dispatch")
+
+
+@pytest.mark.parametrize("change", ["dirty", "different_head", "changed_route", "writable_parent"])
+def test_materialization_authenticates_before_creating_any_target(tmp_path, change):
+    workspace, projection_path, profile_path, env, _, _ = _documents(tmp_path)
+    loaded = load_admitted_packet_context(workspace=workspace, environ=env)
+    if change in {"dirty", "different_head"}:
+        (workspace / "README").write_text("changed baseline\n")
+        if change == "different_head":
+            subprocess.run(["git", "commit", "-qam", "other base"], cwd=workspace, check=True)
+    elif change == "changed_route":
+        (projection_path.parent / loaded.source_routes[0].route_path).write_text("changed\n")
+    else:
+        (workspace / "app/src").chmod(0o777)
+    with pytest.raises(AdmittedPacketError):
+        materialize_admitted_packet_targets(loaded)
+    assert not (workspace / loaded.production_target_paths[0]).exists()
+    assert not (profile_path.parent / "bob-target-materialization.json").exists()
+
+
+def test_materialization_and_authenticated_in_place_resume(tmp_path):
+    workspace, _, _, env, _, _ = _documents(tmp_path)
+    loaded = load_admitted_packet_context(workspace=workspace, environ=env)
+    context = materialize_admitted_packet_targets(loaded)
+    target = workspace / context.production_target_paths[0]
+    assert target.read_bytes() == b""
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert context.target_materialization_path.stat().st_mode & 0o777 == 0o400
+    assert context.target_materialization_sha256 == hashlib.sha256(context.target_materialization_path.read_bytes()).hexdigest()
+    assert get_exact_workspace_base(workspace=str(workspace))["clean"] is False
+    target.write_text("def project():\n    return 1\n")
+    writer_path = workspace / context.writer_test_path
+    writer_path.parent.mkdir(parents=True)
+    writer_path.write_text("def test_acceptance_001():\n    assert False\n")
+    with pytest.raises(AdmittedPacketError):
+        load_admitted_packet_context(workspace=workspace, environ=env)
+    env[TARGET_MATERIALIZATION_SHA256_ENV] = context.target_materialization_sha256
+    resumed = load_admitted_packet_context(workspace=workspace, environ=env)
+    assert isinstance(resumed, AdmittedPacketContext)
+    assert resumed.target_materialization == context.target_materialization
+    assert materialize_admitted_packet_targets(resumed) is resumed
+    assert resumed.safe_model_assignment() == context.safe_model_assignment()
+    assert resumed.target_materialization_sha256 not in json.dumps(resumed.safe_model_assignment())
+
+
+@pytest.mark.parametrize("attack", ["mode", "replace", "symlink", "hardlink", "ancestor", "witness_mode", "witness_bytes", "witness_link", "in_memory_profile"])
+def test_materialized_custody_rejects_substitution(tmp_path, attack):
+    workspace, _, _, env, _, _ = _documents(tmp_path)
+    context = materialize_admitted_packet_targets(load_admitted_packet_context(workspace=workspace, environ=env))
+    target = workspace / context.production_target_paths[0]
+    if attack == "mode":
+        target.chmod(0o644)
+    elif attack in {"replace", "symlink"}:
+        old = target.with_name("old.py")
+        target.rename(old)
+        if attack == "replace":
+            target.write_bytes(b"")
+            target.chmod(0o600)
+        else:
+            target.symlink_to(old)
+    elif attack == "hardlink":
+        os.link(target, target.with_name("alias.py"))
+    elif attack == "ancestor":
+        parent = target.parent
+        parent.rename(parent.with_name("old_parent"))
+        parent.mkdir()
+        (parent.with_name("old_parent") / target.name).rename(target)
+    elif attack == "witness_mode":
+        context.target_materialization_path.chmod(0o600)
+    elif attack == "witness_bytes":
+        context.target_materialization_path.chmod(0o600)
+        context.target_materialization_path.write_bytes(b"{}\n")
+        context.target_materialization_path.chmod(0o400)
+    elif attack == "witness_link":
+        os.link(context.target_materialization_path, tmp_path / "witness-alias")
+    else:
+        context.execution_profile["model"]["id"] = "different-model"
+    with pytest.raises(AdmittedPacketError):
+        context.safe_model_assignment()
+
+
+def test_resume_rejects_wrong_digest_and_changes_outside_allowlist(tmp_path):
+    workspace, _, _, env, _, _ = _documents(tmp_path)
+    context = materialize_admitted_packet_targets(load_admitted_packet_context(workspace=workspace, environ=env))
+    env[TARGET_MATERIALIZATION_SHA256_ENV] = "0" * 64
+    with pytest.raises(AdmittedPacketError, match="digest"):
+        load_admitted_packet_context(workspace=workspace, environ=env)
+    env[TARGET_MATERIALIZATION_SHA256_ENV] = context.target_materialization_sha256
+    (workspace / "sibling.txt").write_text("not authorized\n")
+    resumed = load_admitted_packet_context(workspace=workspace, environ=env)
+    with pytest.raises(AdmittedPacketError, match="outside"):
+        materialize_admitted_packet_targets(resumed)
+
+
+def test_partial_materialization_is_retained_but_never_implicitly_resumed(tmp_path, monkeypatch):
+    import bob.admitted_packet as packet_module
+    workspace, _, profile_path, env, _, _ = _documents(tmp_path)
+    loaded = load_admitted_packet_context(workspace=workspace, environ=env)
+    original = packet_module._materialize_absent_target
+    def fail_after_creation(fd, relative):
+        original(fd, relative)
+        raise OSError("injected crash after leaf creation")
+    monkeypatch.setattr(packet_module, "_materialize_absent_target", fail_after_creation)
+    with pytest.raises(OSError, match="injected crash"):
+        materialize_admitted_packet_targets(loaded)
+    assert (workspace / loaded.production_target_paths[0]).is_file()
+    assert not (profile_path.parent / "bob-target-materialization.json").exists()
+    with pytest.raises(AdmittedPacketError):
+        load_admitted_packet_context(workspace=workspace, environ=env)
+    with pytest.raises(AdmittedPacketError, match="clean"):
+        materialize_admitted_packet_targets(loaded)
+
+
+def test_first_handoff_rejects_content_changed_during_witness_publication(tmp_path, monkeypatch):
+    import bob.admitted_packet as packet_module
+    workspace, _, _, env, _, _ = _documents(tmp_path)
+    loaded = load_admitted_packet_context(workspace=workspace, environ=env)
+    target = workspace / loaded.production_target_paths[0]
+    original = packet_module._validate_materialization
+    def change_after_initial_validation(context):
+        original(context)
+        target.write_bytes(b"changed before any authorized role\n")
+    monkeypatch.setattr(packet_module, "_validate_materialization", change_after_initial_validation)
+    with pytest.raises(AdmittedPacketError, match="before first role handoff"):
+        materialize_admitted_packet_targets(loaded)
+
+
+def test_workspace_swap_after_base_authentication_cannot_receive_targets(tmp_path, monkeypatch):
+    import bob.admitted_packet as packet_module
+    workspace, _, _, env, _, _ = _documents(tmp_path)
+    loaded = load_admitted_packet_context(workspace=workspace, environ=env)
+    original = packet_module._assert_attempt_base
+    def swap_after_authentication(context, *, resumed):
+        identity = original(context, resumed=resumed)
+        workspace.rename(workspace.with_name("original-candidate"))
+        (workspace / "app/src/ppat").mkdir(parents=True)
+        (workspace / "app/tests").mkdir()
+        return identity
+    monkeypatch.setattr(packet_module, "_assert_attempt_base", swap_after_authentication)
+    with pytest.raises(AdmittedPacketError, match="workspace identity changed"):
+        materialize_admitted_packet_targets(loaded)
+    assert not (workspace / loaded.production_target_paths[0]).exists()
+    assert not (workspace.with_name("original-candidate") / loaded.production_target_paths[0]).exists()
+
+
+def test_resume_digest_alone_is_not_a_legacy_dispatch(tmp_path):
+    with pytest.raises(AdmittedPacketError, match="incomplete"):
+        load_admitted_packet_context(workspace=tmp_path, environ={TARGET_MATERIALIZATION_SHA256_ENV: "a" * 64})
+
+
+def test_exact_changed_paths_include_both_sides_of_rename(tmp_path):
+    workspace, _, _, _, _, _ = _documents(tmp_path)
+    subprocess.run(["git", "mv", "README", "new name.txt"], cwd=workspace, check=True)
+    assert get_exact_workspace_changes(workspace=str(workspace)) == ("README", "new name.txt")
+
+
+def test_controller_witness_wrong_owner_is_rejected(tmp_path, monkeypatch):
+    import bob.admitted_packet as packet_module
+    workspace, _, _, env, _, _ = _documents(tmp_path)
+    context = materialize_admitted_packet_targets(load_admitted_packet_context(workspace=workspace, environ=env))
+    parent_uid = os.geteuid()
+    # Policy unit test; does not claim a deployed second-principal OS denial.
+    monkeypatch.setattr(packet_module.os, "geteuid", lambda: parent_uid + 1)
+    with pytest.raises(AdmittedPacketError, match="trusted-parent"):
+        assert_materialized_target_custody(context)
+
+
+def test_existing_baseline_target_is_witnessed_without_truncation(tmp_path):
+    workspace, _, profile_path, env, _, profile = _documents(tmp_path)
+    target = workspace / profile["target_paths"][0]
+    content = b"def existing():\n    return 42\n"
+    target.write_bytes(content)
+    target.chmod(0o644)
+    subprocess.run(["git", "add", str(target.relative_to(workspace))], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-qm", "existing target"], cwd=workspace, check=True)
+    base = get_exact_workspace_base(workspace=str(workspace))
+    profile["base"] = profile["attempt_base"] = {k: base[k] for k in ("commit", "tree")}
+    for prefix in ("base", "attempt_base"):
+        for key in ("commit", "tree"):
+            profile["trusted_lineage"][f"{prefix}_{key}"] = base[key]
+    attempt = {
+        "attempt_id": "attempt-0", "attempt_number": 0,
+        "family_id": FAMILY_ID, "feature_id": FEATURE_ID, "packet_id": PACKET_ID,
+        "previous_attempt_receipt_sha256": None, "registry_entry_sha256": SHA_B,
+        "attempt_base_commit": base["commit"], "attempt_base_tree": base["tree"],
+    }
+    profile["trusted_lineage"]["attempt_lineage_sha256"] = hashlib.sha256(json.dumps(attempt, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    profile["baseline_targets"] = [{"path": profile["target_paths"][0], "state": "present", "mode": 0o644,
+                                    "size_bytes": len(content), "sha256": hashlib.sha256(content).hexdigest()}]
+    profile["initial_evidence"]["baseline_targets"] = copy.deepcopy(profile["baseline_targets"])
+    _rewrite(profile_path, profile, env, "BOB_PACKET_EXECUTION_PROFILE_SHA256")
+    inode = target.stat().st_ino
+    context = materialize_admitted_packet_targets(load_admitted_packet_context(workspace=workspace, environ=env))
+    assert target.read_bytes() == content
+    assert target.stat().st_ino == inode
+    assert get_exact_workspace_base(workspace=str(workspace))["clean"] is True
+    assert_materialized_target_custody(context)
+
+
+def test_resume_with_fifo_writer_path_fails_without_blocking(tmp_path):
+    workspace, _, _, env, _, _ = _documents(tmp_path)
+    context = materialize_admitted_packet_targets(load_admitted_packet_context(workspace=workspace, environ=env))
+    path = workspace / context.writer_test_path
+    path.parent.mkdir(parents=True)
+    os.mkfifo(path)
+    with pytest.raises(AdmittedPacketError, match="regular single-link"):
+        assert_materialized_target_custody(context)
+
+
+@pytest.mark.parametrize("wrong_feature", [False, True])
+def test_run_loop_materializes_only_after_feature_and_execution_policy_gates(tmp_path, monkeypatch, wrong_feature):
+    import bob.orchestrator.run_loop as loop_module
+    workspace, _, _, env, projection, profile = _documents(tmp_path)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv(TARGET_MATERIALIZATION_SHA256_ENV, raising=False)
+    target = workspace / profile["target_paths"][0]
+    events = []
+    class StopBeforeAnyProvider(RuntimeError):
+        pass
+    def execution_policy(**kwargs):
+        events.append("policy")
+        if len(events) == 1:
+            assert not target.exists()
+            assert get_exact_workspace_base(workspace=str(workspace))["clean"] is True
+        else:
+            assert target.is_file()
+            raise StopBeforeAnyProvider
+    def evidence(**kwargs):
+        events.append(kwargs["type"])
+        return SimpleNamespace(**kwargs)
+    monkeypatch.setattr(loop_module, "validate_candidate_execution_policy", execution_policy)
+    monkeypatch.setattr(loop_module.db, "query_evidence", lambda **kwargs: [])
+    monkeypatch.setattr(loop_module.db, "create_evidence", evidence)
+    loop = object.__new__(loop_module.OrchestrationLoop)
+    loop.workspace, loop.project_id = str(workspace), "public-project"
+    feature = SimpleNamespace(id="wrong-id" if wrong_feature else FEATURE_ID,
+        acceptance_criteria=json.dumps(projection["public_contract"]["acceptance_predicates"]),
+        refinement_attempts=0, exceeds_size_limits=False)
+    if wrong_feature:
+        result = asyncio.run(loop.execute_feature(feature))
+        assert result.execution_result.is_error
+        assert not target.exists()
+        assert events == ["admitted_packet_gate_error"]
+    else:
+        with pytest.raises(StopBeforeAnyProvider):
+            asyncio.run(loop.execute_feature(feature))
+        assert events == ["policy", "admitted_packet_execution_binding", "policy"]
+
+
 def test_absent_profile_preserves_legacy_behavior(tmp_path: Path) -> None:
     workspace = tmp_path / "candidate"
     workspace.mkdir()
@@ -342,6 +618,7 @@ def test_valid_two_file_profile_binds_projection_routes_and_commands(tmp_path: P
     workspace, _, _, env, _, _ = _documents(tmp_path)
     context = load_admitted_packet_context(workspace=workspace, environ=env)
     assert context is not None
+    context = materialize_admitted_packet_targets(context)
     assert context.feature_id == FEATURE_ID
     assert context.writer_node_ids[-1].endswith("::test_acceptance_002")
     assert context.source_routes[0].content == "line one\nline two\n"
@@ -356,6 +633,7 @@ def test_pending_verification_dependency_allows_generation_dispatch(tmp_path: Pa
     _rewrite(profile_path, profile, env, "BOB_PACKET_EXECUTION_PROFILE_SHA256")
     context = load_admitted_packet_context(workspace=workspace, environ=env)
     assert context is not None
+    context = materialize_admitted_packet_targets(context)
     assert context.execution_profile["dependency_resolution"][
         "verification_requires"
     ][0]["state"] == "pending"
@@ -373,6 +651,7 @@ def test_safe_model_assignment_omits_every_protected_controller_identity(tmp_pat
     workspace, _, _, env, _, _ = _documents(tmp_path)
     context = load_admitted_packet_context(workspace=workspace, environ=env)
     assert context is not None
+    context = materialize_admitted_packet_targets(context)
     rendered = json.dumps(context.safe_model_assignment(), sort_keys=True)
     for forbidden in (
         "registry_entry_sha256",
@@ -392,6 +671,7 @@ def test_packet_writer_prompt_uses_only_safe_projection(tmp_path: Path) -> None:
     workspace, _, _, env, _, _ = _documents(tmp_path)
     context = load_admitted_packet_context(workspace=workspace, environ=env)
     assert context is not None
+    context = materialize_admitted_packet_targets(context)
     prompt = build_test_writer_prompt(
         feature_id=FEATURE_ID,
         feature_title="BROAD PARENT SECRET",
@@ -534,6 +814,7 @@ def test_broad_feature_and_extra_writer_or_production_paths_are_rejected(tmp_pat
     workspace, _, _, env, _, _ = _documents(tmp_path)
     context = load_admitted_packet_context(workspace=workspace, environ=env)
     assert context is not None
+    context = materialize_admitted_packet_targets(context)
     with pytest.raises(AdmittedPacketError, match="broader/different"):
         assert_feature_matches_packet(
             context,
@@ -561,6 +842,7 @@ def test_binding_payload_carries_protected_identity_without_release_trust(tmp_pa
     workspace, _, _, env, _, _ = _documents(tmp_path)
     context = load_admitted_packet_context(workspace=workspace, environ=env)
     assert context is not None
+    context = materialize_admitted_packet_targets(context)
     payload = packet_binding_payload(context, role="evaluator", session_id="session-3")
     assert payload["authority"] == "development_only_no_release_trust"
     assert payload["family_id"] == FAMILY_ID
@@ -727,6 +1009,7 @@ def test_packet_writer_creates_and_collects_exactly_prescribed_file_and_nodes(
     workspace, _, _, env, _, _ = _documents(tmp_path)
     context = load_admitted_packet_context(workspace=workspace, environ=env)
     assert context is not None
+    context = materialize_admitted_packet_targets(context)
 
     class FakeExecutor:
         def __init__(self, *, default_options):
@@ -800,6 +1083,7 @@ def test_packet_writer_extra_file_fails_before_any_implementation(
     workspace, _, _, env, _, _ = _documents(tmp_path)
     context = load_admitted_packet_context(workspace=workspace, environ=env)
     assert context is not None
+    context = materialize_admitted_packet_targets(context)
 
     class MaliciousExecutor:
         def __init__(self, *, default_options):

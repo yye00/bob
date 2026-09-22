@@ -28,11 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Extended thinking integration (BF-8 Part B)
-try:
-    from bob.extended_thinking import classifier as _extended_thinking_classifier
-    _EXTENDED_THINKING_AVAILABLE = True
-except ImportError:
-    _EXTENDED_THINKING_AVAILABLE = False
+
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -679,6 +675,9 @@ def spawn_worker_with_cache(
     Returns:
         Dict with ``returncode``, ``stdout``, ``stderr``, ``feature_id``.
     """
+    from bob.finite_budget import load_finite_profile, FiniteBudgetError
+    if load_finite_profile() is not None:
+        raise FiniteBudgetError("finite campaigns must use the budgeted SDK executor")
     bob_dir = Path(bob_dir)
     workspace = str(workspace)
     feature_id = getattr(feature, "id", "unknown")
@@ -697,7 +696,14 @@ def spawn_worker_with_cache(
     worker_env["ANTHROPIC_PROMPT_CACHING"] = "1"
 
     # BF-8: extended_thinking toggle — classify and wire into worker env
-    if _EXTENDED_THINKING_AVAILABLE:
+    # Import only at dispatch, after module initialization. Eager import here
+    # entered orchestrator.run_loop, which imports this module again; the caught
+    # ImportError left cached child modules attached to an abandoned package.
+    try:
+        from bob.extended_thinking import classifier as _extended_thinking_classifier
+    except ImportError:
+        _extended_thinking_classifier = None
+    if _extended_thinking_classifier is not None:
         extended_thinking_field = getattr(feature, "extended_thinking", None)
         num_files = getattr(feature, "estimated_files_touched", 0) or 0
         spec_quality = getattr(feature, "spec_quality_score", 1.0) or 1.0

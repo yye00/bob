@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
-# Build bob from a clean clone into a self-contained virtualenv.
-#
-# Why this script (and not just `pip install -e .`): bob's source is split
-# across TWO roots — `src/` (the bob package + many sibling packages and loose
-# top-level modules like ears_criteria) and the gen-root `tools/` package. pip's
-# default "editable" finder maps discovered packages individually and misses the
-# loose modules / second root, so a plain editable install can't import
-# everything. We install editable for the metadata, then drop a path-based .pth
-# that puts BOTH roots on sys.path — exactly what the runtime needs, with no
-# PYTHONPATH environment variable required afterwards.
+# Install Bob and its development dependencies into a virtualenv.
+# setup.py declares both package roots and the standalone runtime modules.
+# Let the build backend generate the editable finder; exposing the whole
+# repository via a handwritten .pth bypasses that package selection policy.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,15 +18,22 @@ echo "==> Upgrading pip"
 echo "==> Installing bob (editable) + dev extras"
 .venv/bin/python -m pip install -e ".[dev]"
 
-echo "==> Writing dual-root path file so src/ AND tools/ are importable (no PYTHONPATH needed)"
-SITE="$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-printf '%s\n%s\n' "$ROOT" "$ROOT/src" > "$SITE/_bob_roots.pth"
-
-echo "==> Smoke test"
-.venv/bin/python - <<'PYEOF'
+echo "==> Installed import and resource smoke test (isolated Python)"
+.venv/bin/python -I - <<'PYEOF'
 import bob, tools.spec_quality_score, bob.orchestrator.run_loop, bob.model_escalation
 print("  bob import chain OK; tools OK; model_escalation OK")
 PYEOF
+
+# A source-directory cwd can hide broken packaging. Run the actual console
+# entrypoint from a fresh directory without inheriting a PYTHONPATH override.
+SMOKE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/bob-install-smoke.XXXXXX")"
+trap 'rmdir "$SMOKE_DIR"' EXIT
+(
+    cd "$SMOKE_DIR"
+    unset PYTHONPATH
+    "$ROOT/.venv/bin/bob" --version
+    "$ROOT/.venv/bin/bob" --help >/dev/null
+)
 
 cat <<EOF
 

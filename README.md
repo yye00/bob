@@ -1,5 +1,10 @@
 # Bob — Build Orchestration Bot v3
 
+> **Power project migration:** use the [Power spec 2 implementation handoff](docs/power-spec-2/README.md)
+> for current scope, bounded tasks, independent validation and migration gates.
+> This is a planning baseline; the generic Bob behavior and historical examples
+> below do not establish Power spec 2 compliance or numerical qualification.
+
 A recursive build orchestration system that uses Claude Code sub-agents to research, plan, and execute software projects from a YAML specification.
 
 Bob reads a spec describing the project you want built, decomposes it into features with dependencies, then drives a continuous loop that spawns Claude sub-agents to implement, test, verify, and commit each feature. It tracks cost, detects regressions, handles interrupts, and persists lessons learned across sessions.

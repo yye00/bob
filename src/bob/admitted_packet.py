@@ -25,6 +25,7 @@ from typing import Any
 
 PROJECTION_SCHEMA_VERSION = "ppat.candidate-task-projection.v1"
 EXECUTION_PROFILE_SCHEMA_VERSION = "ppat.packet-execution-profile.v1"
+FINITE_EXECUTION_PROFILE_SCHEMA_VERSION = "bob.packet-execution-profile.v2"
 AUTHORITY = "development_only_no_release_trust"
 
 REQUIRED_ENV = "BOB_ADMITTED_PACKET_REQUIRED"
@@ -32,6 +33,7 @@ PROJECTION_PATH_ENV = "BOB_PACKET_PROJECTION"
 PROJECTION_SHA256_ENV = "BOB_PACKET_PROJECTION_SHA256"
 EXECUTION_PROFILE_PATH_ENV = "BOB_PACKET_EXECUTION_PROFILE"
 EXECUTION_PROFILE_SHA256_ENV = "BOB_PACKET_EXECUTION_PROFILE_SHA256"
+TARGET_MATERIALIZATION_SHA256_ENV = "BOB_PACKET_TARGET_MATERIALIZATION_SHA256"
 
 MAX_PROJECTION_BYTES = 4 * 1024 * 1024
 MAX_EXECUTION_PROFILE_BYTES = 4 * 1024 * 1024
@@ -122,8 +124,12 @@ class SourceRoute:
 
 
 @dataclass(frozen=True)
-class AdmittedPacketContext:
-    """Trusted parent view of one loaded packet assignment."""
+class LoadedAdmittedPacketContext:
+    """Authenticated documents only; target custody is not yet established.
+
+    Loading is read-only. The controller must authenticate the clean Git base
+    before materializing targets and obtaining an AdmittedPacketContext.
+    """
 
     projection: Mapping[str, Any]
     execution_profile: Mapping[str, Any]
@@ -132,9 +138,6 @@ class AdmittedPacketContext:
     projection_sha256: str
     execution_profile_sha256: str
     workspace_path: Path
-    target_materialization_path: Path
-    target_materialization_sha256: str
-    target_materialization: Mapping[str, Any]
     source_routes: tuple[SourceRoute, ...]
     feature_id: str
     writer_test_namespace: str
@@ -176,6 +179,7 @@ class AdmittedPacketContext:
     def protected_evidence_bindings(self) -> dict[str, Any]:
         """Return parent-only identities that must accompany every receipt."""
 
+        assert_materialized_target_custody(self)
         profile = self.execution_profile
         return {
             "authority": AUTHORITY,
@@ -223,6 +227,15 @@ class AdmittedPacketContext:
                 for route in self.source_routes
             ],
         }
+
+
+@dataclass(frozen=True)
+class AdmittedPacketContext(LoadedAdmittedPacketContext):
+    """Assignment with a durable, authenticated target-materialization witness."""
+
+    target_materialization_path: Path
+    target_materialization_sha256: str
+    target_materialization: Mapping[str, Any]
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -412,6 +425,7 @@ def _read_controller_file(
             before.st_ctime_ns,
             before.st_mode,
             before.st_nlink,
+            before.st_uid,
         ) != (
             after.st_dev,
             after.st_ino,
@@ -420,6 +434,7 @@ def _read_controller_file(
             after.st_ctime_ns,
             after.st_mode,
             after.st_nlink,
+            after.st_uid,
         ):
             raise AdmittedPacketError(f"{label} changed while being read")
         raw = b"".join(chunks)
@@ -735,9 +750,20 @@ def _validate_dependency_resolution(value: object) -> None:
 
 
 def _validate_profile(value: object, projection: Mapping[str, Any], projection_sha256: str) -> Mapping[str, Any]:
-    profile = _exact(value, _EXECUTION_PROFILE_KEYS, "packet execution profile")
-    if profile["schema_version"] != EXECUTION_PROFILE_SCHEMA_VERSION or profile["authority"] != AUTHORITY:
+    finite_version = isinstance(value, dict) and value.get("schema_version") == FINITE_EXECUTION_PROFILE_SCHEMA_VERSION
+    keys = _EXECUTION_PROFILE_KEYS | ({"finite_execution_profile_sha256"} if finite_version else set())
+    profile = _exact(value, keys, "packet execution profile")
+    if profile["schema_version"] not in {EXECUTION_PROFILE_SCHEMA_VERSION, FINITE_EXECUTION_PROFILE_SCHEMA_VERSION} or profile["authority"] != AUTHORITY:
         raise AdmittedPacketError("packet execution profile schema/authority mismatch")
+    from bob.finite_budget import load_finite_profile
+    configured_finite = load_finite_profile()
+    if configured_finite is not None and not finite_version:
+        raise AdmittedPacketError("finite campaign requires a versioned packet profile")
+    finite = None
+    if finite_version:
+        finite = configured_finite
+        if finite is None or profile["finite_execution_profile_sha256"] != finite.sha256:
+            raise AdmittedPacketError("packet finite profile binding mismatch")
     if profile["family_id"] != projection["family_id"] or profile["packet_id"] != projection["packet_id"]:
         raise AdmittedPacketError("projection/profile family or packet sibling confusion")
     if profile["candidate_projection_sha256"] != projection_sha256:
@@ -766,8 +792,8 @@ def _validate_profile(value: object, projection: Mapping[str, Any], projection_s
     ):
         raise AdmittedPacketError("packet attempt base identity is malformed")
     model = _exact(profile["model"], frozenset({"id"}), "execution model")
-    if model["id"] != "claude-opus-4-8":
-        raise AdmittedPacketError("packet execution model must be exactly claude-opus-4-8")
+    if model["id"] != (finite.model_id if finite else "claude-opus-4-8"):
+        raise AdmittedPacketError("packet execution model must match the exact profile model (legacy claude-opus-4-8)")
     target_paths = tuple(
         _relative_path(item, "execution target path")
         for item in _unique_string_list(profile["target_paths"], "execution target_paths", min_items=1, max_items=MAX_TARGET_PATHS)
@@ -952,7 +978,7 @@ def _validate_profile(value: object, projection: Mapping[str, Any], projection_s
         "tests": "writer-namespace-rw-otherwise-ro",
         "git": "absent",
         "controller_state": "absent",
-        "provider": "controller-brokered-pinned-opus",
+        "provider": "controller-brokered-pinned-model" if finite else "controller-brokered-pinned-opus",
     }
     if dict(capability) != expected_capability:
         raise AdmittedPacketError("packet capability profile is widened or unknown")
@@ -967,13 +993,18 @@ def _validate_profile(value: object, projection: Mapping[str, Any], projection_s
                 "semantic_turn_cap",
                 "semantic_cost_cap",
             }
-        ),
+        ) | ({"semantic_attempt_cap", "semantic_wall_seconds"} if finite else set()),
         "resource_profile",
     )
     for key in ("memory_bytes", "pids", "output_bytes", "test_timeout_seconds"):
         if isinstance(resources[key], bool) or not isinstance(resources[key], int) or resources[key] <= 0:
             raise AdmittedPacketError(f"resource_profile.{key} is invalid")
-    if resources["semantic_turn_cap"] is not None or resources["semantic_cost_cap"] is not None:
+    if finite:
+        expected = {"semantic_turn_cap": finite.max_turns, "semantic_cost_cap": finite.max_cost_usd,
+                    "semantic_attempt_cap": finite.max_attempts, "semantic_wall_seconds": finite.max_wall_seconds}
+        if any(isinstance(resources[k], bool) or resources[k] != v for k, v in expected.items()):
+            raise AdmittedPacketError("packet resource caps differ from the finite profile")
+    elif resources["semantic_turn_cap"] is not None or resources["semantic_cost_cap"] is not None:
         raise AdmittedPacketError("packet profile introduced a semantic orchestration cap")
 
     locks = _unique_string_list(profile["locks"], "packet locks", min_items=1, max_items=MAX_TARGET_PATHS + 3)
@@ -1409,7 +1440,8 @@ def _validate_writer_path_custody(workspace_fd: int, test_path: str) -> None:
                 parts[-1],
                 os.O_RDONLY
                 | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
                 dir_fd=current,
             )
         except FileNotFoundError:
@@ -1463,11 +1495,256 @@ def _validate_candidate_custody(
         os.close(workspace_fd)
 
 
+def _materialization_path(context: LoadedAdmittedPacketContext) -> Path:
+    return context.execution_profile_path.parent / MATERIALIZATION_WITNESS_FILENAME
+
+
+def _assert_assignment_unchanged(context: LoadedAdmittedPacketContext) -> None:
+    for path, digest, value, limit, label in (
+        (context.projection_path, context.projection_sha256, context.projection,
+         MAX_PROJECTION_BYTES, "candidate projection"),
+        (context.execution_profile_path, context.execution_profile_sha256,
+         context.execution_profile, MAX_EXECUTION_PROFILE_BYTES, "execution profile"),
+    ):
+        _read_controller_file(path, expected_sha256=digest, max_bytes=limit, label=label)
+        if canonical_sha256(value) != digest:
+            raise AdmittedPacketError(f"in-memory {label} was modified")
+    if _load_routes(
+        context.projection, projection_path=context.projection_path,
+        profile_path=context.execution_profile_path,
+    ) != context.source_routes:
+        raise AdmittedPacketError("source routes changed after assignment load")
+
+
+def _directory_identity(info: os.stat_result) -> dict[str, int]:
+    return {"dev": info.st_dev, "ino": info.st_ino,
+            "mode": stat.S_IMODE(info.st_mode), "owner_uid": info.st_uid}
+
+
+def _target_directories(workspace_fd: int, paths: Sequence[str]) -> list[dict[str, Any]]:
+    """Witness target ancestor identities, not only the eventual leaf inode."""
+    directories = sorted({
+        str(parent) for path in paths for parent in PurePosixPath(path).parents
+        if str(parent) != "."
+    })
+    result = []
+    for relative in directories:
+        # The synthetic leaf is never opened; only its existing parent is used.
+        descriptor, _ = _open_candidate_target_parent(workspace_fd, relative + "/.witness")
+        try:
+            result.append({"path": relative, **_directory_identity(os.fstat(descriptor))})
+        finally:
+            os.close(descriptor)
+    return result
+
+
+def _assert_attempt_base(context: LoadedAdmittedPacketContext, *, resumed: bool) -> dict[str, int]:
+    from bob.git_ops import get_exact_workspace_base, get_exact_workspace_changes
+
+    descriptor = _open_workspace_dirfd(context.workspace_path)
+    try:
+        workspace_identity = _directory_identity(os.fstat(descriptor))
+        actual = get_exact_workspace_base(workspace=str(context.workspace_path))
+        expected = context.execution_profile["attempt_base"]
+        if any(actual.get(key) != expected[key] for key in ("commit", "tree")):
+            raise AdmittedPacketError("workspace differs from authenticated packet attempt base")
+        if not resumed and actual.get("clean") is not True:
+            raise AdmittedPacketError("packet target creation requires a clean authenticated base")
+        if resumed:
+            changed = get_exact_workspace_changes(workspace=str(context.workspace_path))
+            assert_packet_change_paths(context, changed, include_test=True, label="resumed workspace")
+        current = _open_workspace_dirfd(context.workspace_path)
+        try:
+            if _directory_identity(os.fstat(current)) != workspace_identity:
+                raise AdmittedPacketError("workspace identity changed during base authentication")
+        finally:
+            os.close(current)
+        return workspace_identity
+    except AdmittedPacketError:
+        raise
+    except Exception as exc:
+        raise AdmittedPacketError(f"cannot authenticate packet attempt base: {exc}") from exc
+    finally:
+        os.close(descriptor)
+
+
+def _validate_materialization(context: AdmittedPacketContext) -> None:
+    value = _exact(context.target_materialization, frozenset({
+        "schema_version", "candidate_projection_sha256", "packet_execution_profile_sha256",
+        "workspace_path", "workspace", "directories", "targets",
+    }), "target materialization")
+    if (
+        value["schema_version"] != MATERIALIZATION_WITNESS_SCHEMA_VERSION
+        or value["candidate_projection_sha256"] != context.projection_sha256
+        or value["packet_execution_profile_sha256"] != context.execution_profile_sha256
+        or value["workspace_path"] != str(context.workspace_path)
+        or context.target_materialization_path != _materialization_path(context)
+        or canonical_sha256(value) != context.target_materialization_sha256
+    ):
+        raise AdmittedPacketError("target materialization assignment binding mismatch")
+    identity_keys = frozenset({"dev", "ino", "mode", "owner_uid"})
+    workspace_identity = _exact(value["workspace"], identity_keys, "materialized workspace")
+    if not isinstance(value["directories"], list) or not all(isinstance(d, dict) for d in value["directories"]):
+        raise AdmittedPacketError("materialization directory inventory is invalid")
+    if not isinstance(value["targets"], list) or not all(isinstance(t, dict) for t in value["targets"]):
+        raise AdmittedPacketError("materialization target inventory is invalid")
+    for identity in [workspace_identity, *value["directories"], *value["targets"]]:
+        for key in identity_keys:
+            if type(identity.get(key)) is not int or identity[key] < 0:
+                raise AdmittedPacketError("invalid materialization filesystem identity")
+        if identity["owner_uid"] != os.geteuid() or identity["mode"] & 0o022:
+            raise AdmittedPacketError("materialization is not under trusted-parent custody")
+    if not isinstance(value["targets"], list) or len(value["targets"]) != len(context.production_target_paths):
+        raise AdmittedPacketError("materialization target coverage differs from packet")
+    for entry, baseline in zip(value["targets"], context.execution_profile["baseline_targets"], strict=True):
+        _exact(entry, identity_keys | {"path", "size_bytes", "sha256", "link_count"}, "materialized target")
+        if type(entry["size_bytes"]) is not int or entry["size_bytes"] < 0:
+            raise AdmittedPacketError("invalid materialization target size")
+        _sha(entry["sha256"], "materialization initial digest")
+        if entry["path"] != baseline["path"] or type(entry["link_count"]) is not int or entry["link_count"] != 1:
+            raise AdmittedPacketError("materialization target path/link binding mismatch")
+        expected = baseline if baseline["state"] == "present" else {
+            "mode": 0o600, "size_bytes": 0, "sha256": hashlib.sha256(b"").hexdigest(),
+        }
+        if any(entry[key] != expected[key] for key in ("mode", "size_bytes", "sha256")):
+            raise AdmittedPacketError("materialization initial bytes differ from admitted baseline")
+    expected_dirs = sorted({str(p) for t in context.production_target_paths for p in PurePosixPath(t).parents if str(p) != "."})
+    if [d.get("path") for d in value["directories"]] != expected_dirs:
+        raise AdmittedPacketError("materialization directory coverage differs from packet")
+    for directory in value["directories"]:
+        _exact(directory, identity_keys | {"path"}, "materialized directory")
+
+
+def assert_materialized_target_custody(
+    context: LoadedAdmittedPacketContext, *, require_initial_content: bool = False,
+) -> None:
+    """Revalidate the immutable witness and writable inodes before role handoff.
+
+    Content may change in place during implementation; target/ancestor identity,
+    mode, owner and single-link custody may not. Actual mounts/privileges must
+    still be enforced by the external runner; this is not OS isolation proof.
+    """
+    if not isinstance(context, AdmittedPacketContext):
+        raise AdmittedPacketError("packet targets are not materialized; authenticate the clean base first")
+    _assert_assignment_unchanged(context)
+    _validate_materialization(context)
+    _read_controller_file(
+        context.target_materialization_path,
+        expected_sha256=context.target_materialization_sha256,
+        max_bytes=MAX_MATERIALIZATION_WITNESS_BYTES, label="target materialization",
+        required_mode=0o400, required_uid=os.geteuid(),
+    )
+    descriptor = _open_workspace_dirfd(context.workspace_path)
+    try:
+        witness = context.target_materialization
+        if _directory_identity(os.fstat(descriptor)) != witness["workspace"]:
+            raise AdmittedPacketError("materialized workspace identity changed")
+        if _target_directories(descriptor, context.production_target_paths) != witness["directories"]:
+            raise AdmittedPacketError("materialized target ancestor custody changed")
+        for expected in witness["targets"]:
+            actual = _candidate_target_witness_entry(descriptor, expected["path"])
+            for key in ("dev", "ino", "mode", "owner_uid", "link_count"):
+                if actual[key] != expected[key]:
+                    raise AdmittedPacketError(f"materialized target custody changed: {expected['path']} ({key})")
+            if require_initial_content and any(actual[key] != expected[key] for key in ("size_bytes", "sha256")):
+                raise AdmittedPacketError("materialized target bytes changed before first role handoff")
+        _validate_writer_path_custody(descriptor, context.writer_test_path)
+    finally:
+        os.close(descriptor)
+
+
+def materialize_admitted_packet_targets(context: LoadedAdmittedPacketContext) -> AdmittedPacketContext:
+    """Authenticate base, create only admitted absent leaves, then publish custody.
+
+    Failures deliberately leave evidence/partial files in place. A partial
+    materialization without an authenticated witness cannot be resumed; the
+    controller must recover it or authorize a fresh attempt explicitly.
+    """
+    if isinstance(context, AdmittedPacketContext):
+        assert_materialized_target_custody(context)
+        _assert_attempt_base(context, resumed=True)
+        return context
+    _assert_assignment_unchanged(context)
+    authenticated_workspace = _assert_attempt_base(context, resumed=False)
+    _validate_candidate_custody(context.workspace_path, context.projection, context.execution_profile)
+    path = _materialization_path(context)
+    parent_fd, leaf = _open_parent_dirfd(path, "target materialization")
+    descriptor = None
+    try:
+        descriptor = _open_workspace_dirfd(context.workspace_path)
+        parent_info = os.fstat(parent_fd)
+        if parent_info.st_uid != os.geteuid() or parent_info.st_mode & 0o022:
+            raise AdmittedPacketError("target materialization directory is not controller-owned")
+        # Never overwrite a previous attempt's witness, including dangling links.
+        try:
+            os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise AdmittedPacketError("target materialization already exists; authenticated resume required")
+        directories = _target_directories(descriptor, context.production_target_paths)
+        workspace_identity = _directory_identity(os.fstat(descriptor))
+        if workspace_identity != authenticated_workspace:
+            raise AdmittedPacketError("workspace identity changed after base authentication")
+        if any(d["owner_uid"] != os.geteuid() or d["mode"] & 0o022 for d in [workspace_identity, *directories]):
+            raise AdmittedPacketError("candidate target directories are not under trusted-parent custody")
+        entries = []
+        for baseline in context.execution_profile["baseline_targets"]:
+            operation = _materialize_absent_target if baseline["state"] == "absent" else _candidate_target_witness_entry
+            entries.append(operation(descriptor, baseline["path"]))
+        witness = {
+            "schema_version": MATERIALIZATION_WITNESS_SCHEMA_VERSION,
+            "candidate_projection_sha256": context.projection_sha256,
+            "packet_execution_profile_sha256": context.execution_profile_sha256,
+            "workspace_path": str(context.workspace_path),
+            "workspace": workspace_identity,
+            "directories": directories, "targets": entries,
+        }
+        raw = canonical_json_bytes(witness)
+        if len(raw) > MAX_MATERIALIZATION_WITNESS_BYTES:
+            raise AdmittedPacketError("target materialization exceeds security envelope")
+        result = AdmittedPacketContext(
+            **vars(context), target_materialization_path=path,
+            target_materialization_sha256=hashlib.sha256(raw).hexdigest(),
+            target_materialization=witness,
+        )
+        _validate_materialization(result)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(leaf, flags, 0o600, dir_fd=parent_fd)
+        with os.fdopen(fd, "wb") as output:
+            output.write(raw)
+            output.flush()
+            os.fchmod(output.fileno(), 0o400)
+            os.fsync(output.fileno())
+        os.fsync(parent_fd)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent_fd)
+    assert_materialized_target_custody(result, require_initial_content=True)
+    return result
+
+
+def _resume_materialization(context: LoadedAdmittedPacketContext, digest: str) -> AdmittedPacketContext:
+    path = _materialization_path(context)
+    witness, raw = _read_controller_file(
+        path, expected_sha256=digest, max_bytes=MAX_MATERIALIZATION_WITNESS_BYTES,
+        label="target materialization", required_mode=0o400, required_uid=os.geteuid(),
+    )
+    result = AdmittedPacketContext(
+        **vars(context), target_materialization_path=path,
+        target_materialization_sha256=hashlib.sha256(raw).hexdigest(),
+        target_materialization=witness,
+    )
+    assert_materialized_target_custody(result)
+    return result
+
+
 def load_admitted_packet_context(
     *,
     workspace: str | Path,
     environ: Mapping[str, str] | None = None,
-) -> AdmittedPacketContext | None:
+) -> LoadedAdmittedPacketContext | None:
     """Load and cross-bind the controller's two packet documents.
 
     Legacy behavior is preserved only when the campaign does not require a
@@ -1484,7 +1761,8 @@ def load_admitted_packet_context(
         EXECUTION_PROFILE_SHA256_ENV,
     )
     present = {name: bool(env.get(name, "").strip()) for name in names}
-    if not required and not any(present.values()):
+    resume_digest = env.get(TARGET_MATERIALIZATION_SHA256_ENV, "").strip()
+    if not required and not any(present.values()) and not resume_digest:
         return None
     if not all(present.values()):
         missing = sorted(name for name, active in present.items() if not active)
@@ -1492,6 +1770,10 @@ def load_admitted_packet_context(
             "admitted packet configuration is incomplete; missing " + ", ".join(missing)
         )
     workspace_path = Path(os.path.abspath(os.fspath(workspace)))
+    from bob.finite_budget import load_finite_profile
+    finite = load_finite_profile()
+    if finite is not None:
+        finite.assert_outside(workspace_path)
     _absolute_components(workspace_path, "candidate workspace")
     projection_path = Path(env[PROJECTION_PATH_ENV])
     profile_path = Path(env[EXECUTION_PROFILE_PATH_ENV])
@@ -1513,7 +1795,8 @@ def load_admitted_packet_context(
     )
     profile = _validate_profile(profile_value, projection, projection_sha)
     test_path, nodes, red, green, full = _test_execution_fields(profile, projection)
-    _validate_candidate_custody(workspace_path, projection, profile)
+    if not resume_digest:
+        _validate_candidate_custody(workspace_path, projection, profile)
     routes = _load_routes(
         projection,
         projection_path=projection_path,
@@ -1522,13 +1805,14 @@ def load_admitted_packet_context(
     generation = profile["generation"]
     feature_id = str(generation["feature_id"])
     public = projection["public_contract"]
-    return AdmittedPacketContext(
+    context = LoadedAdmittedPacketContext(
         projection=projection,
         execution_profile=profile,
         projection_path=projection_path,
         execution_profile_path=profile_path,
         projection_sha256=projection_sha,
         execution_profile_sha256=hashlib.sha256(profile_raw).hexdigest(),
+        workspace_path=workspace_path,
         source_routes=routes,
         feature_id=feature_id,
         writer_test_namespace=str(public["writer_test_namespace"]),
@@ -1539,10 +1823,11 @@ def load_admitted_packet_context(
         green_test_command=green,
         full_suite_command=full,
     )
+    return _resume_materialization(context, resume_digest) if resume_digest else context
 
 
 def assert_feature_matches_packet(
-    context: AdmittedPacketContext,
+    context: LoadedAdmittedPacketContext,
     *,
     feature_id: str,
     acceptance_criteria: Sequence[str] | None = None,
@@ -1558,7 +1843,7 @@ def assert_feature_matches_packet(
 
 
 def assert_packet_change_paths(
-    context: AdmittedPacketContext,
+    context: LoadedAdmittedPacketContext,
     paths: Sequence[str],
     *,
     include_test: bool,
@@ -1618,6 +1903,10 @@ __all__ = [
     "PROJECTION_SHA256_ENV",
     "REQUIRED_ENV",
     "AdmittedPacketContext",
+    "LoadedAdmittedPacketContext",
+    "TARGET_MATERIALIZATION_SHA256_ENV",
+    "assert_materialized_target_custody",
+    "materialize_admitted_packet_targets",
     "AdmittedPacketError",
     "SourceRoute",
     "admitted_packet_required",

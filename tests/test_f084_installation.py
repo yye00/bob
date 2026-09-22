@@ -1,7 +1,7 @@
 """Tests for F084: Ensure pyproject.toml supports installation and bob CLI works."""
 
 import pathlib
-import shutil
+import os
 import subprocess
 import sys
 
@@ -17,6 +17,23 @@ import pytest
 
 WORKSPACE = pathlib.Path(__file__).resolve().parent.parent
 PYPROJECT_PATH = WORKSPACE / "pyproject.toml"
+BOB_COMMAND = pathlib.Path(sys.executable).with_name("bob")
+
+
+@pytest.fixture
+def installed_cli(tmp_path):
+    """Exercise this interpreter's installation, independent of checkout cwd."""
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["PYTHONNOUSERSITE"] = "1"
+
+    def run(*args):
+        return subprocess.run(
+            [str(BOB_COMMAND), *args], cwd=tmp_path, env=env,
+            capture_output=True, text=True, timeout=30,
+        )
+
+    return run
 
 
 class TestBuildSystemSection:
@@ -65,8 +82,7 @@ class TestInstallation:
     """Step 3: Test: pip install -e ., verify bob command is available."""
 
     def test_bob_command_is_available(self):
-        bob_path = shutil.which("bob")
-        assert bob_path is not None, "bob command must be available on PATH after installation"
+        assert BOB_COMMAND.is_file(), "this interpreter must have an installed bob entrypoint"
 
     def test_bob_module_is_importable(self):
         import bob
@@ -80,22 +96,12 @@ class TestInstallation:
 class TestVersionCommand:
     """Step 4: Test: bob --version works."""
 
-    def test_bob_version_exits_zero(self):
-        result = subprocess.run(
-            ["bob", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+    def test_bob_version_exits_zero(self, installed_cli):
+        result = installed_cli("--version")
         assert result.returncode == 0, f"bob --version must exit 0, got {result.returncode}: {result.stderr}"
 
-    def test_bob_version_output_contains_version(self):
-        result = subprocess.run(
-            ["bob", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+    def test_bob_version_output_contains_version(self, installed_cli):
+        result = installed_cli("--version")
         import bob
         assert bob.__version__ in result.stdout, (
             f"bob --version output must contain version '{bob.__version__}', got: {result.stdout}"
@@ -111,13 +117,22 @@ class TestVersionCommand:
             f"__init__.py version ({bob.__version__}) must match pyproject.toml version ({pyproject_version})"
         )
 
-    def test_bob_version_output_contains_prog_name(self):
-        result = subprocess.run(
-            ["bob", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+    def test_bob_version_output_contains_prog_name(self, installed_cli):
+        result = installed_cli("--version")
         assert "bob" in result.stdout.lower(), (
             f"bob --version output must contain 'bob', got: {result.stdout}"
         )
+
+    def test_help_works_outside_checkout(self, installed_cli):
+        result = installed_cli("--help")
+        assert result.returncode == 0, result.stderr
+        assert "Usage:" in result.stdout
+
+
+def test_mixed_layout_imports_in_isolated_interpreter(tmp_path):
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", "-c",
+         "import bob, tools.spec_quality_score, ears_criteria, bob.orchestrator.run_loop"],
+        cwd=tmp_path, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr

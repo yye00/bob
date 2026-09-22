@@ -152,6 +152,7 @@ from bob.admitted_packet import (
     assert_feature_matches_packet,
     assert_packet_change_paths,
     load_admitted_packet_context,
+    materialize_admitted_packet_targets,
     packet_binding_payload,
 )
 from bob.candidate_exec import (
@@ -173,7 +174,6 @@ from bob.git_ops import (
     GitRepoError,
     commit_feature as git_commit_feature,
     finalize_exact_commit_intent as git_finalize_exact_commit_intent,
-    get_exact_workspace_base as git_get_exact_workspace_base,
     get_status as git_get_status,
     get_commit_proof as git_get_commit_proof,
     revert_feature as git_revert_feature,
@@ -1812,6 +1812,14 @@ def capture_pytest_snapshot(
     if not ws.exists() or not ws.is_dir():
         return None
 
+    from bob.public_execution import load_public_execution
+    public_execution = load_public_execution(workspace=workspace)
+    if public_execution is not None:
+        selected_test_dir = public_execution["verification"]["test_dir"]
+        if test_dir not in {"tests", selected_test_dir}:
+            raise ValueError("snapshot test directory conflicts with public controller")
+        test_dir = selected_test_dir
+
     # Recursion guard: skip when workspace IS the bob repo itself, to
     # mirror the behaviour of superpowers._check_tests_pass.
     try:
@@ -1839,7 +1847,7 @@ def capture_pytest_snapshot(
     # change, too few tests, missing roots) we fall through to the
     # full-suite invocation below.
     scoped_targets: list[str] | None = None
-    if changed_files:
+    if changed_files and public_execution is None:
         try:
             from bob.pytest_scoper import scope_tests_for_diff
             scoped = scope_tests_for_diff(list(changed_files), ws)
@@ -1897,7 +1905,7 @@ def capture_pytest_snapshot(
     # the candidate runtime only authorizes the fixed isolated pytest
     # bootstrap.  Sequential collection is deterministic and avoids making
     # xdist availability part of the trust boundary.
-    if not external_verifier_required():
+    if not external_verifier_required() and public_execution is None:
         try:
             probe = subprocess.run(
                 candidate_argv(["python", "-c", "import xdist"]),
@@ -1913,43 +1921,10 @@ def capture_pytest_snapshot(
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ValueError):
             pass
 
-    # Deterministic snapshots: enforce --maxfail=0 at the snapshot boundary so
-    # xdist never halts early (xdist stops after ~20-25 failures otherwise,
-    # making before/after snapshots non-comparable).
-    try:
-        from bob.deterministic_pytest_snapshots import enforce_maxfail_zero_snapshot as _enforce_mf
-        cmd = _enforce_mf(cmd)
-    except ImportError:
-        try:
-            from bob.pytest_snapshot_config import enforce_maxfail_zero as _enforce_mf
-            cmd = _enforce_mf(cmd)
-        except ImportError:
-            try:
-                from bob.deterministic_snapshot import enforce_maxfail_zero as _enforce_mf
-                cmd = _enforce_mf(cmd)
-            except ImportError:
-                try:
-                    from bob.pytest_snapshots import enforce_maxfail_zero as _enforce_mf
-                    cmd = _enforce_mf(cmd)
-                except ImportError:
-                    try:
-                        from bob.snapshot_determinism import enforce_maxfail_zero as _enforce_mf
-                        cmd = _enforce_mf(cmd)
-                    except ImportError:
-                        try:
-                            from bob.snapshot_enforcement import enforce_maxfail_for_snapshots as _enforce_mf
-                            cmd = _enforce_mf(cmd)
-                        except ImportError:
-                            try:
-                                from bob.snapshot_pytest import enforce_maxfail_zero as _enforce_mf
-                                cmd = _enforce_mf(cmd)
-                            except ImportError:
-                                try:
-                                    from pytest_snapshot_config import enforce_maxfail_for_snapshots
-                                    cmd = enforce_maxfail_for_snapshots(cmd)
-                                except ImportError:
-                                    if "--maxfail=0" not in cmd:
-                                        cmd.insert(1, "--maxfail=0")
+    # The native helper takes pytest argv, not a Python launcher. Keep
+    # Python's [python, -m] prefix outside it so --maxfail=0 reaches pytest.
+    from bob.pytest_snapshot_config import enforce_maxfail_zero
+    cmd = cmd[:2] + enforce_maxfail_zero(cmd[2:])
 
     try:
         proc = subprocess.run(
@@ -3315,7 +3290,8 @@ class OrchestrationLoop:
         # 6e085356: max concurrent workers. Default 1 = current sequential
         # behaviour for backward compatibility. Values < 1 are clamped to 1.
         self.max_concurrent_features: int = max(1, int(max_concurrent_features))
-        if _independent_test_writer_required() or external_verifier_required():
+        from bob.finite_budget import load_finite_profile
+        if _independent_test_writer_required() or external_verifier_required() or load_finite_profile() is not None:
             self.max_concurrent_features = 1
         self.features_completed: int = 0
         self.features_failed: int = 0
@@ -5337,36 +5313,21 @@ class OrchestrationLoop:
                 raise AdmittedPacketError(
                     "an admitted packet campaign requires an explicit workspace"
                 )
+            loaded_packet = None
             if self.workspace:
-                packet_context = load_admitted_packet_context(
+                loaded_packet = load_admitted_packet_context(
                     workspace=self.workspace
                 )
-            if packet_context is not None:
-                workspace_base = git_get_exact_workspace_base(
-                    workspace=str(self.workspace)
-                )
-                expected_attempt_base = packet_context.execution_profile[
-                    "attempt_base"
-                ]
-                if (
-                    workspace_base.get("commit")
-                    != expected_attempt_base["commit"]
-                    or workspace_base.get("tree") != expected_attempt_base["tree"]
-                    or workspace_base.get("clean") is not True
-                ):
-                    raise AdmittedPacketError(
-                        "candidate workspace does not match the clean authenticated "
-                        "packet attempt base"
-                    )
+            if loaded_packet is not None:
                 assert_feature_matches_packet(
-                    packet_context,
+                    loaded_packet,
                     feature_id=feature.id,
                     acceptance_criteria=_parse_independent_acceptance_criteria(
                         feature.acceptance_criteria
                     ),
                 )
                 if int(
-                    packet_context.execution_profile["generation"][
+                    loaded_packet.execution_profile["generation"][
                         "attempt_number"
                     ]
                 ) != max(0, feature.refinement_attempts):
@@ -5377,6 +5338,17 @@ class OrchestrationLoop:
                     raise AdmittedPacketError(
                         "controller-admitted atomic packets cannot be decomposed"
                     )
+                validate_candidate_execution_policy(workspace=self.workspace)
+                if isinstance(loaded_packet, AdmittedPacketContext):
+                    # A durable commit intent may already have advanced HEAD.
+                    # Only the existing exact-commit recovery path may accept
+                    # that state; normal dispatch still requires attempt_base.
+                    recovered = self._recover_hardened_commit_intent(
+                        feature, packet_context=loaded_packet
+                    )
+                    if recovered is not None:
+                        return recovered
+                packet_context = materialize_admitted_packet_targets(loaded_packet)
                 binding_payload = packet_binding_payload(
                     packet_context, role="controller_dispatch"
                 )
@@ -5741,17 +5713,23 @@ class OrchestrationLoop:
             model=(
                 str(packet_context.execution_profile["model"]["id"])
                 if packet_context is not None
-                else _resolve_escalated_model(getattr(feature, "model_tier", 0))
+                else _required_model_or(_resolve_escalated_model(getattr(feature, "model_tier", 0)))
             ),
             # Honor BOB_SUB_AGENT_MAX_TURNS live at the call site.
             max_turns=(
-                None
+                packet_context.execution_profile["resource_profile"]["semantic_turn_cap"]
                 if packet_context is not None
                 else resolve_sub_agent_max_turns()
             ),
             agent_role="implementer",
         )
-        if packet_context is not None and (
+        from bob.finite_budget import load_finite_profile
+        finite_profile = load_finite_profile()
+        if packet_context is not None and finite_profile is not None:
+            if packet_context.execution_profile.get("finite_execution_profile_sha256") != finite_profile.sha256:
+                raise AdmittedPacketError("finite campaign requires a versioned packet profile")
+            finite_profile.options(options)
+        elif packet_context is not None and (
             getattr(options, "model", None) != "claude-opus-4-8"
             or getattr(options, "max_turns", None) is not None
             or (getattr(options, "extra_args", None) or {}).get("autocompact")
@@ -6348,6 +6326,26 @@ class OrchestrationLoop:
         # (the F013 / PyQt6 case). Verification, not the sub-agent exit
         # status, is the source of truth.
         result = spawn_result.execution_result
+        if finite_profile is not None and result.is_error:
+            # Legacy recovery can clear an SDK error when files pass checks.
+            # A finite attempt must retain failure/unknown spend and must not
+            # enter that promotion path or start another semantic role.
+            self.shutdown_requested = True
+            self.features_failed += 1
+            self._current_feature = None
+            if result.total_cost_usd is not None:
+                self._increment_cost(result.total_cost_usd, "sdk")
+            db.update_feature(feature.id, status="needs_human")
+            db.create_evidence(
+                project_id=self.project_id, feature_id=feature.id,
+                type="finite_execution_failure", is_current=False,
+                content=json.dumps({"profile_sha256": finite_profile.sha256,
+                    "error": result.error_message,
+                    "provider_usage_known": result.total_cost_usd is not None,
+                    "acceptance": "not_attempted"}, sort_keys=True),
+                reproducible=False,
+            )
+            return spawn_result
         candidate_bundle_valid = True
         candidate_bundle_error = ""
         if independent_writer_required:

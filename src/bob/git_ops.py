@@ -1276,6 +1276,43 @@ def get_status(*, workspace: str) -> dict:
     }
 
 
+def get_exact_workspace_changes(*, workspace: str) -> tuple[str, ...]:
+    """Return literal changed paths, including both sides of renames.
+
+    Used to constrain a resumed packet to its original write allowlist. Keep
+    Git config/environment isolation identical to the exact commit path.
+    """
+    canonical = _ensure_exact_repo_root(workspace)
+    result = _run_exact_git_bytes(
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        workspace=canonical,
+    )
+    if result.returncode != 0:
+        raise GitRepoError(
+            "Could not inspect exact workspace changes", returncode=result.returncode,
+            stdout=result.stdout.decode("utf-8", errors="replace"),
+            stderr=result.stderr.decode("utf-8", errors="replace"),
+            command=["git", "status", "--porcelain=v1", "-z"],
+        )
+    records = result.stdout.split(b"\0")
+    paths: set[str] = set()
+    index = 0
+    while index < len(records) - 1:
+        row = records[index]
+        if len(row) < 4 or row[2:3] != b" ":
+            raise ValueError("Malformed exact Git status record")
+        paths.add(_validate_exact_path(row[3:].decode("utf-8", errors="strict")))
+        index += 1
+        if b"R" in row[:2] or b"C" in row[:2]:
+            if index >= len(records) - 1:
+                raise ValueError("Missing exact Git rename/copy source")
+            paths.add(_validate_exact_path(records[index].decode("utf-8", errors="strict")))
+            index += 1
+    if records[-1] != b"":
+        raise ValueError("Truncated exact Git status output")
+    return tuple(sorted(paths))
+
+
 def get_exact_workspace_base(*, workspace: str) -> dict[str, object]:
     """Return the hook/config-isolated HEAD, tree, and cleanliness proof.
 

@@ -1515,8 +1515,11 @@ def _run_generate_features(
     )
 
     source_precedence = resolve_planner_source_precedence(source_precedence)
+    from bob.finite_budget import load_finite_profile
+    finite_profile = load_finite_profile()
     configured_model = model or os.environ.get(
-        "BOB_FEATURE_PLANNER_MODEL", "claude-opus-4-8"
+        "BOB_FEATURE_PLANNER_MODEL",
+        finite_profile.model_id if finite_profile else "claude-opus-4-8",
     )
     if not isinstance(configured_model, str) or not configured_model.strip():
         raise ValueError("feature planner model must be a non-empty string")

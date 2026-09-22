@@ -80,3 +80,7 @@ a prior generation/
 # extracted YAMLs are build artifacts, not source.
 examples/bootstrap_v0.*
 bob.db
+
+# SQLite WAL side files
+*.db-shm
+*.db-wal

@@ -262,6 +262,18 @@ def _check_tests_pass(
           warning (failures are not attributable to this feature).
     """
     check_name = "tests_pass"
+    from bob.public_execution import load_public_execution, public_test_command
+
+    public_execution = load_public_execution(workspace=workspace)
+    if public_execution is not None:
+        selected = public_execution["verification"]
+        command = public_test_command(public_execution)
+        if (
+            src_dir != selected["source_dir"] or test_dir != selected["test_dir"]
+            or (exact_test_command is not None and list(exact_test_command) != command)
+        ):
+            raise ValueError("test selection conflicts with public controller")
+        exact_test_command = command
 
     # Workspace existence check (non-fatal)
     if not workspace.exists() or not workspace.is_dir():
@@ -397,7 +409,7 @@ def _check_tests_pass(
         )
     except FileNotFoundError as e:
         # Python interpreter not on PATH (extremely unlikely but defensive).
-        if external_verifier_required():
+        if external_verifier_required() or public_execution is not None:
             return {
                 "name": check_name,
                 "passed": False,
@@ -411,7 +423,7 @@ def _check_tests_pass(
             "details": f"python interpreter not available: {e}",
         }
     except (OSError, ValueError) as e:
-        if external_verifier_required():
+        if external_verifier_required() or public_execution is not None:
             return {
                 "name": check_name,
                 "passed": False,
@@ -439,6 +451,21 @@ def _check_tests_pass(
             "passed": False,
             "severity": "error",
             "details": details,
+        }
+
+    if public_execution is not None:
+        passed_count, failed_count = _parse_pytest_counts(stdout)
+        excluded = re.search(r"\b[1-9]\d*\s+(?:skipped|xfailed|xpassed|deselected)\b", stdout)
+        passed = returncode == 0 and passed_count > 0 and failed_count == 0 and not excluded
+        return {
+            "name": check_name,
+            "passed": bool(passed),
+            "severity": "info" if passed else "error",
+            "details": (
+                f"public full-suite pytest exit={returncode}, passed={passed_count}, "
+                f"failed={failed_count}; stdout_tail={_tail(stdout, 400)} "
+                f"stderr_tail={_tail(stderr, 400)}"
+            ),
         }
 
     # Detect "pytest not installed". When ``python -m pytest`` is run without
@@ -1459,6 +1486,20 @@ def run_verification_checklist(
     """
     ws = pathlib.Path(workspace)
     checks: list[dict] = []
+    from bob.public_execution import load_public_execution, public_test_command
+
+    public_execution = load_public_execution(workspace=workspace)
+    if public_execution is not None:
+        selected = public_execution["verification"]
+        command = public_test_command(public_execution)
+        if (
+            src_dir not in {"src", selected["source_dir"]}
+            or test_dir not in {"tests", selected["test_dir"]}
+            or (exact_test_command is not None and list(exact_test_command) != command)
+        ):
+            raise ValueError("verification selection conflicts with public controller")
+        src_dir, test_dir = selected["source_dir"], selected["test_dir"]
+        exact_test_command = command
 
     # If the workspace doesn't exist, skip verification gracefully
     if not ws.exists():

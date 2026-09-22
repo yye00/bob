@@ -38,10 +38,26 @@ from claude_code_sdk import (
     ToolResultBlock,
     ToolUseBlock,
     UserMessage,
-    query,
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def query(*, prompt, options, transport):
+    """SDK 0.0.25 query adapter with deterministic inner-generator cleanup.
+
+    The SDK's public query wrapper does not close process_query when a consumer
+    rejects a message. Its AnyIO scope then finalizes in another task. Keep the
+    same SDK client/transport and entrypoint, but close in the owning task.
+    """
+    from claude_code_sdk._internal.client import InternalClient
+
+    os.environ["CLAUDE_CODE_ENTRYPOINT"] = "sdk-py"
+    async with contextlib.aclosing(InternalClient().process_query(
+        prompt=prompt, options=options, transport=transport
+    )) as stream:
+        async for message in stream:
+            yield message
 
 # Integration: cost-projection gate helpers imported so callers can access
 # them via bob.orchestrator.claude_executor.project_spawn_cost / should_spawn.
@@ -154,7 +170,14 @@ def resolve_required_model() -> str | None:
     configuration errors: silently falling back would defeat the purpose of an
     exact-model campaign.
     """
+    from bob.finite_budget import load_finite_profile, FiniteBudgetError
+
+    finite = load_finite_profile()
     raw = os.environ.get("BOB_REQUIRED_MODEL")
+    if finite is not None:
+        if raw is not None and raw != finite.model_id:
+            raise FiniteBudgetError("BOB_REQUIRED_MODEL conflicts with finite profile")
+        return finite.model_id
     if raw is None:
         return None
     if not raw.strip():
@@ -509,7 +532,10 @@ def build_sub_agent_options(
     if merged_extra_args:
         kwargs["extra_args"] = merged_extra_args
 
-    return ClaudeCodeOptions(**kwargs)
+    options = ClaudeCodeOptions(**kwargs)
+    from bob.finite_budget import load_finite_profile
+    finite = load_finite_profile()
+    return finite.options(options) if finite else options
 
 
 def with_agent_role(
@@ -619,7 +645,11 @@ def _enforce_required_model_on_options(
             # while preventing a caller mutation from changing the trusted
             # final-boundary value in place.
             options = replace(options, extra_args=extra_args)
-    return options
+    from bob.finite_budget import DIGEST_ENV, FiniteBudgetError, load_finite_profile
+    finite = load_finite_profile()
+    if finite is None and (options.env or {}).get(DIGEST_ENV):
+        raise FiniteBudgetError("finite options lost their controller profile")
+    return finite.options(options) if finite is not None else options
 
 
 # ---------------------------------------------------------------------------
@@ -764,7 +794,8 @@ def _attach_stderr_capture(
     try:
         return ClaudeCodeOptions(**kwargs)
     except TypeError as exc:
-        if resolve_claude_hermetic():
+        from bob.finite_budget import load_finite_profile
+        if resolve_claude_hermetic() or load_finite_profile() is not None:
             # Dropping ``extra_args`` here would silently discard the
             # hermetic CLI boundary.  Older SDKs must be upgraded rather than
             # weakening an explicitly requested security policy.
@@ -924,6 +955,7 @@ class ExecutionResult:
     total_cost_usd: float | None = None
     tool_uses: list[str] = field(default_factory=list)
     messages: list[Message] = field(default_factory=list)
+    budget_error: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -995,47 +1027,6 @@ def process_message(msg: Message, result: ExecutionResult) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _hard_kill_claude_children() -> None:
-    """SIGKILL claude Node.js subprocesses spawned by THIS process.
-
-    Last-resort backstop when the SDK's graceful aclose() hangs: a hung
-    subprocess otherwise parks the orchestrator loop forever (the silent
-    gather-hang). We only kill claude processes that are descendants of the
-    current process so we never touch a sibling gen's workers.
-    """
-    import os as _os
-    import signal as _signal
-    import subprocess as _sp
-    mypid = _os.getpid()
-    try:
-        out = _sp.run(
-            ["pgrep", "-f", "claude"], capture_output=True, text=True, timeout=10
-        ).stdout
-    except Exception:
-        return
-    for line in out.split():
-        try:
-            pid = int(line)
-        except ValueError:
-            continue
-        if pid == mypid:
-            continue
-        # Only kill if this claude proc is a descendant of us (ppid chain).
-        try:
-            ppid = int(_sp.run(
-                ["ps", "-o", "ppid=", "-p", str(pid)],
-                capture_output=True, text=True, timeout=5,
-            ).stdout.strip() or "0")
-        except Exception:
-            ppid = 0
-        if ppid == mypid or ppid == 0:
-            try:
-                _os.kill(pid, _signal.SIGKILL)
-                logger.warning("hard-killed hung claude subprocess pid=%s", pid)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-
-
 async def stream_query(
     prompt: str,
     *,
@@ -1046,6 +1037,19 @@ async def stream_query(
     Yields each Message exactly as returned by the SDK's async iterator.
     """
     options = _enforce_required_model_on_options(options)
+
+    from bob.finite_budget import load_finite_profile
+    finite = load_finite_profile()
+    if finite is not None:
+        # This branch returns before the legacy retry loop. Parent-side retries
+        # must never receive a new, uncharged CLI allowance after a disconnect.
+        stream = _finite_stream_query(prompt, options=options, profile=finite)
+        try:
+            async for msg in stream:
+                yield msg
+        finally:
+            await stream.aclose()
+        return
 
     # F-R7-645 (completability-cliff fix): retry a TRANSPORT-TRANSIENT stream
     # failure IN-PROCESS so a large feature whose build spans multiple transport
@@ -1078,9 +1082,15 @@ async def stream_query(
             ))
     _attempt = 0
     while True:
+        transport = _sdk_transport(prompt, options or ClaudeCodeOptions())
+        stream = query(prompt=prompt, options=options, transport=transport)
         try:
-            async for msg in query(prompt=prompt, options=options):
-                yield msg
+            try:
+                async for msg in stream:
+                    yield msg
+            finally:
+                _kill_transport_process(transport)
+                await stream.aclose()
             return
         except (GeneratorExit, KeyboardInterrupt):
             raise
@@ -1100,6 +1110,103 @@ async def stream_query(
                 await __import__("asyncio").sleep(min(2 * _attempt, 15))
                 continue
             raise
+
+
+def _sdk_transport(prompt, options):
+    """Explicit SDK transport gives cleanup custody of this session's process."""
+    from claude_code_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+    return SubprocessCLITransport(prompt=prompt, options=options)
+
+
+def _kill_transport_process(transport):
+    process = getattr(transport, "_process", None)
+    if process is not None and process.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+
+
+async def _finite_stream_query(prompt, *, options, profile):
+    from bob.finite_budget import FiniteBudgetError, FiniteProviderError, auth_billing_error, reserve
+
+    with reserve(profile, role=(options.env or {}).get("BOB_AGENT_ROLE", "subagent"),
+                 prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest()) as budget:
+        options = profile.options(options, cost=budget.cost, turns=budget.turns)
+        transport = _sdk_transport(prompt, options)
+        terminal = None
+        task = asyncio.current_task()
+        expired = False
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + budget.seconds
+
+        def watch_deadline():
+            nonlocal expired, timer
+            # Keep watching until cleanup completes. A deadline can fire while
+            # the SDK is still attaching its process, so a single kill callback
+            # is insufficient. Never inspect or signal another session's PID.
+            timer = loop.call_later(0.1, watch_deadline)
+            if loop.time() >= deadline:
+                _kill_transport_process(transport)
+                if not expired:
+                    expired = True
+                    task.cancel()
+
+        timer = loop.call_later(min(0.1, budget.seconds), watch_deadline)
+        stream = query(prompt=prompt, options=options, transport=transport)
+        try:
+            # Iterate and close in the SAME task: the SDK uses anyio scopes.
+            try:
+                async for msg in stream:
+                    if terminal is not None:
+                        raise FiniteBudgetError("provider emitted messages after terminal usage")
+                    if isinstance(msg, AssistantMessage) and msg.model == "<synthetic>":
+                        raise auth_billing_error(extract_text_from_blocks(msg.content)) or FiniteProviderError(
+                            "provider returned a synthetic API error; cause unclassified"
+                        )
+                    if isinstance(msg, AssistantMessage) and msg.model != profile.model_id:
+                        raise FiniteBudgetError("provider reported a different model than the finite profile")
+                    if isinstance(msg, SystemMessage) and msg.subtype == "init":
+                        reported = msg.data.get("model")
+                        if reported is not None and reported != profile.model_id:
+                            raise FiniteBudgetError("provider initialized a different finite-profile model")
+                    if isinstance(msg, ResultMessage):
+                        terminal = msg
+                        # Preserve observed telemetry even if the transport
+                        # subsequently fails. It cannot release a reservation.
+                        cost = msg.total_cost_usd
+                        budget.observed_cost = str(cost) if cost is not None else None
+                        budget.observed_turns = str(msg.num_turns)
+                        if msg.is_error:
+                            failure = auth_billing_error(msg.result or "")
+                            if failure is not None:
+                                raise failure
+                        budget.validate_usage(cost=cost, turns=msg.num_turns)
+                        if msg.num_turns > options.max_turns:
+                            raise FiniteBudgetError("provider exceeded the dispatched role turn cap")
+                    yield msg
+            finally:
+                # Killing this explicit SDK process also unblocks a hung close.
+                # No global process-name search or sibling termination.
+                _kill_transport_process(transport)
+                await stream.aclose()
+            if expired:
+                raise FiniteBudgetError("finite campaign wall budget exhausted")
+            if terminal is None:
+                raise FiniteBudgetError("provider returned no terminal usage")
+            budget.finish(cost=terminal.total_cost_usd, turns=terminal.num_turns,
+                          is_error=terminal.is_error)
+        except asyncio.CancelledError:
+            if expired:
+                raise FiniteBudgetError("finite campaign wall budget exhausted") from None
+            raise
+        except Exception as exc:
+            if not isinstance(exc, FiniteBudgetError):
+                failure = auth_billing_error(str(exc))
+                if failure is not None:
+                    raise failure from exc
+            raise
+        finally:
+            timer.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -1248,7 +1355,10 @@ class ClaudeExecutor:
         # conflict.
         with _stripped_parent_session_env():
             stream = stream_query(prompt, options=opts)
-            return await handler.consume(stream)
+            try:
+                return await handler.consume(stream)
+            finally:
+                await stream.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -1556,6 +1666,8 @@ async def spawn_sub_agent(
         raise
     except Exception as exc:
         result.is_error = True
+        from bob.finite_budget import FiniteBudgetError
+        result.budget_error = isinstance(exc, FiniteBudgetError)
         # R10-013: Replace the SDK's placeholder
         # "Command failed with exit code 1\nError output: Check stderr output for details"
         # with the actual stderr we captured via ``debug_stderr`` plus
@@ -1589,19 +1701,10 @@ async def spawn_sub_agent(
             aclose = getattr(stream, "aclose", None)
             if aclose is not None:
                 try:
-                    # BOUND the aclose: the SDK's cleanup awaits its own anyio
-                    # task group, which can ITSELF be the thing that's hung — an
-                    # unbounded `await aclose()` then parks the whole orchestrator
-                    # loop forever (bob72/bob73 silent gather-hang: main thread
-                    # stuck in run_until_complete→selectors.select). Shield a 30s
-                    # budget; on expiry we fall through to the hard PID-kill below.
-                    await asyncio.wait_for(asyncio.shield(aclose()), timeout=30)
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "SDK stream aclose() exceeded 30s — abandoning graceful "
-                        "close and hard-killing claude subprocess(es) by PID.",
-                    )
-                    _hard_kill_claude_children()
+                    # The inner stream owns its SDK transport and kills only
+                    # that process. Close in this same task: moving anyio's
+                    # scope to wait_for/shield corrupts cancellation cleanup.
+                    await aclose()
                 except asyncio.CancelledError:
                     # aclose itself can raise CancelledError; we're already
                     # in the cancellation path so just continue.

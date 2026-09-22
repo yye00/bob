@@ -24,6 +24,8 @@ from typing import Any
 import click
 import yaml
 
+from bob.finite_budget import load_finite_profile
+
 from bob.feature_planner import (
     PLANNER_ALLOWED_TOOLS,
     PLANNER_CLI_EXTRA_ARGS,
@@ -68,6 +70,16 @@ MAX_COLLECTION_ITEMS = 1024
 MAX_JSON_NODES = 50_000
 MAX_JSON_DEPTH = 32
 MAX_PUBLIC_CATALOG_ENTRIES = 1024
+
+
+def _packet_model():
+    profile = load_finite_profile()
+    return profile.model_id if profile else PACKET_MODEL
+
+
+def _finite_provenance():
+    profile = load_finite_profile()
+    return {"finite_execution_profile_sha256": profile.sha256} if profile else {}
 
 _STABLE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -1372,8 +1384,10 @@ def _execute_packet_role(
         resolve_model_name,
     )
 
-    resolved_model = resolve_model_name(PACKET_MODEL)
-    if resolved_model != PACKET_MODEL:
+    finite = load_finite_profile()
+    model = _packet_model()
+    resolved_model = resolve_model_name(model)
+    if resolved_model != model:
         raise AtomicPacketValidationError("packet role model did not resolve exactly")
     role_env = create_ephemeral_planner_environment(workspace)
 
@@ -1386,14 +1400,14 @@ def _execute_packet_role(
         ):
             raise AtomicPacketValidationError(f"{role} working directory changed")
         if (
-            getattr(options, "model", None) != PACKET_MODEL
-            or getattr(options, "max_turns", None) is not None
-            or extra.get("autocompact") != "1M"
+            getattr(options, "model", None) != model
+            or getattr(options, "max_turns", None) != (finite.max_turns if finite else None)
+            or (model == PACKET_MODEL and extra.get("autocompact") != "1M")
             or any(extra.get(key) != value for key, value in expected_extra.items())
             or tuple(getattr(options, "allowed_tools", ()) or ())
             != PLANNER_ALLOWED_TOOLS
             or tuple(getattr(options, "disallowed_tools", ()) or ())
-            != PLANNER_DISALLOWED_TOOLS
+            != tuple(dict.fromkeys([*PLANNER_DISALLOWED_TOOLS, *(["Task", "Agent"] if finite else [])]))
             or getattr(options, "permission_mode", None) != "default"
             or dict(getattr(options, "mcp_servers", None) or {})
             or (getattr(options, "env", None) or {}).get("BOB_AGENT_ROLE") != role
@@ -1401,11 +1415,13 @@ def _execute_packet_role(
             raise AtomicPacketValidationError(
                 f"{role} hardened model/context/session options were not preserved"
             )
+        if finite and extra.get("max-budget-usd") != str(finite.max_cost_usd):
+            raise AtomicPacketValidationError(f"{role} finite cost cap was dropped")
 
     base_options = build_sub_agent_options(
         cwd=workspace,
-        model=PACKET_MODEL,
-        max_turns=None,
+        model=model,
+        max_turns=finite.max_turns if finite else None,
         allowed_tools=list(PLANNER_ALLOWED_TOOLS),
         disallowed_tools=list(PLANNER_DISALLOWED_TOOLS),
         permission_mode="default",
@@ -1568,9 +1584,10 @@ def compile_packet_family_proposal(
         )
         family_digest = canonical_sha256(proposal)
         provenance = {
-            "schema_version": "bob.packet-family-proposal-provenance.v1",
+            "schema_version": "bob.packet-family-proposal-provenance.v2" if _finite_provenance() else "bob.packet-family-proposal-provenance.v1",
             "role": PACKET_COMPILER_ROLE,
-            "model": PACKET_MODEL,
+            "model": _packet_model(),
+            **_finite_provenance(),
             "source_precedence": source_precedence,
             "source_precedence_sha256": (
                 hashlib.sha256(source_precedence.encode("utf-8")).hexdigest()
@@ -1671,12 +1688,13 @@ def validate_proposal_witness(
             "session_witness_sha256",
             "attestation_status",
             "controller_signature_required",
-        ),
+        ) + tuple(_finite_provenance()),
     )
     if (
-        provenance["schema_version"] != "bob.packet-family-proposal-provenance.v1"
+        provenance["schema_version"] != ("bob.packet-family-proposal-provenance.v2" if _finite_provenance() else "bob.packet-family-proposal-provenance.v1")
         or provenance["role"] != PACKET_COMPILER_ROLE
-        or provenance["model"] != PACKET_MODEL
+        or provenance["model"] != _packet_model()
+        or any(provenance.get(k) != v for k, v in _finite_provenance().items())
         or provenance["attestation_status"] != "unsigned_observation_not_portable_proof"
         or provenance["controller_signature_required"] is not True
     ):
@@ -1845,9 +1863,10 @@ def review_packet_family_proposal(
             obligations=obligations,
         )
         provenance = {
-            "schema_version": "bob.packet-family-review-provenance.v1",
+            "schema_version": "bob.packet-family-review-provenance.v2" if _finite_provenance() else "bob.packet-family-review-provenance.v1",
             "role": PACKET_REVIEWER_ROLE,
-            "model": PACKET_MODEL,
+            "model": _packet_model(),
+            **_finite_provenance(),
             "source_precedence": source_precedence,
             "source_precedence_sha256": (
                 hashlib.sha256(source_precedence.encode("utf-8")).hexdigest()

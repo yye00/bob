@@ -1,0 +1,233 @@
+{
+  "schema_version": "power-spec-2.local-source-snapshot.v1",
+  "captured_date": "2026-09-21",
+  "authority": "byte_identity_only_not_release_attestation",
+  "release": "v0.4.1",
+  "complete_release_present": false,
+  "files": [
+    {
+      "path": "power-spec-2/AGENTS.md",
+      "sha256": "e71199456320431875868a59f1686f56a05153e46727e295a4603fc8c80ee75d",
+      "bytes": 2880
+    },
+    {
+      "path": "power-spec-2/README.md",
+      "sha256": "930e3d1c857e98130cb01a7220830a6b73671cd853e21646c9eda562c645edc7",
+      "bytes": 4056
+    },
+    {
+      "path": "power-spec-2/agent-execution-and-independent-validation.md",
+      "sha256": "6a37aeb4ad9122ad7e597151b8863e1b94b0f38eb0dc96763679b821abe32039",
+      "bytes": 8415
+    },
+    {
+      "path": "power-spec-2/blind_evaluation_component.md",
+      "sha256": "5584ef18b64756081c395f3c19b53a1c8c09e5065764a0a1231336653a6f7e42",
+      "bytes": 8158
+    },
+    {
+      "path": "power-spec-2/frequency-intervention-validation.md",
+      "sha256": "7dc7b597256e095b741c37f2b4493a0bdfdbb8816ca79553caa6db5aa8cd65e3",
+      "bytes": 12404
+    },
+    {
+      "path": "power-spec-2/implementation_plan.md",
+      "sha256": "c5642d99fa495d28d7d4b9341272797b6f8673ef6b0e327e651817547633bf6f",
+      "bytes": 14222
+    },
+    {
+      "path": "power-spec-2/migration-and-coverage.md",
+      "sha256": "0f131914fa589b3a2771cb0bf7a8ff6dfc755c58f8d3c92d9c01a9087ef2a4a4",
+      "bytes": 4000
+    },
+    {
+      "path": "power-spec-2/report.md",
+      "sha256": "6c691ecd18867efe529b59698fcf7578f8a6fd0ee19a87c897be3aba9f505074",
+      "bytes": 3446
+    },
+    {
+      "path": "power-spec-2/tooling-and-standards.md",
+      "sha256": "013fb8d3b73a4eeabb76a32d760fff26c601a9cd8d9c19fadfe3e73fb5ae54d5",
+      "bytes": 7309
+    }
+  ],
+  "declared_links": [
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/normative-contract.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/scope_and_workflow.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/implementation_plan.md",
+      "status": "relocated",
+      "local_path": "power-spec-2/implementation_plan.md"
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "evidence/backlog.json",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/frequency-intervention-validation.md",
+      "status": "relocated",
+      "local_path": "power-spec-2/frequency-intervention-validation.md"
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/agent-execution-and-independent-validation.md",
+      "status": "relocated",
+      "local_path": "power-spec-2/agent-execution-and-independent-validation.md"
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/blind_evaluation_component.md",
+      "status": "relocated",
+      "local_path": "power-spec-2/blind_evaluation_component.md"
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/tooling-and-standards.md",
+      "status": "relocated",
+      "local_path": "power-spec-2/tooling-and-standards.md"
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "evidence/providers.json",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/evidence_policy.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/uq-and-calibration.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/measurement-and-characterization.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/provider-contracts.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "IMPLEMENTATION_STATUS.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "qa/report.md",
+      "status": "relocated",
+      "local_path": "power-spec-2/report.md"
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "docs/decisions-and-questions.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "AGENTS.md",
+      "status": "present",
+      "local_path": "power-spec-2/AGENTS.md"
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "evidence/migration-and-coverage.md",
+      "status": "relocated",
+      "local_path": "power-spec-2/migration-and-coverage.md"
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "CHANGELOG.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/README.md",
+      "declared_target": "evidence/sources.md",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/implementation_plan.md",
+      "declared_target": "../evidence/backlog.json",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/report.md",
+      "declared_target": "report.json",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/report.md",
+      "declared_target": "unit_tests.log",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/report.md",
+      "declared_target": "static_checks.log",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/report.md",
+      "declared_target": "static_checks.json",
+      "status": "missing",
+      "local_path": null
+    },
+    {
+      "source": "power-spec-2/tooling-and-standards.md",
+      "declared_target": "../evidence/providers.json",
+      "status": "missing",
+      "local_path": null
+    }
+  ],
+  "missing_authorities": [
+    "docs/normative-contract.md",
+    "docs/evidence_policy.md",
+    "docs/uq-and-calibration.md",
+    "docs/measurement-and-characterization.md",
+    "docs/provider-contracts.md",
+    "docs/scope_and_workflow.md",
+    "docs/decisions-and-questions.md",
+    "evidence/backlog.json",
+    "evidence/providers.json",
+    "evidence/sources.md",
+    "schemas/",
+    "agent_tasks/",
+    "tools/check_release.py",
+    "tools/render_backlog.py",
+    "tests/",
+    "IMPLEMENTATION_STATUS.md",
+    "qa/report.json",
+    "qa/unit_tests.log",
+    "archive/"
+  ]
+}

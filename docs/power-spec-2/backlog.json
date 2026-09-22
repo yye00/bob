@@ -1,0 +1,3453 @@
+{
+  "schema_version": "power-spec-2.local-planning-backlog.v1",
+  "authority": "planning_only_not_controller_admission",
+  "release": "v0.4.1",
+  "status": "PLANNED",
+  "dispatch_ready": false,
+  "official_task_count": 41,
+  "local_migration_task_count": 4,
+  "source_snapshot": "source-snapshot.json",
+  "requirements": [
+    {
+      "id": "R-SCOPE",
+      "description": "Reuse existing engines/harness/agents; no thermal workstream, mandatory commercial EDA, universal IPPM, or new generic infrastructure.",
+      "source": "power-spec-2/AGENTS.md",
+      "test_families": [
+        "T-CONTRACT",
+        "T-RELEASE"
+      ]
+    },
+    {
+      "id": "R-CONTRACT",
+      "description": "Strict parse, units, required fields, finite numeric outputs, schema/version and missing-policy failures",
+      "source": "power-spec-2/implementation_plan.md",
+      "test_families": [
+        "T-CONTRACT"
+      ]
+    },
+    {
+      "id": "R-PROVENANCE",
+      "description": "Hash/source/data/runner bindings, duplicate ancestry, immutable attempts and no legacy promotion",
+      "source": "power-spec-2/blind_evaluation_component.md",
+      "test_families": [
+        "T-PROVENANCE"
+      ]
+    },
+    {
+      "id": "R-ISOLATION",
+      "description": "Separate deployed privileges, label descendant rejection, denied devices/network/secrets and malicious output",
+      "source": "power-spec-2/blind_evaluation_component.md",
+      "test_families": [
+        "T-ISOLATION"
+      ]
+    },
+    {
+      "id": "R-WORKFLOW",
+      "description": "Versioned packets, exact model identity, finite attempts/reveals/resources, atomic state and independent validator dispatch",
+      "source": "power-spec-2/agent-execution-and-independent-validation.md",
+      "test_families": [
+        "T-WORKFLOW"
+      ]
+    },
+    {
+      "id": "R-NATIVE",
+      "description": "Pinned native tests before adapters, execution witness, support manifest and missing/all-skipped/failure rejection",
+      "source": "power-spec-2/tooling-and-standards.md",
+      "test_families": [
+        "T-NATIVE"
+      ]
+    },
+    {
+      "id": "R-METROLOGY",
+      "description": "Channel boundary/operator, timestamps, uncertainty, independence, synchronization, completion and clean/profile comparison",
+      "source": "power-spec-2/blind_evaluation_component.md",
+      "test_families": [
+        "T-METROLOGY"
+      ]
+    },
+    {
+      "id": "R-WORK",
+      "description": "Actual tokens/ops/dtype/KV/kernel/context coverage, frozen-work versus serving replay, unsupported precision and omissions",
+      "source": "power-spec-2/frequency-intervention-validation.md",
+      "test_families": [
+        "T-WORK"
+      ]
+    },
+    {
+      "id": "R-ADAPTER",
+      "description": "Schema/units/status preservation and field-by-field independent differential oracle",
+      "source": "power-spec-2/implementation_plan.md",
+      "test_families": [
+        "T-ADAPTER"
+      ]
+    },
+    {
+      "id": "R-SCORE",
+      "description": "Absolute timing/power/energy, nonfinite and unsupported failures, data-only outputs, frozen policy and per-output statuses",
+      "source": "power-spec-2/blind_evaluation_component.md",
+      "test_families": [
+        "T-SCORE"
+      ]
+    },
+    {
+      "id": "R-FREQUENCY",
+      "description": "Realized controls, work invariants, paired contrasts/interaction, holdouts, labels and restoration",
+      "source": "power-spec-2/frequency-intervention-validation.md",
+      "test_families": [
+        "T-FREQUENCY"
+      ]
+    },
+    {
+      "id": "R-UQ",
+      "description": "Coverage/sharpness, joint covariance, independent sampling units and score uncertainty under frozen policy",
+      "source": "power-spec-2/frequency-intervention-validation.md",
+      "test_families": [
+        "T-UQ"
+      ]
+    },
+    {
+      "id": "R-CALIBRATION",
+      "description": "Identifiability, baseline ownership, heldout components and permitted operating-point exposure",
+      "source": "power-spec-2/implementation_plan.md",
+      "test_families": [
+        "T-CALIBRATION"
+      ]
+    },
+    {
+      "id": "R-TRANSFER",
+      "description": "Actual distinct architectures and workload/cohort lineage, W/C ablations and no public-as-blind leakage",
+      "source": "power-spec-2/implementation_plan.md",
+      "test_families": [
+        "T-TRANSFER"
+      ]
+    },
+    {
+      "id": "R-CONTROL",
+      "description": "In-flight work, requested versus realized states, unsupported hooks and separate D4 authority",
+      "source": "power-spec-2/implementation_plan.md",
+      "test_families": [
+        "T-CONTROL"
+      ]
+    },
+    {
+      "id": "R-ACCOUNTING",
+      "description": "Declared integration and no missing-as-zero, baseline duplication, work omission or boundary overlap",
+      "source": "power-spec-2/blind_evaluation_component.md",
+      "test_families": [
+        "T-ACCOUNTING"
+      ]
+    },
+    {
+      "id": "R-COST",
+      "description": "Native/adapted time/storage/resources and full-workload reconstruction error without target-time scaling",
+      "source": "power-spec-2/implementation_plan.md",
+      "test_families": [
+        "T-COST"
+      ]
+    },
+    {
+      "id": "R-RELEASE",
+      "description": "Reproduction, mutations, approved finite policy, all failures and output-specific scope/limits",
+      "source": "power-spec-2/agent-execution-and-independent-validation.md",
+      "test_families": [
+        "T-RELEASE"
+      ]
+    }
+  ],
+  "test_families": [
+    {
+      "id": "T-CONTRACT",
+      "title": "Envelopes, authority and truthful states",
+      "oracle_scope": "Strict parse, units, required fields, finite numeric outputs, schema/version and missing-policy failures",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-PROVENANCE",
+      "title": "Identity, lineage, custody and exposure",
+      "oracle_scope": "Hash/source/data/runner bindings, duplicate ancestry, immutable attempts and no legacy promotion",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-ISOLATION",
+      "title": "Real role and input isolation",
+      "oracle_scope": "Separate deployed privileges, label descendant rejection, denied devices/network/secrets and malicious output",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-WORKFLOW",
+      "title": "Bounded agent execution",
+      "oracle_scope": "Versioned packets, exact model identity, finite attempts/reveals/resources, atomic state and independent validator dispatch",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-NATIVE",
+      "title": "Native provider operability and support",
+      "oracle_scope": "Pinned native tests before adapters, execution witness, support manifest and missing/all-skipped/failure rejection",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-METROLOGY",
+      "title": "Physical observation evidence",
+      "oracle_scope": "Channel boundary/operator, timestamps, uncertainty, independence, synchronization, completion and clean/profile comparison",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-WORK",
+      "title": "Declared workload equivalence",
+      "oracle_scope": "Actual tokens/ops/dtype/KV/kernel/context coverage, frozen-work versus serving replay, unsupported precision and omissions",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-ADAPTER",
+      "title": "Native/normalized equivalence",
+      "oracle_scope": "Schema/units/status preservation and field-by-field independent differential oracle",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-SCORE",
+      "title": "Deterministic scientific scoring",
+      "oracle_scope": "Absolute timing/power/energy, nonfinite and unsupported failures, data-only outputs, frozen policy and per-output statuses",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-FREQUENCY",
+      "title": "Same-architecture frequency falsification",
+      "oracle_scope": "Realized controls, work invariants, paired contrasts/interaction, holdouts, labels and restoration",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-UQ",
+      "title": "Joint uncertainty and evidence adequacy",
+      "oracle_scope": "Coverage/sharpness, joint covariance, independent sampling units and score uncertainty under frozen policy",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-CALIBRATION",
+      "title": "Independent model characterization",
+      "oracle_scope": "Identifiability, baseline ownership, heldout components and permitted operating-point exposure",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-TRANSFER",
+      "title": "Declared generalization domain",
+      "oracle_scope": "Actual distinct architectures and workload/cohort lineage, W/C ablations and no public-as-blind leakage",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-CONTROL",
+      "title": "Causal runtime and protection semantics",
+      "oracle_scope": "In-flight work, requested versus realized states, unsupported hooks and separate D4 authority",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-ACCOUNTING",
+      "title": "Power/energy/work boundary conservation",
+      "oracle_scope": "Declared integration and no missing-as-zero, baseline duplication, work omission or boundary overlap",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-COST",
+      "title": "Measured cost and reduction qualification",
+      "oracle_scope": "Native/adapted time/storage/resources and full-workload reconstruction error without target-time scaling",
+      "validation_document": "VALIDATION.md"
+    },
+    {
+      "id": "T-RELEASE",
+      "title": "Independent scoped acceptance",
+      "oracle_scope": "Reproduction, mutations, approved finite policy, all failures and output-specific scope/limits",
+      "validation_document": "VALIDATION.md"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "F-01",
+      "stage": "D1",
+      "title": "Freeze fixture and governing policies",
+      "reuse": "Existing manifests and confirmed owner decisions",
+      "dependencies": [],
+      "deliverable": "Resolved scope, exact workload, proposed/approved policy distinction; validator: Contract validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-RELEASE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-RELEASE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Resolve missing authorities and the task/scientific status vocabularies",
+        "Freeze exact fixture/workload/output boundaries and distinguish proposed defaults from approved policies"
+      ],
+      "acceptance": [
+        "Missing normative/exposure definitions remain explicit blockers",
+        "Malformed/duplicate/nonfinite policies and absent required execution permissions/resources block the affected dispatch; unapproved scientific limits block QUALIFIED, while proposed-policy freeze and authorized discovery/descriptive work remain possible"
+      ],
+      "target_surfaces": [
+        "resolved application workspace: versioned contracts and fixture/policy manifests"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ScoreProfile (proposed, unapproved). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Contract validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ScoreProfile (proposed, unapproved)"
+      ],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Recover authority, freeze proposed contracts/fixture/policy split and run strict parser/readiness tests.",
+        "remaining_gate": "Missing original normative/evidence/schema artifacts and actual approval; neither inherently needs MI355.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "F-02",
+      "stage": "D1",
+      "title": "Inventory architecture and implementation fields",
+      "reuse": "Existing AMD architecture metadata and native provider configs",
+      "dependencies": [
+        "F-01"
+      ],
+      "deliverable": "Field-to-provider provenance and mechanism-gap matrix; validator: Architecture validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-CONTRACT",
+        "R-NATIVE",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-CONTRACT",
+        "T-NATIVE",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Inspect approved AMD architecture metadata and native provider configuration",
+        "Map every required field and changed mechanism to provenance, consumer and supported/unknown status"
+      ],
+      "acceptance": [
+        "No invented MI355 configuration or default fills an unknown field",
+        "Each predicted quantity has a supported mechanism and input provenance or an explicit gap"
+      ],
+      "target_surfaces": [
+        "approved SST model/configuration and architecture field registry"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Architecture validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Inventory approved architecture metadata and native model fields; implement provenance/support matrix.",
+        "remaining_gate": "MI355 source/collateral and later actual device/firmware discovery; preferred private SST source is not in inspected paths.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "F-03",
+      "stage": "D1",
+      "title": "Qualify harness channels and observation operators",
+      "reuse": "Existing harness, Perfetto/native parsers",
+      "dependencies": [
+        "F-01"
+      ],
+      "deliverable": "Per-channel metrology, independence, synchronization and overhead evidence; validator: Acquisition validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-METROLOGY",
+        "R-ACCOUNTING",
+        "R-PROVENANCE",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-METROLOGY",
+        "T-ACCOUNTING",
+        "T-PROVENANCE",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Discover existing harness channels and actual native export formats",
+        "Qualify physical boundaries, operators, timing, uncertainty, overhead and independence with approved development observations"
+      ],
+      "acceptance": [
+        "Gaps/resets/saturation and clock misalignment are detected",
+        "Clean/profile equivalence and observation bandwidth have evidence before waveform claims"
+      ],
+      "target_surfaces": [
+        "existing physical harness and observation/operator adapters"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: DatasetManifest (channel/metrology and clean/profile roles). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Acquisition validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "DatasetManifest (channel/metrology and clean/profile roles)"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Build observation adapters and synthetic gap/reset/synchronization/integration fixtures around the existing harness.",
+        "remaining_gate": "Actual channel metrology, independence, profiling overhead and target observation bandwidth require qualified physical evidence.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "F-04",
+      "stage": "D1",
+      "title": "Build native providers and open non-IPPM path",
+      "reuse": "SST native tests; selected Accelergy/HWComponents native examples",
+      "dependencies": [
+        "F-01"
+      ],
+      "deliverable": "Pinned actual builds, test discovery, native results and skipped/failed cases; validator: Provider validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-NATIVE",
+        "R-COST",
+        "R-CONTRACT",
+        "R-PROVENANCE"
+      ],
+      "test_families": [
+        "T-NATIVE",
+        "T-COST",
+        "T-CONTRACT",
+        "T-PROVENANCE"
+      ],
+      "migration_dependencies": [
+        "MIG-00",
+        "MIG-02"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Inventory SST/native test discovery and run a minimal pinned supported case",
+        "Compare Accelergy and HWComponents on one justified subsystem and select an open non-IPPM path"
+      ],
+      "acceptance": [
+        "Native output, versions, exit codes and skipped/failed tests are retained",
+        "Successful compilation alone does not claim AMD/MI355 accuracy or native SST integration"
+      ],
+      "target_surfaces": [
+        "third_party adoption manifests and existing native provider build/test paths"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Provider validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local_after_sources",
+        "before_mi355": "Build/test available CPU native providers now; acquire missing approved SST/open-power sources and run their native examples locally.",
+        "remaining_gate": "Preferred SST source and Accelergy/HWComponents closure absent here; native build does not require MI355 accuracy evidence.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "F-05",
+      "stage": "D1",
+      "title": "Capture real single-GPU vLLM workload",
+      "reuse": "Existing harness and installed vLLM",
+      "dependencies": [
+        "F-01",
+        "F-03"
+      ],
+      "deliverable": "Actual work/tokens/precision, native traces and clean/profile equivalence; validator: Workload validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-WORK",
+        "R-METROLOGY",
+        "R-PROVENANCE",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-WORK",
+        "T-METROLOGY",
+        "T-PROVENANCE",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Freeze actual single-GPU vLLM fixture after residency/support discovery",
+        "Capture real tokens, precision/KV/kernel/context behavior and clean/profile equivalence"
+      ],
+      "acceptance": [
+        "No precision fallback/offload/token omission or synthetic trace is represented as the requested real workload",
+        "Every failed/partial attempt remains visible with completion evidence"
+      ],
+      "target_surfaces": [
+        "existing workload harness",
+        "approved vLLM capture and workload manifest"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: DatasetManifest (real workload capture). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Workload validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "DatasetManifest (real workload capture)"
+      ],
+      "local_delivery": {
+        "location_class": "target_acquisition",
+        "before_mi355": "Prepare exact workload manifests, trace ingestion and completion/token/precision checks using clearly synthetic/public artifacts.",
+        "remaining_gate": "Actual specified vLLM workload capture and clean/profile equivalence need the configured target or independently acquired matching evidence.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "F-06",
+      "stage": "D1",
+      "title": "Implement batch adapters and evidence views",
+      "reuse": "Native parsers, Perfetto, JSON Schema",
+      "dependencies": [
+        "F-02",
+        "F-04",
+        "F-05"
+      ],
+      "deliverable": "Native-normalized equivalence, schema and field-level exposure checks; validator: Adapter validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-ADAPTER",
+        "R-CONTRACT",
+        "R-ISOLATION",
+        "R-ACCOUNTING",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-ADAPTER",
+        "T-CONTRACT",
+        "T-ISOLATION",
+        "T-ACCOUNTING",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Reuse native parsers and Perfetto to implement batch normalization",
+        "Generate fresh field-allowlisted input artifacts under approved W/C contracts"
+      ],
+      "acceptance": [
+        "Independent native/normalized comparisons preserve values, units, boundaries and statuses",
+        "Nested metadata, lengths and label ancestors cannot bypass the approved view"
+      ],
+      "target_surfaces": [
+        "application provider adapters and approved-view schemas"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: AllowedInputManifest, PredictionBundle (native/normalized adapter representation). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Adapter validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "AllowedInputManifest",
+        "PredictionBundle (native/normalized adapter representation)"
+      ],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Implement native batch adapters and fresh allowlisted views; compare public native fixtures and reject label ancestry/units/status loss.",
+        "remaining_gate": "Missing official W/C schemas and real target export format samples; synthetic readiness alone cannot prove production exposure enforcement.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "A-01",
+      "stage": "D1",
+      "title": "Connect existing coding agents to bounded packets",
+      "reuse": "Existing coding-agent executors and CI/job launcher",
+      "dependencies": [
+        "F-01"
+      ],
+      "deliverable": "Scoped task dispatch, immutable attempts, finite repair/feedback rules; validator: Workflow validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-WORKFLOW",
+        "R-PROVENANCE",
+        "R-ISOLATION",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-WORKFLOW",
+        "T-PROVENANCE",
+        "T-ISOLATION",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00",
+        "MIG-01"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Connect versioned bounded tasks to existing Bob/CI executor",
+        "Record exact model/runtime, finite attempts, immutable artifacts and separate validation dispatch"
+      ],
+      "acceptance": [
+        "Out-of-scope writes or missing authority fail before dispatch",
+        "Timeout/crash/restart preserves consumed attempts and cannot silently switch models or self-accept"
+      ],
+      "target_surfaces": [
+        "bob/src/bob/admitted_packet.py",
+        "atomic_packet_planner.py",
+        "models.py",
+        "orchestrator/claude_executor.py and run_loop.py"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Workflow validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Repair existing packet materialization lifecycle; qualify current installed Bob wheel, exact model profile, bounded retries/state and validation dispatch.",
+        "remaining_gate": "Eight current packet tests fail; model hardpins and version/package closure need local repair, not MI355.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "A-02",
+      "stage": "D1",
+      "title": "Establish independent acquisition and validator identities",
+      "reuse": "Existing IAM, reservations, artifact storage and harness",
+      "dependencies": [
+        "F-01",
+        "A-01"
+      ],
+      "deliverable": "Real separate privileges, physical evidence origin and no self-grading; validator: Security/evidence validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-ISOLATION",
+        "R-PROVENANCE",
+        "R-WORKFLOW",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-ISOLATION",
+        "T-PROVENANCE",
+        "T-WORKFLOW",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Instantiate acquisition/developer/preparer/predictor/scorer/validator privileges in approved existing infrastructure",
+        "Run real denial and authorized positive-control probes from each deployed identity"
+      ],
+      "acceptance": [
+        "Developer/predictor cannot access labels, scored hardware, scorer policy/signers or shared writable caches",
+        "Role names or separate conversations cannot satisfy the permission gate"
+      ],
+      "target_surfaces": [
+        "existing IAM/storage/isolation launcher",
+        "Bob executor environment and validator jobs"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Security/evidence validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "deployment",
+        "before_mi355": "Exercise public-canary developer/preparer/predictor/scorer isolation using existing OS/IAM infrastructure.",
+        "remaining_gate": "This sandbox cannot create the tested network namespace; a capable local host/CI deployment is needed, not necessarily MI355.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "F-07",
+      "stage": "D1",
+      "title": "Implement trusted preparer and deterministic scorer",
+      "reuse": "Standard isolation/attestation and native trace tooling",
+      "dependencies": [
+        "A-02",
+        "F-03"
+      ],
+      "deliverable": "Protected labels, finite score rules, immutable submissions and exact synthetic oracles; validator: Independent scorer validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-SCORE",
+        "R-ISOLATION",
+        "R-ACCOUNTING",
+        "R-PROVENANCE",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-SCORE",
+        "T-ISOLATION",
+        "T-ACCOUNTING",
+        "T-PROVENANCE",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Implement trusted allowlist preparer and immutable deterministic data-only scoring",
+        "Freeze prediction/submission identities and implement exact public analytic oracles"
+      ],
+      "acceptance": [
+        "Hidden-label swap leaves seeded predictions unchanged while nondegenerate scores change",
+        "Stale predictions, unsafe outputs, malformed samples and missing policies fail with typed nonqualified results"
+      ],
+      "target_surfaces": [
+        "trusted evaluator/preparer workspace separate from developer and prediction workspace"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: DatasetManifest, AllowedInputManifest, ModelSubmission, PredictionBundle, ScoreProfile, ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Independent scorer validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "DatasetManifest",
+        "AllowedInputManifest",
+        "ModelSubmission",
+        "PredictionBundle",
+        "ScoreProfile",
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Build data-only manifests, preparer, frozen submissions and deterministic scorer with independent synthetic oracle/mutation tests.",
+        "remaining_gate": "Official schemas, separate deployed identities and approved policy; real physical qualification awaits measured data.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "A-03",
+      "stage": "D1",
+      "title": "Implement discovery and escalation policy",
+      "reuse": "Existing repository/device inventory; approved policy registry",
+      "dependencies": [
+        "A-01"
+      ],
+      "deliverable": "Discoverable facts resolved without questions; authority/utility gaps remain explicit; validator: Policy validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-WORKFLOW",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-WORKFLOW",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Implement discovery-first resolution with evidence-linked uncertainty",
+        "Classify permission/utility gaps and apply only reversible approved defaults"
+      ],
+      "acceptance": [
+        "Known version/capability facts are resolved from tools without repeated owner questions",
+        "Unknown authorization or calibration facts never become inferred permissions/data"
+      ],
+      "target_surfaces": [
+        "bob orientation/task-profile policy adapter and discovery records"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Policy validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Implement discovery-first classification, grouped missing-authority escalation and approved-default behavior.",
+        "remaining_gate": "Bounded runtime policy/model configuration must be resolved before automated dispatch.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "F-09",
+      "stage": "D1",
+      "title": "Audit kernel/precision coverage and cost preflight",
+      "reuse": "Native support manifests and small representative traces",
+      "dependencies": [
+        "F-04",
+        "F-05"
+      ],
+      "deliverable": "Actual operator/context support plus trace/runtime/storage costs; validator: Coverage validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-WORK",
+        "R-NATIVE",
+        "R-COST",
+        "R-CONTRACT",
+        "R-PROVENANCE"
+      ],
+      "test_families": [
+        "T-WORK",
+        "T-NATIVE",
+        "T-COST",
+        "T-CONTRACT",
+        "T-PROVENANCE"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Audit actual model operators, dtypes, KV behavior and early/middle/late decode contexts",
+        "Run bounded representative native cases to measure runtime/trace/storage cost"
+      ],
+      "acceptance": [
+        "Unsupported FP8/operator/context coverage blocks affected claims",
+        "Recorded support denominator includes failed/unsupported cases and measured costs"
+      ],
+      "target_surfaces": [
+        "provider support manifests",
+        "workload coverage fixtures and cost reports"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Coverage validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Audit operator/dtype/context support and measure CPU simulator cost on small representative native traces.",
+        "remaining_gate": "Actual target FP8/decode/workload coverage and acquisition costs require target capture; no cached generic result fills that gap.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "F-10",
+      "stage": "D1",
+      "title": "Resolve source/data pins and dependency terms",
+      "reuse": "Native lockfiles, license tools and reproducible builds",
+      "dependencies": [
+        "F-04"
+      ],
+      "deliverable": "Actual dependency closure, optional vendor terms and immutable reproduction artifacts; validator: Supply-chain validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-PROVENANCE",
+        "R-NATIVE",
+        "R-RELEASE",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-PROVENANCE",
+        "T-NATIVE",
+        "T-RELEASE",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Resolve selected source/data/dependency/compiler/runtime pins and full terms closure",
+        "Rebuild selected native case from verified inputs and record reproducibility bounds"
+      ],
+      "acceptance": [
+        "Null/mutable pins and unreviewed model/data/plugins cannot become admitted dependencies",
+        "New versioned manifests preserve historical locks and dirty-source differences"
+      ],
+      "target_surfaces": [
+        "third_party/locks",
+        "receipts",
+        "drampower-6.0.0 and selected upstream checkouts"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Supply-chain validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Freeze source/runtime/wheel/license closure, fresh extraction and portable build/test recipes for selected dependencies.",
+        "remaining_gate": "Missing libraries/gitlinks/source artifacts require approved acquisition/provisioning, not a GPU.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "V-01",
+      "stage": "D1-reference",
+      "title": "Reproduce modern Accel-Sim native case",
+      "reuse": "Public matching Accel-Sim artifact; supported Hopper baseline if needed",
+      "dependencies": [
+        "F-04",
+        "F-10"
+      ],
+      "deliverable": "Native versus published result with exact scope; B200 only with matching available artifacts; validator: NVIDIA reproduction validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-NATIVE",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-CONTRACT",
+        "R-TRANSFER"
+      ],
+      "test_families": [
+        "T-NATIVE",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-CONTRACT",
+        "T-TRANSFER"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Find matching public Accel-Sim paper/code/config/data identities",
+        "Reproduce one applicable native case, using supported Hopper if B200 artifacts are unavailable"
+      ],
+      "acceptance": [
+        "Report absolute native versus published results and exact unsupported cells",
+        "NVIDIA timing result cannot become AMD or power qualification"
+      ],
+      "target_surfaces": [
+        "selected Accel-Sim/AccelWattch native artifact in isolated acquisition/build workspace"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "NVIDIA reproduction validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "reference_artifacts",
+        "before_mi355": "Prepare selected Accel-Sim CPU reproduction from approved matching public code/config/traces after acquisition.",
+        "remaining_gate": "Optional matching artifacts are absent; fresh NVIDIA trace capture needs supported NVIDIA hardware, not MI355.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "V-02",
+      "stage": "D1-reference",
+      "title": "Evaluate AISimulate native fixed configuration",
+      "reuse": "Current native estimator, support and measurement snapshots",
+      "dependencies": [
+        "F-04",
+        "F-10"
+      ],
+      "deliverable": "Absolute timing/coverage, imported-profile exposure, exact successful/failed cases; validator: NVIDIA reproduction validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-NATIVE",
+        "R-TRANSFER",
+        "R-PROVENANCE",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-NATIVE",
+        "T-TRANSFER",
+        "T-PROVENANCE",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Pin AISimulate native estimator/support/measurement snapshots",
+        "Evaluate exact fixed-configuration cells with imported profile exposure recorded"
+      ],
+      "acceptance": [
+        "Coverage and absolute timing failures are visible per cell",
+        "Target-profile reuse is never reported as target-free blind transfer"
+      ],
+      "target_surfaces": [
+        "selected AISimulate native reference workspace and exposure manifest"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "NVIDIA reproduction validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local_after_sources",
+        "before_mi355": "Build/evaluate selected native AISimulate estimator on explicit published/development cells and label target-profile exposure.",
+        "remaining_gate": "Repository/data/runtime closure absent in inspected workspace; no need to wait for MI355 to acquire and evaluate a CPU estimator.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "V-03",
+      "stage": "D1-reference",
+      "title": "Reproduce EnergAIzer supported frequency/power experiment",
+      "reuse": "Existing native artifact and voltage-frequency data",
+      "dependencies": [
+        "F-04",
+        "F-10"
+      ],
+      "deliverable": "Matched native power/timing on supported subset; decoder and domain gaps explicit; validator: Power reproduction validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-NATIVE",
+        "R-FREQUENCY",
+        "R-CALIBRATION",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-TRANSFER"
+      ],
+      "test_families": [
+        "T-NATIVE",
+        "T-FREQUENCY",
+        "T-CALIBRATION",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-TRANSFER"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Reproduce a supported EnergAIzer voltage-frequency/power case",
+        "Audit decoder/FP8/HBM/control/calibration coverage before extending methodology"
+      ],
+      "acceptance": [
+        "Native power/timing match has exact artifact/config/data identity and limits",
+        "Compute-frequency reproduction does not establish independent transfer-domain control or AMD accuracy"
+      ],
+      "target_surfaces": [
+        "selected EnergAIzer native reference workspace"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Power reproduction validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "reference_artifacts",
+        "before_mi355": "Reproduce selected EnergAIzer numerical method using matching approved public measurements after acquisition.",
+        "remaining_gate": "Fresh physical reproduction needs its supported device; imported/public results cannot become blind MI355 evidence.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "V-04",
+      "stage": "D1-D2",
+      "title": "Check native/adapter equivalence on selected references",
+      "reuse": "Selected completed native-reference results; not every optional V task",
+      "dependencies": [
+        "F-06",
+        "F-07"
+      ],
+      "deliverable": "Equivalent normalization and fresh approved measurements where available; validator: Independent reproduction validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-NATIVE",
+        "R-ADAPTER",
+        "R-SCORE",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-TRANSFER"
+      ],
+      "test_families": [
+        "T-NATIVE",
+        "T-ADAPTER",
+        "T-SCORE",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-TRANSFER"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_native_reference",
+          "rule": "At least one applicable completed native reference selected explicitly in the task manifest; optional V-01/V-02/V-03 are not all mandatory.",
+          "candidate_tasks": [
+            "V-01",
+            "V-02",
+            "V-03"
+          ]
+        }
+      ],
+      "implementation_steps": [
+        "Select at least one applicable completed native reference in the task manifest",
+        "Compare native/normalized results and independently acquired approved measurements where available"
+      ],
+      "acceptance": [
+        "Native/adapter discrepancy is measured against the same semantics and operators",
+        "Unavailable optional reference or hardware cannot be silently substituted with fake evidence"
+      ],
+      "target_surfaces": [
+        "application adapters and selected native reference result bundles"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: PredictionBundle, ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Independent reproduction validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "PredictionBundle",
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Compare at least one selected native result against adapter normalization using local public fixtures.",
+        "remaining_gate": "Fresh physical comparison depends on the selected supported device/evidence, not automatically MI355.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "X-01",
+      "stage": "D1",
+      "title": "Discover clock domains, authority and coupled controls",
+      "reuse": "Native device/firmware queries and existing control tools",
+      "dependencies": [
+        "F-02",
+        "F-03",
+        "A-02"
+      ],
+      "deliverable": "Supported joint controls, requested/actual meanings, reset/safety/permission record; validator: Acquisition/control validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-FREQUENCY",
+        "R-METROLOGY",
+        "R-ISOLATION",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-CONTROL"
+      ],
+      "test_families": [
+        "T-FREQUENCY",
+        "T-METROLOGY",
+        "T-ISOLATION",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-CONTROL"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Discover actual device/firmware control/readback domains and requested-versus-effective semantics",
+        "Record feasible joint settings, quantization/units, voltage coupling, authority and restoration"
+      ],
+      "acceptance": [
+        "Soft maxima/tied domains/unsettable telemetry are not represented as independent fixed clocks",
+        "No generic transfer clock or unsupported clock-setting command is invented"
+      ],
+      "target_surfaces": [
+        "acquisition control-capability manifest and existing native control/readback tools"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Acquisition/control validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "target_acquisition",
+        "before_mi355": "Implement capability records/parser/units and fixtures for tied domains, soft maxima, unsupported/read-only controls.",
+        "remaining_gate": "Discover actual MI355 domain controls, quantization, joint settings, voltage coupling and authorized restoration on target.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "X-02",
+      "stage": "D1",
+      "title": "Establish frozen-work and native-request replay lanes",
+      "reuse": "Existing runtime controls/traces; reusable microbenchmarks",
+      "dependencies": [
+        "F-05",
+        "X-01"
+      ],
+      "deliverable": "Semantically invariant work or separately labeled variable-policy execution; validator: Workload validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-WORK",
+        "R-FREQUENCY",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-WORK",
+        "T-FREQUENCY",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Establish separately named frozen-work and native-request replay contracts",
+        "Use an existing qualified replay hook and verify actual token/work trajectories across settings"
+      ],
+      "acceptance": [
+        "Missing replay support blocks that lane without fabricating equivalence",
+        "Simulator recomputes timing/service and does not rescale a target-timestamp trace"
+      ],
+      "target_surfaces": [
+        "existing vLLM/runtime replay",
+        "functional trace and microbenchmark integration"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Workload validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Prepare separately named frozen-work and native-request contracts and replay/work-equivalence checks without fixed timestamp rescaling.",
+        "remaining_gate": "Actual runtime replay hook and work invariance across supported target settings remain unproven.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "Q-01",
+      "stage": "D1",
+      "title": "Approve standing measurement/accuracy/automation policies",
+      "reuse": "Independent pilot statistics and existing owner policies",
+      "dependencies": [
+        "F-01",
+        "F-03",
+        "A-03"
+      ],
+      "deliverable": "Approved rule or explicitly blocked qualification; no limits chosen from model errors; validator: Policy/statistics validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-CONTRACT",
+        "R-UQ",
+        "R-RELEASE",
+        "R-WORKFLOW",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-SCORE"
+      ],
+      "test_families": [
+        "T-CONTRACT",
+        "T-UQ",
+        "T-RELEASE",
+        "T-WORKFLOW",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-SCORE"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Use independent development pilots and owner utility rules to propose metrology/accuracy/automation policy",
+        "Freeze approved finite limits, repetition/coverage rules, reveal budgets and capabilities before qualification"
+      ],
+      "acceptance": [
+        "Limits are not fitted to the submitted model error",
+        "Unapproved policy yields descriptive evidence only and cannot emit QUALIFIED"
+      ],
+      "target_surfaces": [
+        "policy registry and independently reviewed ScoreProfile/standing-authorization records"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ScoreProfile (approved only by authorized policy owner). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Policy/statistics validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ScoreProfile (approved only by authorized policy owner)"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Implement policy schemas, proposed/approved distinction, finite feedback/repair/sample rules and approval records.",
+        "remaining_gate": "Numerical utility approval and independent metrology pilot evidence remain external; do not hold all local development for them.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "F-08",
+      "stage": "D1",
+      "title": "Release D1 capability and gap report",
+      "reuse": "Collected acquisition/native evidence",
+      "dependencies": [
+        "F-02",
+        "F-03",
+        "F-04",
+        "F-05",
+        "F-06",
+        "F-07",
+        "F-09",
+        "F-10",
+        "X-01"
+      ],
+      "deliverable": "No generic success promoted to MI355 accuracy; required gaps and optional references separated; validator: Independent release validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-RELEASE",
+        "R-NATIVE",
+        "R-WORK",
+        "R-METROLOGY",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-RELEASE",
+        "T-NATIVE",
+        "T-WORK",
+        "T-METROLOGY",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Assemble D1 field/channel/provider/workload/control coverage and failure inventory",
+        "Independently reproduce selected native results and publish capability/gap matrix"
+      ],
+      "acceptance": [
+        "Required gaps and optional references remain separate",
+        "Local or generic-provider success cannot be promoted to MI355 numerical accuracy"
+      ],
+      "target_surfaces": [
+        "D1 scoped capability report and immutable evidence index"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Independent release validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Publish measured local capability/gap report with native operability, failed tests and missing-source inventory.",
+        "remaining_gate": "Full D1 report must incorporate actual target/harness evidence for required branches; local progress cannot close all D1 tasks.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "K-01",
+      "stage": "D1-D2",
+      "title": "Collect independent action/component characterization",
+      "reuse": "Existing compute/transfer benchmarks and harness",
+      "dependencies": [
+        "F-03",
+        "X-01",
+        "A-02"
+      ],
+      "deliverable": "Provenance-qualified power/energy tables, baseline ownership and operating coverage; validator: Characterization validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-CALIBRATION",
+        "R-METROLOGY",
+        "R-ACCOUNTING",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-CALIBRATION",
+        "T-METROLOGY",
+        "T-ACCOUNTING",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Acquire approved independent action/component benchmarks over relevant operating coverage",
+        "Define baseline ownership and independent calibration lineage"
+      ],
+      "acceptance": [
+        "Target outcome duplicates and same-boundary double counting are rejected",
+        "Missing component observability remains a gap rather than inferred truth"
+      ],
+      "target_surfaces": [
+        "characterization harness and component action-energy/power tables"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: DatasetManifest (physical_calibration). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Characterization validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "DatasetManifest (physical_calibration)"
+      ],
+      "local_delivery": {
+        "location_class": "target_acquisition",
+        "before_mi355": "Prepare action/work/baseline ownership contracts, calibration ingestion and independent-lineage tests.",
+        "remaining_gate": "Independent action/component energy and power characterization for the target operating envelope needs physical measurements.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "K-02",
+      "stage": "D2a",
+      "title": "Fit and qualify model content and uncertainty",
+      "reuse": "Selected open estimator and existing statistical libraries",
+      "dependencies": [
+        "K-01",
+        "F-06"
+      ],
+      "deliverable": "Identifiable grouped parameters, residuals, heldout component checks and joint uncertainty; validator: Power/UQ validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-CALIBRATION",
+        "R-UQ",
+        "R-ACCOUNTING",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-CALIBRATION",
+        "T-UQ",
+        "T-ACCOUNTING",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Fit selected open estimator with identifiable grouped parameters and residual model",
+        "Validate heldout components and shared parameter/discrepancy uncertainty"
+      ],
+      "acceptance": [
+        "Unidentifiable fits and target-contaminated tables do not qualify",
+        "Baseline and component uncertainty compose without duplicated energy or independent-copy covariance"
+      ],
+      "target_surfaces": [
+        "open power provider model content and established statistical library integration"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ModelSubmission (parameters, characterization and exposure). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Power/UQ validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ModelSubmission (parameters, characterization and exposure)"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Build fitting, identifiability/grouped parameter, residual and joint uncertainty plumbing using SALib/SciPy where justified and synthetic/reference data.",
+        "remaining_gate": "Actual AMD coefficients and heldout component qualification await independent approved characterization.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "U-01",
+      "stage": "D1-D2",
+      "title": "Implement joint uncertainty and score diagnostics",
+      "reuse": "Established statistics/inference libraries",
+      "dependencies": [
+        "F-07"
+      ],
+      "deliverable": "Coverage/sharpness, joint contrast samples, independent units and sampling-error controls; validator: Statistics validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-UQ",
+        "R-SCORE",
+        "R-FREQUENCY",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-UQ",
+        "T-SCORE",
+        "T-FREQUENCY",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Implement joint parameter/observation/score uncertainty with existing statistics tools",
+        "Preserve pair/block dependence and report coverage, sharpness and sampling error"
+      ],
+      "acceptance": [
+        "Paired contrasts include covariance and use independent run/session/device units",
+        "Confidently wrong or arbitrarily broad intervals fail approved joint criteria"
+      ],
+      "target_surfaces": [
+        "shared uncertainty representation and deterministic scorer diagnostics"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Statistics validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Implement paired covariance, joint samples, coverage/sharpness/subgroup and score-uncertainty oracles on CPU.",
+        "remaining_gate": "Approved thresholds and physical noise estimates are needed for numerical qualification, not development of the math.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "P-01",
+      "stage": "D2a",
+      "title": "Predict frozen MI355 workload at controlled operating point",
+      "reuse": "Existing SST/compact provider with open power binding",
+      "dependencies": [
+        "F-06",
+        "K-02",
+        "U-01"
+      ],
+      "deliverable": "Frozen native outputs, declared W/C conditioning and baseline absolute errors; validator: Prediction validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-NATIVE",
+        "R-SCORE",
+        "R-WORK",
+        "R-UQ",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-ADAPTER",
+        "R-FREQUENCY",
+        "R-CALIBRATION",
+        "R-ACCOUNTING"
+      ],
+      "test_families": [
+        "T-NATIVE",
+        "T-SCORE",
+        "T-WORK",
+        "T-UQ",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-ADAPTER",
+        "T-FREQUENCY",
+        "T-CALIBRATION",
+        "T-ACCOUNTING"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Freeze MI355 workload/input view/model/provider at a controlled operating point",
+        "Emit native and normalized predictions for all claimed timing/power/energy quantities"
+      ],
+      "acceptance": [
+        "W/C conditioning and unsupported outputs are explicit before score access",
+        "Baseline absolute error remains visible even when frequency slopes agree"
+      ],
+      "target_surfaces": [
+        "selected SST/compact execution provider plus open power binding"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ModelSubmission, PredictionBundle. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Prediction validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ModelSubmission",
+        "PredictionBundle"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Connect locally built execution/open-power providers; freeze manifests and run supported native/development cases.",
+        "remaining_gate": "Missing MI355 model content, real workload evidence and independent calibration prevent target prediction qualification.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "X-03",
+      "stage": "D2a",
+      "title": "Freeze randomized clock-intervention design and heldouts",
+      "reuse": "Established design/statistical tooling and validator harness",
+      "dependencies": [
+        "X-02",
+        "Q-01",
+        "F-07"
+      ],
+      "deliverable": "Feasible factorial/blocked plan, immutable seeds, exposure and noncompliance policy; validator: Design validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-FREQUENCY",
+        "R-UQ",
+        "R-PROVENANCE",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-FREQUENCY",
+        "T-UQ",
+        "T-PROVENANCE",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Freeze feasible compute by independently controllable transfer-domain design or constrained policy manifold",
+        "Register blocks/randomization/baseline repeats/holdouts/noncompliance and fixed-n or approved sequential rule"
+      ],
+      "acceptance": [
+        "No impossible grid, post-score stopping change or discovery-as-blind relabeling",
+        "Two-level design is not claimed to establish curvature"
+      ],
+      "target_surfaces": [
+        "validator-owned clock experiment plan",
+        "seeds and cohort manifests"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: AllowedInputManifest (factor/holdout exposure), ScoreProfile (frozen experiment rules). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Design validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "AllowedInputManifest (factor/holdout exposure)",
+        "ScoreProfile (frozen experiment rules)"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Build randomization/blocking/holdout/seed registries and test proposed grids and noncompliance policies synthetically.",
+        "remaining_gate": "Freeze physical levels/sample plan only after actual X-01/X-02 capability and Q-01 policy evidence.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "X-04",
+      "stage": "D2a",
+      "title": "Acquire independent frequency trials and sealed outcomes",
+      "reuse": "Existing hardware harness and safe native controls",
+      "dependencies": [
+        "X-03",
+        "A-02"
+      ],
+      "deliverable": "All attempts, real work/control compliance, observations and restoration evidence; validator: Acquisition validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-FREQUENCY",
+        "R-WORK",
+        "R-METROLOGY",
+        "R-ISOLATION",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-CONTROL"
+      ],
+      "test_families": [
+        "T-FREQUENCY",
+        "T-WORK",
+        "T-METROLOGY",
+        "T-ISOLATION",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-CONTROL"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Acquire all assigned trials through separately authorized reservation/control harness",
+        "Validate achieved states, work, entire observation interval and restoration including failures"
+      ],
+      "acceptance": [
+        "Every assigned/noncompliant/failed trial appears in the evidence ledger",
+        "Cleanup failure is retained and prior state restoration independently checked"
+      ],
+      "target_surfaces": [
+        "independent acquisition workspace and sealed raw/outcome storage"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: DatasetManifest (all trial attempts and sealed outcomes). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Acquisition validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "DatasetManifest (all trial attempts and sealed outcomes)"
+      ],
+      "local_delivery": {
+        "location_class": "target_acquisition",
+        "before_mi355": "Implement acquisition attempt lifecycle and restoration/cancellation/error-path tests with labeled synthetic control fixtures.",
+        "remaining_gate": "Actual independently reserved clock trials, full observation and sealed outcomes require target access and approved controls.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "X-05",
+      "stage": "D2a",
+      "title": "Score frequency responses and falsify models",
+      "reuse": "Deterministic scorer and paired statistical methods",
+      "dependencies": [
+        "X-04",
+        "P-01",
+        "U-01"
+      ],
+      "deliverable": "Absolute/contrast/interaction/UQ scores; model versus experiment-failure diagnosis; validator: Independent scientific validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-FREQUENCY",
+        "R-SCORE",
+        "R-UQ",
+        "R-ACCOUNTING",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-FREQUENCY",
+        "T-SCORE",
+        "T-UQ",
+        "T-ACCOUNTING",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Score per-point absolutes, paired main effects/interactions, diagnostics and uncertainties",
+        "Separate model falsification from invalid work/control/observation experiments"
+      ],
+      "acceptance": [
+        "Absolute-bias and wrong-slope mutants both fail their own gates",
+        "Same-realized-clock, zero-output elasticity and correlated-row pseudo-replication are rejected"
+      ],
+      "target_surfaces": [
+        "trusted deterministic scorer and independent scientific validation report"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Independent scientific validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Implement absolute/contrast/interaction/elasticity/uncertainty scoring and model-versus-experiment failure classification.",
+        "remaining_gate": "Apply frozen scorer to independent X-04 measurements and P-01 predictions before a physical frequency-response claim.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "P-02",
+      "stage": "D2a",
+      "title": "Qualify independent timing-and-power prediction",
+      "reuse": "Same-target references and frozen W0/W1 input views",
+      "dependencies": [
+        "P-01",
+        "Q-01",
+        "X-05"
+      ],
+      "deliverable": "At least one W0/W1 timing-and-power path; W3 only diagnostics; validator: Independent physical validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-SCORE",
+        "R-RELEASE",
+        "R-ISOLATION",
+        "R-FREQUENCY",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-SCORE",
+        "T-RELEASE",
+        "T-ISOLATION",
+        "T-FREQUENCY",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Qualify at least one W0/W1 independent timing-and-power path after definitions/policy are resolved",
+        "Combine absolute, frequency and uncertainty evidence with same-target references"
+      ],
+      "acceptance": [
+        "W3 remains diagnostic and measured target timing cannot be called predicted",
+        "Each required output independently satisfies approved policy with sufficient evidence"
+      ],
+      "target_surfaces": [
+        "single-GPU D2a qualification report and approved input exposure manifests"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Independent physical validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Build reporting/gating for independent W0/W1 timing-and-power predictions and diagnostic-only conditioned paths.",
+        "remaining_gate": "Resolved evidence definitions, target measurements, X-05 and approved accuracy policy required.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "P-03",
+      "stage": "D2b",
+      "title": "Implement missing runtime control and in-flight-work semantics",
+      "reuse": "Existing SST hooks and project-accessible PMFW models",
+      "dependencies": [
+        "P-02"
+      ],
+      "deliverable": "Causal commands/actual states, real work progression, no thermal dependency; validator: Control/numerical validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-CONTROL",
+        "R-NATIVE",
+        "R-WORK",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-CONTROL",
+        "T-NATIVE",
+        "T-WORK",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Inspect existing SST runtime hooks before the smallest required causal extension",
+        "Track actual work progress through command delays, actual-state changes and gated intervals"
+      ],
+      "acceptance": [
+        "100-cycle public oracle completes in 150 ns for the declared frequency transition",
+        "Gated time advances without work and no thermal solver/new general event engine is introduced"
+      ],
+      "target_surfaces": [
+        "existing SST or compact provider control/activity hooks"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Control/numerical validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local_after_sources",
+        "before_mi355": "Test piecewise in-flight work/control delays/gating using existing provider hooks; add only the smallest missing hook after source audit.",
+        "remaining_gate": "Preferred SST source absent; physical PMFW validation is later, and stage dependencies remain intact.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "P-04",
+      "stage": "D2b",
+      "title": "Validate ordinary PMFW-managed workload",
+      "reuse": "Existing harness and approved control behavior",
+      "dependencies": [
+        "P-03",
+        "F-07"
+      ],
+      "deliverable": "Heldout timing/power, cap/operator semantics, proper conditional versus predicted labels; validator: Closed-loop validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-CONTROL",
+        "R-SCORE",
+        "R-METROLOGY",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-CONTROL",
+        "T-SCORE",
+        "T-METROLOGY",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Validate ordinary PMFW-managed heldout workload using approved harness/control semantics",
+        "Distinguish commanded policy, measured conditional states and predicted states"
+      ],
+      "acceptance": [
+        "Timing/power/cap operators preserve declared physical boundaries",
+        "Measured control traces cannot silently change an independent prediction claim"
+      ],
+      "target_surfaces": [
+        "ordinary PMFW workload adapter and independent closed-loop validator"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: PredictionBundle, ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Closed-loop validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "PredictionBundle",
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Implement ordinary-control integration tests and requested/actual/conditioned state accounting on a supported local provider.",
+        "remaining_gate": "Heldout physical PMFW workload and target cap/operator behavior are target gates.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "P-05",
+      "stage": "D2",
+      "title": "Issue scoped single-GPU qualification",
+      "reuse": "Registry and immutable score bundles",
+      "dependencies": [
+        "P-02",
+        "P-04"
+      ],
+      "deliverable": "Per-output qualification with all failures, exposure, cost and unresolved domains; validator: Release validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-RELEASE",
+        "R-SCORE",
+        "R-PROVENANCE",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-RELEASE",
+        "T-SCORE",
+        "T-PROVENANCE",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Combine separately passed D2a and D2b evidence into per-output single-GPU scope",
+        "Publish immutable report with all exposure, costs, failed/unsupported domains and reproduction"
+      ],
+      "acceptance": [
+        "No best-subset aggregate hides a required failing output",
+        "Neither native operability nor D2a alone closes P-05"
+      ],
+      "target_surfaces": [
+        "single-GPU release evidence registry"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ScoreReport (per-output scoped qualification). Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Release validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ScoreReport (per-output scoped qualification)"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Implement scoped report aggregation, evidence completeness and independent release-decision interface.",
+        "remaining_gate": "P-02 and P-04 physical qualification must both close before single-GPU qualification.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "B-01",
+      "stage": "D3-setup",
+      "title": "Create sealed workload/architecture/exposure cohorts",
+      "reuse": "Existing storage and lineage tooling",
+      "dependencies": [
+        "F-07"
+      ],
+      "deliverable": "Grouped splits, duplicates, imported profiles and finite reveal budget; validator: Dataset validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-TRANSFER",
+        "R-ISOLATION",
+        "R-PROVENANCE",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-TRANSFER",
+        "T-ISOLATION",
+        "T-PROVENANCE",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Create sealed grouped workload/architecture/exposure cohorts with permitted ancestry",
+        "Audit duplicates and imported databases and freeze finite reveal budget"
+      ],
+      "acceptance": [
+        "Related runs/windows/frequency pairs cannot straddle prohibited split boundaries",
+        "Public reproduction data never become private gold holdouts"
+      ],
+      "target_surfaces": [
+        "trusted dataset registry",
+        "split manifests and exposure ledger"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: DatasetManifest (grouped split/seal roles), AllowedInputManifest. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Dataset validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "DatasetManifest (grouped split/seal roles)",
+        "AllowedInputManifest"
+      ],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Implement grouped split/seal/duplicate/imported-profile/exposure/reveal accounting using public canary data.",
+        "remaining_gate": "Actual protected datasets and deployed independent privileges required before any blind cohort claim.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "B-02",
+      "stage": "D3a",
+      "title": "Test new workloads and W-profile ablations",
+      "reuse": "Existing providers and fresh harness evidence",
+      "dependencies": [
+        "P-05",
+        "B-01"
+      ],
+      "deliverable": "New-workload absolute/UQ results without cross-axis overclaim; validator: Blind scientific validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-TRANSFER",
+        "R-SCORE",
+        "R-UQ",
+        "R-WORK",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-TRANSFER",
+        "T-SCORE",
+        "T-UQ",
+        "T-WORK",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Evaluate genuinely new workloads under frozen W-profile ablations",
+        "Score all attempts and uncertainty using fresh independent harness evidence"
+      ],
+      "acceptance": [
+        "New workload claim does not imply a new architecture",
+        "Measured work/timing conditioning and failures remain visible per ablation"
+      ],
+      "target_surfaces": [
+        "D3a blind workload evaluation bundles"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ModelSubmission, PredictionBundle, ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Blind scientific validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ModelSubmission",
+        "PredictionBundle",
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Build workload-ablation evaluation pipeline and test synthetic/new public workload handling.",
+        "remaining_gate": "Fresh genuinely heldout target workloads and completed P-05 required for D3a.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "B-03",
+      "stage": "D3b",
+      "title": "Test withheld architecture and C0/C1 exposure",
+      "reuse": "Qualified native providers and actual architecture collateral",
+      "dependencies": [
+        "P-05",
+        "B-01"
+      ],
+      "deliverable": "Changed-mechanism audit and target-exposure-specific transfer result; validator: Blind architecture validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-TRANSFER",
+        "R-NATIVE",
+        "R-SCORE",
+        "R-UQ",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-CALIBRATION"
+      ],
+      "test_families": [
+        "T-TRANSFER",
+        "T-NATIVE",
+        "T-SCORE",
+        "T-UQ",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-CALIBRATION"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Withhold a genuinely distinct architecture and inspect changed mechanisms",
+        "Evaluate defined C0/C1 exposure with actual target collateral and matched information"
+      ],
+      "acceptance": [
+        "Same-card clock changes cannot satisfy architecture transfer",
+        "Absent target mechanisms or illicit target characterization block affected claims"
+      ],
+      "target_surfaces": [
+        "D3b architecture transfer provider configurations and sealed evaluation"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ModelSubmission, PredictionBundle, ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Blind architecture validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ModelSubmission",
+        "PredictionBundle",
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "other_architecture",
+        "before_mi355": "Implement mechanism-delta/exposure/split logic with distinct public architecture fixtures.",
+        "remaining_gate": "An actually different withheld architecture and approved C0/C1 collateral/evidence required; one MI355 does not close D3b.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "B-04",
+      "stage": "D3c",
+      "title": "Test joint workload/architecture shifts",
+      "reuse": "Matched-information existing baselines",
+      "dependencies": [
+        "B-02",
+        "B-03"
+      ],
+      "deliverable": "Both axes held out, all attempts, uncertainty and cost; validator: Blind scientific validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-TRANSFER",
+        "R-SCORE",
+        "R-UQ",
+        "R-COST",
+        "R-CONTRACT",
+        "R-PROVENANCE"
+      ],
+      "test_families": [
+        "T-TRANSFER",
+        "T-SCORE",
+        "T-UQ",
+        "T-COST",
+        "T-CONTRACT",
+        "T-PROVENANCE"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Hold out both architecture and workload axes with matched-information baselines",
+        "Publish joint-shift performance/uncertainty/cost and all attempted cases"
+      ],
+      "acceptance": [
+        "Separate single-axis successes cannot substitute for joint holdout evidence",
+        "Data lineage and imported profile exposure remain enforced"
+      ],
+      "target_surfaces": [
+        "D3c joint-shift sealed evaluation"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: ModelSubmission, PredictionBundle, ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Blind scientific validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "ModelSubmission",
+        "PredictionBundle",
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "other_architecture",
+        "before_mi355": "Implement joint-axis cohort validation and matched-information baseline accounting.",
+        "remaining_gate": "Both heldout workloads and architecture evidence plus B-02/B-03 required.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "C-01",
+      "stage": "cross-cutting",
+      "title": "Profile cost and qualify multifidelity estimators",
+      "reuse": "Native profilers and established multifidelity libraries",
+      "dependencies": [
+        "F-04"
+      ],
+      "deliverable": "Measured cost/error curves and explicit shared discrepancy; validator: Numerical/UQ validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-COST",
+        "R-UQ",
+        "R-NATIVE",
+        "R-CONTRACT",
+        "R-PROVENANCE"
+      ],
+      "test_families": [
+        "T-COST",
+        "T-UQ",
+        "T-NATIVE",
+        "T-CONTRACT",
+        "T-PROVENANCE"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Measure native/adapted costs across representative fidelity levels",
+        "Validate any chosen multifidelity estimator with explicit shared discrepancy"
+      ],
+      "acceptance": [
+        "Cost estimates come from executed bounded workloads",
+        "Correlated model errors are not treated as independent additional evidence"
+      ],
+      "target_surfaces": [
+        "native profiler and selected existing multifidelity/statistics integration"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Numerical/UQ validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Measure available CPU native simulator/runtime/storage cost; test selected multifidelity discrepancy accounting.",
+        "remaining_gate": "Representative target-trace inputs and approved error/cost policy needed for target-specific claims.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "C-02",
+      "stage": "D1-D2",
+      "title": "Qualify selected-region and full-workload composition",
+      "reuse": "Native layer/context selection and compact provider",
+      "dependencies": [
+        "F-09",
+        "F-06"
+      ],
+      "deliverable": "Early/middle/late decode coverage, independent reconstruction errors and no target-time scaling; validator: Reduction validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-COST",
+        "R-WORK",
+        "R-ACCOUNTING",
+        "R-SCORE",
+        "R-CONTRACT",
+        "R-PROVENANCE"
+      ],
+      "test_families": [
+        "T-COST",
+        "T-WORK",
+        "T-ACCOUNTING",
+        "T-SCORE",
+        "T-CONTRACT",
+        "T-PROVENANCE"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Select representative regions covering prefill and early/middle/late decode",
+        "Independently compare composed full-workload prediction against full native/physical evidence"
+      ],
+      "acceptance": [
+        "Target-runtime scaling and unexplained omitted work fail",
+        "Full-workload claim from selected regions remains blocked until reconstruction error qualifies"
+      ],
+      "target_surfaces": [
+        "selected-region extraction and full-workload composition adapter"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Reduction validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "hybrid",
+        "before_mi355": "Implement weighted selected-region composition, coverage/conservation and independent reconstruction fixtures.",
+        "remaining_gate": "Full versus selected-workload evidence across real contexts required before composed full-workload claims.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "U-02",
+      "stage": "cross-cutting",
+      "title": "Qualify derivatives and statistical approximations where used",
+      "reuse": "Existing sensitivities/AD/inference tools",
+      "dependencies": [
+        "K-02"
+      ],
+      "deliverable": "Directional checks, posterior diagnostics and explicit event/discrepancy assumptions; validator: Math validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-UQ",
+        "R-CALIBRATION",
+        "R-CONTROL",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-UQ",
+        "T-CALIBRATION",
+        "T-CONTROL",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "For actually used derivatives/inference, register smoothness/event/discrepancy assumptions",
+        "Run independent directional/finite-difference and posterior diagnostics"
+      ],
+      "acceptance": [
+        "Nonsmooth transitions are not assumed differentiable",
+        "Approximation/sampling failures block dependent numerical claims only"
+      ],
+      "target_surfaces": [
+        "existing AD/sensitivity/inference library integration"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Native artifacts where applicable; immutable attempt manifest, raw test results, cost/support/failure record and independent validator report. Resolve exact output paths before admission.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Math validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Run directional/finite-difference and chosen inference convergence diagnostics with known synthetic references when those methods are used.",
+        "remaining_gate": "Actual model event/discrepancy assumptions and approved numerical policy must hold for qualified results.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "H-01",
+      "stage": "D4",
+      "title": "Qualify high-current/protection behavior",
+      "reuse": "Available hardware and open/project reference models",
+      "dependencies": [
+        "P-05"
+      ],
+      "deliverable": "Separate event versus waveform evidence, approved safety and no thermal expansion; validator: Electrical/protection validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-CONTROL",
+        "R-METROLOGY",
+        "R-RELEASE",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-ACCOUNTING"
+      ],
+      "test_families": [
+        "T-CONTROL",
+        "T-METROLOGY",
+        "T-RELEASE",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-ACCOUNTING"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "Obtain separate D4 authority and independent current/protection measurement feasibility",
+        "Qualify event versus waveform outputs against matching physical bandwidth/boundary"
+      ],
+      "acceptance": [
+        "Ordinary D2b data cannot qualify high-current waveforms",
+        "No thermal expansion, protection bypass or unauthorized experiment"
+      ],
+      "target_surfaces": [
+        "authorized D4 harness and open/project electrical/protection reference models"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: DatasetManifest, PredictionBundle, ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Electrical/protection validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "DatasetManifest",
+        "PredictionBundle",
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "later_physical",
+        "before_mi355": "Prepare only public safety/state/failure and event-versus-waveform contracts; retain later-stage scope.",
+        "remaining_gate": "Separate D4 authorization, adequate sensors/protection reference and physical target experiments after P-05.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "M-01",
+      "stage": "D5",
+      "title": "Extend to multi-GPU system",
+      "reuse": "Existing serving/communication frameworks after overlap audit",
+      "dependencies": [
+        "B-04",
+        "H-01"
+      ],
+      "deliverable": "Per-device/system accounting, communication/overlap and joint uncertainty; validator: Distributed validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-ACCOUNTING",
+        "R-TRANSFER",
+        "R-UQ",
+        "R-NATIVE",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-RELEASE"
+      ],
+      "test_families": [
+        "T-ACCOUNTING",
+        "T-TRANSFER",
+        "T-UQ",
+        "T-NATIVE",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-RELEASE"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "After B-04 and H-01, audit existing serving/communication infrastructure",
+        "Implement only missing multi-GPU communication/overlap and per-device/system accounting"
+      ],
+      "acceptance": [
+        "Communication/computation overlap is not double counted",
+        "System and per-device outputs carry joint uncertainty and matched boundaries"
+      ],
+      "target_surfaces": [
+        "existing multi-GPU serving/collective/simulation providers"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: DatasetManifest, PredictionBundle, ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Distributed validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "DatasetManifest",
+        "PredictionBundle",
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "later_distributed",
+        "before_mi355": "Audit reusable communication/overlap mechanisms and accounting test plans after preceding stage choices.",
+        "remaining_gate": "Multiple appropriate GPUs plus B-04 and H-01; current MCCL native path remains stalled/unqualified.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "N-01",
+      "stage": "D6",
+      "title": "Extend to multiple nodes",
+      "reuse": "Existing transport/collective simulators and harness",
+      "dependencies": [
+        "M-01"
+      ],
+      "deliverable": "End-to-end network/workload behavior and matched physical boundaries; validator: Distributed validator",
+      "origin": "power-spec-2/implementation_plan.md#backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-ACCOUNTING",
+        "R-TRANSFER",
+        "R-UQ",
+        "R-NATIVE",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-RELEASE"
+      ],
+      "test_families": [
+        "T-ACCOUNTING",
+        "T-TRANSFER",
+        "T-UQ",
+        "T-NATIVE",
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-RELEASE"
+      ],
+      "migration_dependencies": [
+        "MIG-00"
+      ],
+      "conditional_gates": [
+        {
+          "kind": "selected_region_full_workload_claim",
+          "requires": [
+            "C-02"
+          ],
+          "rule": "Required only when a full-workload claim is composed from selected regions; a genuine full native run does not need this reduction gate."
+        },
+        {
+          "kind": "derivative_or_approximate_inference_claim",
+          "requires": [
+            "U-02"
+          ],
+          "rule": "Required only when the claimed result relies on derivatives or approximate inference."
+        },
+        {
+          "kind": "numerical_qualification",
+          "requires": [
+            "Q-01"
+          ],
+          "rule": "Approved policy required to qualify, not to collect authorized descriptive/development evidence."
+        }
+      ],
+      "implementation_steps": [
+        "After M-01, reuse existing transport/collective simulators for multinode behavior",
+        "Validate end-to-end workload/network accounting against matched physical boundaries"
+      ],
+      "acceptance": [
+        "Network/collective delay and communication energy are accounted exactly once",
+        "Single-node success does not qualify multinode behavior"
+      ],
+      "target_surfaces": [
+        "existing multinode transport/collective/harness integration"
+      ],
+      "input_access": "Current spec and task-scoped approved public/development artifacts only; separate sealed/raw authority for validator roles.",
+      "output_contract": "Known v0.4.1 object types: DatasetManifest, PredictionBundle, ScoreReport. Resolve missing authoritative schema details and exact output paths before admission; do not substitute ad hoc envelopes. Also retain native artifacts, immutable attempts, raw tests, cost/support/failure record and independent validator report.",
+      "native_test_rule": "Discover and record existing native/public tests before adding adapters. Commands, cwd, collection and skip/failure counts must be frozen in the admitted child packet; missing command is a dispatch blocker.",
+      "repair_policy": "Must bind approved finite attempts/resources/reveal budget before admission; no numeric budget or authority granted by this planning record.",
+      "validator": "Distributed validator",
+      "blocked_on": [
+        "Missing normative/exposure/policy definitions for dependent claims; do not infer from legacy specification."
+      ],
+      "acceptance_level": "Independent evidence for the declared scope; local synthetic checks alone never qualify physical accuracy.",
+      "known_artifact_types": [
+        "DatasetManifest",
+        "PredictionBundle",
+        "ScoreReport"
+      ],
+      "local_delivery": {
+        "location_class": "later_distributed",
+        "before_mi355": "Plan reusable transport/collective interfaces and network accounting tests after M-01.",
+        "remaining_gate": "Multiple nodes/network evidence and completed M-01; a single MI355 host cannot close D6.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "MIG-00",
+      "stage": "migration",
+      "title": "Freeze source intake and recover missing authorities",
+      "reuse": "Existing repository metadata, source custody, Bob executor and local checks",
+      "dependencies": [],
+      "deliverable": "Freeze source intake and recover missing authorities; validator: Independent migration reviewer",
+      "origin": "local_migration_plan_not_official_backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-CONTRACT",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-CONTRACT",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Capture parent/Bob/submodule identities and preserve dirty/untracked metadata without reading sealed contents",
+        "Locate complete v0.4.1 original release and compare official backlog/schemas to this projection",
+        "Resolve real application root and assign missing artifacts to source custodian"
+      ],
+      "acceptance": [
+        "Nine source hashes and known missing authorities remain explicit",
+        "New spec instructions cannot silently fall back to old thermal/factory requirements",
+        "Recovered definitions are independently reconciled before dependent dispatch",
+        "An inventory-only MIG-00 may be accepted with unresolved source gaps recorded; downstream discovery remains possible, while each schema/qualification task separately requires its missing authorities"
+      ],
+      "target_surfaces": [
+        "bob/docs/power-spec-2 and approved source registry"
+      ],
+      "input_access": "Read-only approved repository metadata; no sealed label or credential content.",
+      "output_contract": "Versioned inventory/contract/cutover artifacts with hashes and actual command receipts; resolve bounded child output paths before runtime changes.",
+      "native_test_rule": "Use maintain_plan.py for plan structure only; affected Bob/native/deployed tests remain separate gates described in the migration and validation documents.",
+      "repair_policy": "Bind finite approved task resource/attempt/reveal policy before dispatch; no execution authorization in this plan.",
+      "validator": "Independent migration reviewer",
+      "blocked_on": [
+        "Source/policy/principal availability gates apply only to dependent work."
+      ],
+      "acceptance_level": "Migration/workflow acceptance only; no physical numerical qualification.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Freeze source snapshot and discovered current application baseline; reconcile missing authorities without inventing them.",
+        "remaining_gate": "Complete original contract bundle/source custodian; inventory acceptance may retain explicit gaps.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "MIG-01",
+      "stage": "migration",
+      "title": "Prepare Bob profile compatibility and downgrade",
+      "reuse": "Existing repository metadata, source custody, Bob executor and local checks",
+      "dependencies": [
+        "MIG-00",
+        "F-01"
+      ],
+      "deliverable": "Prepare Bob profile compatibility and downgrade; validator: Independent migration reviewer",
+      "origin": "local_migration_plan_not_official_backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-WORKFLOW",
+        "R-CONTRACT",
+        "R-ISOLATION",
+        "R-PROVENANCE",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-WORKFLOW",
+        "T-CONTRACT",
+        "T-ISOLATION",
+        "T-PROVENANCE",
+        "T-COST"
+      ],
+      "migration_dependencies": [],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Inventory planner/model aliases/packet schema/DB/readiness/verification surfaces in BOB_MIGRATION.md",
+        "Define additive spec2 profile and exact executor model identity with finite policy and legacy namespace isolation",
+        "Create public contract fixtures and compatibility tests before A-01 runtime wiring"
+      ],
+      "acceptance": [
+        "New profile refuses absent authority/model/budget while generic Bob regressions remain intact",
+        "Old packet receipts cannot confer new acceptance",
+        "No production/scorer credentials enter developer environments"
+      ],
+      "target_surfaces": [
+        "bob/src/bob",
+        "bob/bob_build.env",
+        "bob/tests and profile/CLI documentation"
+      ],
+      "input_access": "Read-only approved repository metadata; no sealed label or credential content.",
+      "output_contract": "Versioned inventory/contract/cutover artifacts with hashes and actual command receipts; resolve bounded child output paths before runtime changes.",
+      "native_test_rule": "Use maintain_plan.py for plan structure only; affected Bob/native/deployed tests remain separate gates described in the migration and validation documents.",
+      "repair_policy": "Bind finite approved task resource/attempt/reveal policy before dispatch; no execution authorization in this plan.",
+      "validator": "Independent migration reviewer",
+      "blocked_on": [
+        "Source/policy/principal availability gates apply only to dependent work."
+      ],
+      "acceptance_level": "Migration/workflow acceptance only; no physical numerical qualification.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Fix current Bob packet lifecycle, resolve model hardpins and preserve generic compatibility under scoped policy.",
+        "remaining_gate": "Observed public regressions and installed dependency closure are local work; no MI355 requirement.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "MIG-02",
+      "stage": "migration",
+      "title": "Baseline all third-party assets and legacy lock drift",
+      "reuse": "Existing repository metadata, source custody, Bob executor and local checks",
+      "dependencies": [
+        "MIG-00"
+      ],
+      "deliverable": "Baseline all third-party assets and legacy lock drift; validator: Independent migration reviewer",
+      "origin": "local_migration_plan_not_official_backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-NATIVE",
+        "R-PROVENANCE",
+        "R-COST",
+        "R-CONTRACT"
+      ],
+      "test_families": [
+        "T-NATIVE",
+        "T-PROVENANCE",
+        "T-COST",
+        "T-CONTRACT"
+      ],
+      "migration_dependencies": [],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Inventory every top-level third_party directory using disposition table",
+        "Capture existing lock verification failures separately from planned README drift",
+        "Select bounded native reuse candidates and plan fresh worktrees and manifests"
+      ],
+      "acceptance": [
+        "Pre-existing dirty MGPUSim go.sum and old receipts remain unchanged",
+        "Old source pins are discovery inputs, not automatic spec2 qualification",
+        "No blanket fetch/build of every candidate or mandatory helper rewrite"
+      ],
+      "target_surfaces": [
+        "third_party/POWER_SPEC_2_MIGRATION.md",
+        "locks and selected native source metadata"
+      ],
+      "input_access": "Read-only approved repository metadata; no sealed label or credential content.",
+      "output_contract": "Versioned inventory/contract/cutover artifacts with hashes and actual command receipts; resolve bounded child output paths before runtime changes.",
+      "native_test_rule": "Use maintain_plan.py for plan structure only; affected Bob/native/deployed tests remain separate gates described in the migration and validation documents.",
+      "repair_policy": "Bind finite approved task resource/attempt/reveal policy before dispatch; no execution authorization in this plan.",
+      "validator": "Independent migration reviewer",
+      "blocked_on": [
+        "Source/policy/principal availability gates apply only to dependent work."
+      ],
+      "acceptance_level": "Migration/workflow acceptance only; no physical numerical qualification.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "local",
+        "before_mi355": "Rebuild selected retained dependencies from fresh verified inputs and record fail/skip/support boundaries.",
+        "remaining_gate": "Missing packages/sources are local acquisition/provisioning gaps, not target-device blockers.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    },
+    {
+      "id": "MIG-03",
+      "stage": "migration",
+      "title": "Cut over new execution entrypoint with rollback evidence",
+      "reuse": "Existing repository metadata, source custody, Bob executor and local checks",
+      "dependencies": [
+        "MIG-01",
+        "MIG-02",
+        "A-01",
+        "A-02",
+        "A-03",
+        "F-07",
+        "F-10",
+        "Q-01"
+      ],
+      "deliverable": "Cut over new execution entrypoint with rollback evidence; validator: Independent migration reviewer",
+      "origin": "local_migration_plan_not_official_backlog",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "requirements": [
+        "R-SCOPE",
+        "R-WORKFLOW",
+        "R-RELEASE",
+        "R-PROVENANCE",
+        "R-ISOLATION",
+        "R-CONTRACT",
+        "R-COST"
+      ],
+      "test_families": [
+        "T-WORKFLOW",
+        "T-RELEASE",
+        "T-PROVENANCE",
+        "T-ISOLATION",
+        "T-CONTRACT",
+        "T-COST"
+      ],
+      "migration_dependencies": [],
+      "conditional_gates": [],
+      "implementation_steps": [
+        "Validate new project namespace, resolved task contracts and production boundary tests",
+        "Update active README/profile/restore/handoff references and maintain read-only legacy crosswalk",
+        "Rehearse rollback on disposable state and record Bob commit plus parent gitlink binding"
+      ],
+      "acceptance": [
+        "No old DF/F-R10/PPAT parent status is imported as spec2 completion",
+        "Default new dispatch selects only reviewed spec2 policy and exact model while rollback preserves all attempts",
+        "Cutover certifies workflow readiness only, not D2-D6 scientific completion"
+      ],
+      "target_surfaces": [
+        "Bob/new project entrypoints",
+        "third_party manifests and root RESUME/.resume follow-up surfaces"
+      ],
+      "input_access": "Read-only approved repository metadata; no sealed label or credential content.",
+      "output_contract": "Versioned inventory/contract/cutover artifacts with hashes and actual command receipts; resolve bounded child output paths before runtime changes.",
+      "native_test_rule": "Use maintain_plan.py for plan structure only; affected Bob/native/deployed tests remain separate gates described in the migration and validation documents.",
+      "repair_policy": "Bind finite approved task resource/attempt/reveal policy before dispatch; no execution authorization in this plan.",
+      "validator": "Independent migration reviewer",
+      "blocked_on": [
+        "Source/policy/principal availability gates apply only to dependent work."
+      ],
+      "acceptance_level": "Migration/workflow acceptance only; no physical numerical qualification.",
+      "known_artifact_types": [],
+      "local_delivery": {
+        "location_class": "deployment",
+        "before_mi355": "Rehearse clean install/entrypoint/manifest/rollback and package target handoff using a disposable local environment.",
+        "remaining_gate": "Real independent identity deployment and approval gates; cutover does not require fabricated physical qualification.",
+        "status": "PLANNED_NOT_ACCEPTED",
+        "evidence_index": "third_party/receipts/local-readiness-2026-09-21/README.md"
+      }
+    }
+  ],
+  "universal_claim_gates": [
+    {
+      "kind": "selected_region_full_workload_claim",
+      "requires": [
+        "C-02"
+      ],
+      "rule": "Every full-workload claimed output composed from selected regions requires C-02, regardless of task ID. Full native runs do not inherit this requirement."
+    },
+    {
+      "kind": "derivative_or_approximate_inference_claim",
+      "requires": [
+        "U-02"
+      ],
+      "rule": "Every claimed output using derivatives or approximate inference requires U-02. Preliminary fitting artifacts may feed U-02 before scientific qualification; split artifact completion from claim acceptance to avoid a K-02/U-02 circular workflow."
+    },
+    {
+      "kind": "numerical_qualification",
+      "requires": [
+        "Q-01"
+      ],
+      "rule": "Every QUALIFIED numerical output requires approved policy. Native operability, synthetic tests and authorized descriptive acquisition do not imply qualification."
+    }
+  ]
+}

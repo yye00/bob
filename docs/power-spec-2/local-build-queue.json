@@ -1,0 +1,1335 @@
+{
+  "schema_version": "power-spec-2.local-build-queue.v1",
+  "authority": "planning_only_not_controller_admission",
+  "package_plan": "third_party/planning/power-spec-2/packages.json",
+  "canonical_backlog": "bob/docs/power-spec-2/backlog.json",
+  "status": "LOCAL_IMPLEMENTATION",
+  "dispatch_ready": false,
+  "dependency_semantics": "requires_tasks are prerequisites for the scoped software output; integration_requires_tasks apply only when binding standalone/public components into final app contracts. D00 and D02 prerequisites mean the exact child dependency subset consumed, not completion of every candidate acquisition. Canonical parent scientific dependencies/gates are unchanged.",
+  "shared_dispatch_requirements": [
+    "Resolve actual base/input hashes, exact output allowlist and acceptance selector before one child is admitted.",
+    "After bootstrap, use healthy Bob profile and immutable independently validated submission; no unrestricted generic loop.",
+    "Select exact model and positive finite max_cost_usd; limit below is a proposed ceiling, not paid-call authorization.",
+    "Acquire dependencies outside implementer/predictor sandbox; build/test offline after custody checks.",
+    "Split broad recipe/environment/provider work into one observable child per attempt; propagate parent coverage and limits.",
+    "Owner 2026-09-22 authorizes sequential direct Codex public implementation while Bob is unfunded. Track local evidence without Bob authorship, dispatch authority or independent acceptance; do not relaunch campaigns."
+  ],
+  "budget_profiles": {
+    "local_public_slice": {
+      "max_agent_turns": 40,
+      "max_repair_attempts": 2,
+      "wall_seconds": 1800,
+      "cpu_threads": 4,
+      "memory_gib": 8,
+      "max_blind_reveals": 0,
+      "note": "Proposed starting ceilings; resolve and enforce actual policy before dispatch. Heavy native builds get separate finite profiles after estimating cost; never silently increase."
+    }
+  },
+  "external_gate_definitions": {
+    "bounded_bootstrap": "Use an independently bounded public maintenance route for initial Bob repairs; broken admitted path cannot authorize its own repair. If no healthy Bob route exists, explicitly record direct maintenance exception rather than fabricate a Bob run.",
+    "selected_model": "Exact downgraded model ID and finite cost allowance selected at implementation dispatch, then verified at actual call site.",
+    "artifact_network": "Satisfied for this session by owner instruction 2026-09-22: network-enabled acquisition authorized. Retain per-artifact origin, hashes and actual transfer results; availability is not dependency admission.",
+    "owner_sst_version": "Owner AMD model compatibility declaration is needed before choosing SST versions; generic discovery can proceed.",
+    "owner_sst": "Actual owner-approved AMD model source/config/native fixtures.",
+    "target_platform": "Exact target OS/CPU/ABI/driver-runtime is required for target-specific binaries and images. Host native builds and portable source recipes can proceed with the host ABI recorded; mark target compatibility pending.",
+    "app_workspace": "Exact new application root and write allowlist resolved, preserving old baseline.",
+    "reference_data": "Pinned published code/config/measurements with complete external-data hashes and exposure labels.",
+    "workload_identity": "Authoritative exact model/precision/tokenizer/KV/request definition and selected assets.",
+    "complete_contracts": "Complete authoritative schemas/evidence profiles or explicit approved disposition of missing definitions.",
+    "capable_isolation_host": "Local/CI environment that permits the required actual separate identities and namespaces; denied here."
+  },
+  "tasks": [
+    {
+      "id": "B00",
+      "title": "Repair and verify Bob entrypoints",
+      "parent_tasks": [
+        "MIG-01",
+        "A-01"
+      ],
+      "requires_tasks": [],
+      "input_assets": [
+        "bob"
+      ],
+      "external_gates": [
+        "bounded_bootstrap"
+      ],
+      "proposed_outputs": [
+        "bob/pyproject.toml packaging configuration and tools package mapping",
+        "bob/tests: installed/editable CLI regression fixtures"
+      ],
+      "implementation_steps": [
+        "Reproduce console entrypoint failure from workspace root and Bob cwd: tools.spec_quality_score is absent from editable resolution",
+        "Inspect actual editable metadata versus current wheel contents before changing packaging",
+        "Repair the supported install path and rebuild fresh wheel; avoid application import paths as a workaround"
+      ],
+      "validation": [
+        "Fresh wheel and editable bob --version/--help run outside checkout",
+        "No inherited PYTHONPATH, editable .pth from another installation or source cwd dependency",
+        "13 selected imports and four packaged resources from existing receipt still pass"
+      ],
+      "acceptance_limit": "CLI usability only; no model call or admitted task acceptance.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-21/bootstrap/README.md",
+        "summary": "Documented local bootstrap scope tested; deployed isolation and funded live execution remain R00/R01."
+      }
+    },
+    {
+      "id": "B01",
+      "title": "Repair admitted-packet custody lifecycle",
+      "parent_tasks": [
+        "MIG-01",
+        "A-01",
+        "A-03"
+      ],
+      "requires_tasks": [
+        "B00"
+      ],
+      "input_assets": [
+        "bob"
+      ],
+      "external_gates": [
+        "bounded_bootstrap"
+      ],
+      "proposed_outputs": [
+        "bob/src/bob/admitted_packet.py and direct loader/custody callers",
+        "bob/tests/test_admitted_packet.py plus scoped lifecycle regressions"
+      ],
+      "implementation_steps": [
+        "Supply authenticated workspace/materialization records at actual construction after correct lifecycle ordering",
+        "Implement real assert_materialized_target_custody and verify callers",
+        "Preserve clean-base-before-target-creation and resume custody; never use dummy defaults/remove required fields"
+      ],
+      "validation": [
+        "All 39 existing admitted-packet cases pass, retaining the eight baseline failures as regression identifiers",
+        "Negative changed hash/inode/owner/mode/link and path traversal tests",
+        "Creation/crash/resume states never accept stale or unowned targets"
+      ],
+      "acceptance_limit": "Local custody software; operating-system access isolation remains separately deployed.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-21/bootstrap/README.md",
+        "summary": "Documented local bootstrap scope tested; deployed isolation and funded live execution remain R00/R01."
+      }
+    },
+    {
+      "id": "B02",
+      "title": "Add scoped downgraded-model and finite-budget profile",
+      "parent_tasks": [
+        "MIG-01",
+        "A-01",
+        "A-03"
+      ],
+      "requires_tasks": [
+        "B00"
+      ],
+      "input_assets": [
+        "bob"
+      ],
+      "external_gates": [
+        "bounded_bootstrap",
+        "selected_model"
+      ],
+      "proposed_outputs": [
+        "bob/src/bob/atomic_packet_planner.py profile plumbing and actual executor integration",
+        "bob/tests/test_atomic_packet_planner.py and profile call-path tests"
+      ],
+      "implementation_steps": [
+        "Keep legacy PACKET_MODEL behavior compatible; add explicit spec-2 profile rather than change all projects",
+        "Bind exact chosen model to planner/compiler/implementer/reviewer and actual SDK calls",
+        "Replace unbounded campaign behavior with enforced wall/turn/cost/repair ledgers; expose no secret values",
+        "Do not source historical bob_build.env as the new campaign default",
+        "Cover all three hard-pinned layers: atomic packet planning, admitted execution profile validation/capability labels, and run-loop implementer/writer options. Audit stream_query transport retries so failed sessions cannot obtain a fresh uncharged budget."
+      ],
+      "validation": [
+        "Existing 68 atomic-planner cases plus new profile cases",
+        "Stub provider records actual dispatched model and finite settings",
+        "Wrong resolved model, absent cost limit, exhausted retry and timeout reject",
+        "Legacy alias cannot silently override downgrade",
+        "Inject billable transport interruption: every attempted session must count toward total cost/turn/repair limits; disabling retries in the child environment alone does not alter a parent-side retry loop."
+      ],
+      "acceptance_limit": "Mocked provider checks prove plumbing; chosen real endpoint needs one bounded public preflight before campaign.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/bob-provider-errors/README.md",
+        "summary": "Documented local bootstrap scope tested; deployed isolation and funded live execution remain R00/R01."
+      }
+    },
+    {
+      "id": "B03",
+      "title": "Resolve executor regressions and submission lifecycle",
+      "parent_tasks": [
+        "MIG-01",
+        "A-01",
+        "A-03"
+      ],
+      "requires_tasks": [
+        "B01",
+        "B02"
+      ],
+      "input_assets": [
+        "bob"
+      ],
+      "external_gates": [
+        "bounded_bootstrap"
+      ],
+      "proposed_outputs": [
+        "bob executor cleanup/hermetic MCP implementation and affected seven-file test group",
+        "Public bounded task submission integration fixture"
+      ],
+      "implementation_steps": [
+        "Reconcile two subprocess-policy test conflicts with required child cleanup; maintain explicit executable and timeout policy",
+        "Reproduce combined-suite hermetic MCP failure and isolate shared-state cause without dropping its assertion",
+        "Exercise immutable submission and validator handoff with stub model, ledger exhaustion and interrupted cleanup"
+      ],
+      "validation": [
+        "Previously 190-pass/3-fail executor group passes with collection/exclusion accounting",
+        "Former isolated-only pass also passes in original group",
+        "Failed or timed-out attempt retained, no retry-selected success or self-acceptance"
+      ],
+      "acceptance_limit": "Real independent validator role still needs separate deployed identities.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/bob-provider-errors/README.md",
+        "summary": "Documented local bootstrap scope tested; deployed isolation and funded live execution remain R00/R01."
+      }
+    },
+    {
+      "id": "D00",
+      "title": "Prepare selected dependency closure and acquisition recipes",
+      "parent_tasks": [
+        "MIG-02",
+        "F-04",
+        "F-10"
+      ],
+      "requires_tasks": [],
+      "input_assets": [
+        "native-tools",
+        "test-schema"
+      ],
+      "external_gates": [
+        "artifact_network"
+      ],
+      "proposed_outputs": [
+        "third_party/planning/power-spec-2: proposed selected-source manifest and dependency graph",
+        "third_party/recipes/power-spec-2: bounded fetch/build recipe candidates"
+      ],
+      "implementation_steps": [
+        "Select first-wave assets from packages.json; resolve exact commit/archive/image and compatibility before download",
+        "Recover available approved caches first; network fetch only in acquisition workspace",
+        "Enumerate build-time/runtime/test/plugin/model/data/interpreter dependencies and complete source/license closure",
+        "Record bytes, hashes, extraction safety, redirect identity, disk estimate, successful and failed fetches; export durable archive bundle"
+      ],
+      "validation": [
+        "Missing transitive artifact, mutable pin, wrong hash and unresolved gitlink reject offline promotion",
+        "Traversal/symlink archive escape and ambient-source substitution reject",
+        "Fresh clone can recover ignored assets through retained storage identity, not local absolute paths"
+      ],
+      "acceptance_limit": "Selected acquisition is now authorized and evidenced as of 2026-09-22. Artifact custody is not dependency admission, clean offline runtime validation, complete native source rebuild closure or target compatibility.",
+      "status": "PARTIAL",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/D00/README.md",
+        "summary": "132 pinned wheels plus runtimes/source bundle restored; 38 tests pass; Hypothesis source and native rebuild/target closure remain unresolved"
+      }
+    },
+    {
+      "id": "D01",
+      "title": "Construct clean portable Bob environment",
+      "parent_tasks": [
+        "MIG-02",
+        "F-10"
+      ],
+      "requires_tasks": [
+        "B00",
+        "D00"
+      ],
+      "input_assets": [
+        "bob",
+        "native-tools"
+      ],
+      "external_gates": [
+        "artifact_network"
+      ],
+      "proposed_outputs": [
+        "third_party/recipes/power-spec-2/bob-runtime.*",
+        "Versioned runtime/interpreter lock and offline wheelhouse receipt"
+      ],
+      "implementation_steps": [
+        "Use current source wheel identity, not old rejected 0.2.0 wheel",
+        "Resolve all runtime and build dependencies for chosen Python and platform, including claude-code-sdk and selected external CLI",
+        "Install offline in empty venv from hashed artifacts; test outside source without dependency overlay"
+      ],
+      "validation": [
+        "pip check and CLI/help/version/import/resource probes",
+        "Delete one wheel and offline install fails predictably",
+        "Change wheel/hash/tag and fail before import",
+        "No credential files or absolute symlink venv in archive"
+      ],
+      "acceptance_limit": "Clean local software installation only; no target ABI or paid model identity inference.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/D01/README.md",
+        "summary": "Clean offline Bob install; 183 installed tests and negative closure checks pass; no model calls"
+      }
+    },
+    {
+      "id": "D02",
+      "title": "Freeze application numerical/test environment",
+      "parent_tasks": [
+        "MIG-02",
+        "F-10"
+      ],
+      "requires_tasks": [
+        "D00"
+      ],
+      "input_assets": [
+        "numerics",
+        "test-schema",
+        "hypothesis",
+        "salib"
+      ],
+      "external_gates": [
+        "artifact_network"
+      ],
+      "proposed_outputs": [
+        "Application runtime/test dependency locks and offline recipe",
+        "Analytic numerical and property-test fixtures"
+      ],
+      "implementation_steps": [
+        "Start from qualified Python 3.13/NumPy 2.3.5/SciPy 1.18.1 evidence; retain Bob separate",
+        "Add schema/test libraries and Hypothesis; SALib only for selected sensitivity need",
+        "Do not pull PyMC/Dakota/pyMOR until justified by method; pin any necessary version change explicitly"
+      ],
+      "validation": [
+        "Clean install, imports, pip check and native selected tests",
+        "Analytic covariance/matrix and seeded property checks",
+        "Missing native shared library detected; no ambient site-packages fallback"
+      ],
+      "acceptance_limit": "Application numeric operability; uncertainty model still needs physical adequacy tests.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/D02/README.md",
+        "summary": "Clean offline Python 3.13.12 closure; 289 app tests, 190 SALib passes plus one upstream xfail; negative controls pass"
+      }
+    },
+    {
+      "id": "D03",
+      "title": "Build minimal Accelergy/HWComponents comparison",
+      "parent_tasks": [
+        "F-04",
+        "K-01"
+      ],
+      "requires_tasks": [
+        "D00"
+      ],
+      "input_assets": [
+        "accelergy",
+        "hwcomponents",
+        "power-content"
+      ],
+      "external_gates": [
+        "artifact_network"
+      ],
+      "proposed_outputs": [
+        "third_party/recipes/power-spec-2/open-power comparison recipes",
+        "Native outputs and minimal subsystem selection record"
+      ],
+      "implementation_steps": [
+        "Acquire both pinned candidates only for one bounded public subsystem comparison",
+        "Run native tests/examples first; explicitly choose plugin/model package and config paths",
+        "Compare action coverage, units, leakage/baseline ownership, unsupported behavior and maintenance/build cost",
+        "Select one open non-IPPM production path; preserve rejected candidate rationale"
+      ],
+      "validation": [
+        "Hand oracle: 3 read actions at 2 pJ and 4 writes at 5 pJ produce 26 pJ dynamic; 2 pW leak over 3 s adds 6 pJ if separately owned",
+        "Missing action model and duplicate baseline reject",
+        "Ambient plugin/config cannot change result",
+        "No dummy model reported physical AMD content"
+      ],
+      "acceptance_limit": "Synthetic/native framework comparison only; actual AMD component parameters remain unqualified.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/D03/README.md",
+        "summary": "HWComponents selected for local development; both API oracles pass; Accelergy native CLI failures retained"
+      }
+    },
+    {
+      "id": "D04",
+      "title": "Build SST Core and only required Elements",
+      "parent_tasks": [
+        "F-02",
+        "F-04"
+      ],
+      "requires_tasks": [
+        "D00"
+      ],
+      "input_assets": [
+        "sst-core",
+        "sst-elements",
+        "native-tools"
+      ],
+      "external_gates": [
+        "artifact_network",
+        "owner_sst_version"
+      ],
+      "proposed_outputs": [
+        "third_party/recipes/power-spec-2/sst.*",
+        "Installed core/elements native test inventory and outputs"
+      ],
+      "implementation_steps": [
+        "Resolve matching owner-supported release pair; prefer release sources if avoiding absent autotools is supported",
+        "Build core first in private prefix, then required elements with explicit core location",
+        "Use bounded serial CPU configuration where valid; add MPI only for required model tests",
+        "Discover installed native tests and selected memHierarchy cases rather than assume suite completeness"
+      ],
+      "validation": [
+        "sst --version, sst-test-core and selected sst-test-elements execute with nonzero collection",
+        "Installed small configuration works outside source",
+        "Missing element and incompatible core rejected",
+        "Record optional disabled elements and all skipped cases"
+      ],
+      "acceptance_limit": "Public SST software only; missing owner model does not become a generic substitute.",
+      "status": "BLOCKED_OWNER",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
+        "summary": "owner SST compatibility/source"
+      }
+    },
+    {
+      "id": "D05",
+      "title": "Audit and run owner AMD SST native model",
+      "parent_tasks": [
+        "F-02",
+        "F-04",
+        "F-09"
+      ],
+      "requires_tasks": [
+        "D04"
+      ],
+      "input_assets": [
+        "amd-sst"
+      ],
+      "external_gates": [
+        "owner_sst"
+      ],
+      "proposed_outputs": [
+        "Owner model native build recipe and capability map",
+        "Native activity/completion/control outputs with source identities"
+      ],
+      "implementation_steps": [
+        "Inspect owner instructions/tests before adapter design",
+        "Build supported CPU-native case and enumerate precision/ISA/work inputs",
+        "Test activity counters, in-flight work and control hooks actually present",
+        "If a needed hook is missing, propose smallest element extension as separate child"
+      ],
+      "validation": [
+        "Native expected counts and completion tests",
+        "No unsupported instruction/action silently dropped",
+        "Changing an allowed control affects intended mechanism in supported test or is explicitly unsupported"
+      ],
+      "acceptance_limit": "Requires owner source; physical MI355 validity remains open even when native tests pass.",
+      "status": "BLOCKED_OWNER",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
+        "summary": "owner SST source"
+      }
+    },
+    {
+      "id": "D06",
+      "title": "Prepare Perfetto and observation import",
+      "parent_tasks": [
+        "F-03",
+        "F-06"
+      ],
+      "requires_tasks": [
+        "D00"
+      ],
+      "input_assets": [
+        "perfetto"
+      ],
+      "external_gates": [
+        "artifact_network"
+      ],
+      "proposed_outputs": [
+        "third_party/recipes/power-spec-2/perfetto.*",
+        "Application public trace-query adapter and export fixtures"
+      ],
+      "implementation_steps": [
+        "Pin native processor and optional Python API closure; always pass explicit bin_path",
+        "Run native import/SQL against a tiny public trace then owner export when available",
+        "Map actual timestamps/slices/counters with declared boundary and missingness; reuse existing parser"
+      ],
+      "validation": [
+        "Known slice durations/counts, duplicate events, clock discontinuity and truncated export cases",
+        "No-device offline run with no first-use fetch",
+        "Missing binary fails before attempting network",
+        "SQL output preserves units and observed gaps"
+      ],
+      "acceptance_limit": "Real acquisition export completeness and timebase alignment remain target/harness gates.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [
+        "S01"
+      ],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/D06/README.md",
+        "summary": "Pinned native Perfetto and strict observation importer; 361 installed tests and native gap oracle pass"
+      }
+    },
+    {
+      "id": "D07",
+      "title": "Complete AMD SMI and profiler build prerequisites",
+      "parent_tasks": [
+        "F-03",
+        "F-04",
+        "F-10",
+        "X-01"
+      ],
+      "requires_tasks": [
+        "D00"
+      ],
+      "input_assets": [
+        "amdsmi",
+        "amd-devlibs",
+        "rocprofiler",
+        "rocm-toolchain"
+      ],
+      "external_gates": [
+        "artifact_network",
+        "target_platform"
+      ],
+      "proposed_outputs": [
+        "Separate AMD SMI, ROCprofiler and ROCm compile-only recipe children",
+        "Host-only tests and installed consumer receipts"
+      ],
+      "implementation_steps": [
+        "Resolve selected development libraries and SDK gitlinks from actual configure requirements",
+        "Bind target OS/CPU/runtime and compile architecture explicitly; do not infer from absent local GPU",
+        "Build AMD SMI first, SDK next as distinct attempts; no driver installation or device control in CPU build step"
+      ],
+      "validation": [
+        "Fresh configure/build and strict header/link/import consumers",
+        "Offline build fails on missing gitlink/library instead of fetching",
+        "Typed no-device outcomes where supported",
+        "Compile-only code objects inspected for intended target, never marked execution-tested"
+      ],
+      "acceptance_limit": "Host artifacts are not automatically compatible with target system; collection and controls remain live tests.",
+      "status": "BLOCKED_OWNER",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
+        "summary": "target platform"
+      }
+    },
+    {
+      "id": "D08",
+      "title": "Turn existing native results into optional adapter fixtures",
+      "parent_tasks": [
+        "F-06",
+        "F-09",
+        "F-10"
+      ],
+      "requires_tasks": [
+        "D00"
+      ],
+      "input_assets": [
+        "drampower",
+        "mgpusim",
+        "papi",
+        "salib"
+      ],
+      "external_gates": [
+        "app_workspace"
+      ],
+      "proposed_outputs": [
+        "Application adapters for specifically selected existing providers",
+        "Public native-result fixtures and comparison receipts"
+      ],
+      "implementation_steps": [
+        "Select only useful DDR/MI300A numerical references; retain baseline native identities",
+        "Use actual MGPUSim SQLite schema and separate Driver/CommandProcessor measurands",
+        "Use DRAMPower qualified source embedding; fix installed exports only if needed",
+        "Run native case anew for adapter comparison; static expected output alone is not native provenance"
+      ],
+      "validation": [
+        "Eight existing reference cases only where applicable; independent masks/units/grid/count mutations",
+        "Native/adapted result equality with explicit arithmetic tolerance",
+        "Preserve MCCL exclusion, no-HBM and gfx942 ceilings",
+        "Source mutation and stale result hashes reject"
+      ],
+      "acceptance_limit": "No inference of MI355/power support and no new authoritative acceptance from old checker.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [
+        "S01"
+      ],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/D08/README.md",
+        "summary": "Native optional adapters; 330 installed tests; fresh DDR and MI300A reference runs pass"
+      }
+    },
+    {
+      "id": "D09",
+      "title": "Reproduce a CPU reference for V-04 selection",
+      "parent_tasks": [
+        "V-02",
+        "V-03",
+        "V-04"
+      ],
+      "requires_tasks": [
+        "D00"
+      ],
+      "input_assets": [
+        "aisimulate",
+        "energaizer"
+      ],
+      "external_gates": [
+        "artifact_network",
+        "reference_data"
+      ],
+      "proposed_outputs": [
+        "Separate AISimulate and EnergAIzer small reproduction packet candidates",
+        "One selected applicable native reference report and selection rationale"
+      ],
+      "implementation_steps": [
+        "Prioritize EnergAIzer published frequency subset for D2a relevance; try AISimulate engine-only if it supplies applicable timing comparison",
+        "Stage one package/data closure per child; do not require both branches to complete",
+        "Run native example then one exact measured/config cell; label every imported target profile",
+        "Choose V-04 evidence from at least one completed applicable V branch; retain failures and limits"
+      ],
+      "validation": [
+        "Native outputs, absolute timing/power errors and coverage with exact data hashes",
+        "Missing data and mismatched config revision reject",
+        "Unexposed/blind label cannot be assigned to public-profile reproduction"
+      ],
+      "acceptance_limit": "At least one applicable native branch, not all optional references; final canonical V dependencies still govern acceptance.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/D09/README.md",
+        "summary": "Four public A100 frequency cells replay exactly; 18 tests; frozen config/data rejection; full frontend excluded"
+      }
+    },
+    {
+      "id": "D10",
+      "title": "Prepare vLLM workload and compile-only target bundle",
+      "parent_tasks": [
+        "F-05",
+        "F-09",
+        "X-02"
+      ],
+      "requires_tasks": [
+        "D00"
+      ],
+      "input_assets": [
+        "vllm",
+        "pytorch",
+        "workload-assets",
+        "rocm-toolchain",
+        "transferbench",
+        "compute-bench"
+      ],
+      "external_gates": [
+        "artifact_network",
+        "target_platform",
+        "workload_identity"
+      ],
+      "proposed_outputs": [
+        "Pinned target image or rebuild recipe with staged model/tokenizer inputs",
+        "CPU request/work manifests and host-test results"
+      ],
+      "implementation_steps": [
+        "Resolve actual requested model/precision/KV/kernel/workload and compatible software pairing",
+        "Build CPU-testable request parsing/tokenization/work accounting first",
+        "Acquire only selected HIP tools/kernels; compile with explicit target on CPU where supported",
+        "Bind image/source/wheel/model storage and bytes; do not download large unused model variants"
+      ],
+      "validation": [
+        "Fixed tokenizer/prompt/request outputs with tiny public fixture",
+        "Missing shards, dtype fallback and incomplete declared work reject",
+        "Offline target image reconstruction or explicit remaining compile blockers",
+        "List every GPU execution test deferred"
+      ],
+      "acceptance_limit": "Real tokens, precision, kernels, runtime and observation quality require MI355.",
+      "status": "BLOCKED_OWNER",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
+        "summary": "target platform"
+      }
+    },
+    {
+      "id": "S00",
+      "title": "Recover authority and create spec-2 application workspace",
+      "parent_tasks": [
+        "MIG-00",
+        "F-01"
+      ],
+      "requires_tasks": [],
+      "input_assets": [
+        "contracts",
+        "app-baseline"
+      ],
+      "external_gates": [
+        "complete_contracts",
+        "app_workspace"
+      ],
+      "proposed_outputs": [
+        "Application layout decision and new spec-2 namespace",
+        "Source/contract crosswalk and reusable unit module tests"
+      ],
+      "implementation_steps": [
+        "Recover complete normative files and resolve status vocabulary before final schema design",
+        "Keep existing clean application and dirty provider work intact",
+        "Choose exact app root and write allowlist; reuse unit code after review",
+        "Map schemas/tasks/exposure definitions to local plan and retain explicit missing items"
+      ],
+      "validation": [
+        "Authoritative hashes and conflict crosswalk",
+        "Five old unit tests retained",
+        "No missing authority marked present or old schema silently repurposed"
+      ],
+      "acceptance_limit": "Generic math/native preparation can continue without this task; final schema/dispatch cannot.",
+      "status": "PARTIAL",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/S00/README.md",
+        "summary": "Application workspace built; four layout and 196 installed-wheel tests pass; complete normative authority remains missing"
+      }
+    },
+    {
+      "id": "S01",
+      "title": "Implement strict data contracts and allowed-input projections",
+      "parent_tasks": [
+        "F-01",
+        "F-06",
+        "F-07",
+        "B-01"
+      ],
+      "requires_tasks": [
+        "S00",
+        "D02"
+      ],
+      "input_assets": [
+        "contracts",
+        "test-schema",
+        "app-baseline"
+      ],
+      "external_gates": [],
+      "proposed_outputs": [
+        "APP/src contracts and allowlist projection modules",
+        "APP/tests/public contracts, provenance and leak-canary fixtures"
+      ],
+      "implementation_steps": [
+        "Implement recovered DatasetManifest, AllowedInputManifest, ModelSubmission, PredictionBundle, ScoreProfile and ScoreReport semantics",
+        "Validate units/scope/ancestors/finite values and typed unsupported/missingness",
+        "Create fresh field allowlists with grouped split and duplicate-ancestor checks"
+      ],
+      "validation": [
+        "Unknown fields, duplicate keys, nonfinite values and invalid path reject",
+        "Change hidden labels: allowed-input projection and prediction input bytes unchanged",
+        "Truncated output, missing work and wrong ancestor reject",
+        "No enum or W/C definition invented from old spec"
+      ],
+      "acceptance_limit": "Software enforcement on public fixtures; independent deployed custody separately required.",
+      "status": "PARTIAL",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/S01/README.md",
+        "summary": "58 new and 63 installed contract tests, four mutations; final normative schema/W-C binding remains owner-blocked"
+      }
+    },
+    {
+      "id": "S02",
+      "title": "Implement immutable submission, provenance and attempt ledger",
+      "parent_tasks": [
+        "A-01",
+        "A-03",
+        "F-07",
+        "F-10",
+        "B-01"
+      ],
+      "requires_tasks": [
+        "S01",
+        "B03"
+      ],
+      "input_assets": [
+        "contracts",
+        "test-schema",
+        "attestation"
+      ],
+      "external_gates": [],
+      "proposed_outputs": [
+        "APP submission/provenance/attempt components using existing libraries",
+        "Crash/resume and tamper fixtures"
+      ],
+      "implementation_steps": [
+        "Reuse existing artifact/state helpers; bind source/input/output/scorer/policy identities",
+        "Atomic freeze and retries retain all attempt IDs and consume finite ledger entries",
+        "Use existing chosen standard attestation interface if needed; no new crypto or orchestrator"
+      ],
+      "validation": [
+        "Modified bytes, wrong parent/signer and replayed submission reject",
+        "Crash before/after rename yields consistent state",
+        "Failed launch consumes appropriate budget and cannot be omitted",
+        "Developer cannot self-mark submission accepted"
+      ],
+      "acceptance_limit": "Mock privileges establish interface logic only; actual denials required at R00.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/S02/README.md",
+        "summary": "35 new and 98 installed contract tests, four mutations; immutable local submissions and finite append-only attempts"
+      }
+    },
+    {
+      "id": "S03",
+      "title": "Implement deterministic observation and absolute scoring math",
+      "parent_tasks": [
+        "F-03",
+        "F-07",
+        "U-01"
+      ],
+      "requires_tasks": [
+        "D02"
+      ],
+      "input_assets": [
+        "numerics",
+        "contracts"
+      ],
+      "external_gates": [],
+      "proposed_outputs": [
+        "APP observation operators and deterministic scorer modules",
+        "Independent public interval/integration/residual fixtures"
+      ],
+      "implementation_steps": [
+        "Build pure interval/energy/error functions and public oracle tests from supplied spec now; bind ScoreReport/ScoreProfile serialization only after S01.",
+        "Implement declared hold/linear observation operators, coverage and absolute error metrics",
+        "Keep gaps, resets, saturation and unsupported channels typed",
+        "Use frozen ScoreProfile; absent approval produces non-qualified descriptive report"
+      ],
+      "validation": [
+        "Hold intervals 10 W for 2 s then 4 W for 3 s = 32 J",
+        "2-to-6 W linear ramp over 2 s = 8 J; left hold = 4 J",
+        "Splitting equal intervals preserves energy; unit/time-boundary/missing-sample mutations fail",
+        "Replay produces same normalized report and score provenance"
+      ],
+      "acceptance_limit": "No physical tolerance, policy approval or sensor independence inferred from synthetic success.",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [
+        "S01"
+      ]
+    },
+    {
+      "id": "S04",
+      "title": "Implement paired clock-response and interaction scoring",
+      "parent_tasks": [
+        "X-05",
+        "U-01"
+      ],
+      "requires_tasks": [
+        "S03"
+      ],
+      "input_assets": [
+        "numerics",
+        "contracts"
+      ],
+      "external_gates": [],
+      "proposed_outputs": [
+        "APP paired response/contrast/elasticity scorer",
+        "Public factorial, bias and covariance fixtures"
+      ],
+      "implementation_steps": [
+        "Pair by actual experimental block and achieved controls; preserve assigned-policy cohorts",
+        "Compute absolute plus paired response and factorial interaction with covariance",
+        "Undefined elasticity and absent cells remain typed failures"
+      ],
+      "validation": [
+        "Y=10+2c+3m+4cm gives 10,12,13,19 and interaction 4",
+        "Add 7 everywhere: response matches but all absolute residuals are +7",
+        "Variances 9 and 4 with covariance 3 yield contrast variance 7",
+        "Same achieved clocks and wrong slope rejected; independent shuffle mutation detected"
+      ],
+      "acceptance_limit": "No same-card frequency result relabeled architectural transfer.",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": []
+    },
+    {
+      "id": "S05",
+      "title": "Implement UQ, calibration and reduction software fixtures",
+      "parent_tasks": [
+        "U-01",
+        "U-02",
+        "K-02",
+        "C-01",
+        "C-02"
+      ],
+      "requires_tasks": [
+        "S03",
+        "D02"
+      ],
+      "input_assets": [
+        "numerics",
+        "salib"
+      ],
+      "external_gates": [],
+      "proposed_outputs": [
+        "Separate APP covariance/calibration/reduction children",
+        "Independent analytic and coverage/sharpness cost fixtures"
+      ],
+      "implementation_steps": [
+        "Use established SciPy/statistics first, preserving joint samples and experimental-block sampling units",
+        "Validate identifiable versus grouped parameters and baseline ownership",
+        "If derivatives/approximate inference are selected, compare against independent reference; if region composition selected, prove reconstruction",
+        "Use conditional libraries only after justified need and native tests"
+      ],
+      "validation": [
+        "Analytic covariance and paired-noise cancellation",
+        "Rank-deficient calibration reported unidentifiable",
+        "5 J baseline + 2 J compute + 3 J memory = 10 J with exactly one baseline",
+        "Full-region accounting and error-cost comparison; missing work cannot lower error by exclusion"
+      ],
+      "acceptance_limit": "Synthetic coefficients never become AMD calibration; U-02/C-02/Q-01 claim gates persist.",
+      "status": "LOCAL_DONE",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/S05/README.md",
+        "summary": "196 public tests and seven detected mutations; synthetic-only UQ/calibration/reduction scope"
+      }
+    },
+    {
+      "id": "S06",
+      "title": "Implement control protocol and trial scheduling replay",
+      "parent_tasks": [
+        "X-01",
+        "X-02",
+        "X-03",
+        "X-04",
+        "P-03"
+      ],
+      "requires_tasks": [],
+      "input_assets": [
+        "harness",
+        "amdsmi"
+      ],
+      "external_gates": [],
+      "proposed_outputs": [
+        "APP device-control protocol and public fake-device replay driver",
+        "Trial ledger/work-invariance and cleanup tests"
+      ],
+      "implementation_steps": [
+        "Build a standalone public protocol/fault-replay test component first; final contract serialization and real harness binding wait for their actual definitions/sources.",
+        "Implement requested/realized controls, units, tied domains, unsupported settings and voltage coupling from interfaces",
+        "Schedule frozen-work trials with fixed seeds and retain noncompliance in assigned cohort",
+        "Exercise success, cancellation, timeout, readback error, partial capture and restore failure",
+        "Bind real harness only after source/API is available; public fake is explicitly synthetic"
+      ],
+      "validation": [
+        "API success with unchanged realized clock does not certify fixed level",
+        "Restore attempted exactly as protocol requires on all exit paths; failure blocks continuation",
+        "Incomplete work/profiled-vs-clean mismatch detected",
+        "Future sensor sample cannot drive past control decision"
+      ],
+      "acceptance_limit": "Real feasible grid, repetitions, reset commands and clock authority remain target/policy decisions.",
+      "status": "PLANNED",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [
+        "S01"
+      ]
+    },
+    {
+      "id": "S07",
+      "title": "Bind open power actions to native execution",
+      "parent_tasks": [
+        "F-06",
+        "K-01",
+        "P-01",
+        "P-03"
+      ],
+      "requires_tasks": [
+        "S01",
+        "D03",
+        "D05"
+      ],
+      "input_assets": [
+        "amd-sst",
+        "power-content"
+      ],
+      "external_gates": [
+        "owner_sst"
+      ],
+      "proposed_outputs": [
+        "APP selected provider adapter and activity-to-component binding",
+        "Native/public power-accounting comparison fixtures"
+      ],
+      "implementation_steps": [
+        "Consume actual provider activity/work and bind only supported actions to selected open model",
+        "Track component/baseline ownership, uncertainty and unsupported coverage",
+        "Test in-flight causal hooks within existing provider; no new general event engine",
+        "Measure adapter overhead separately from native execution"
+      ],
+      "validation": [
+        "Native vs adapted action counts and completion",
+        "Missing action, wrong count/unit and duplicate baseline mutations",
+        "100 cycles at 1 GHz for 50 then 0.5 GHz for 50 = 150 ns; 25 ns gating = 175 ns on supported hook fixture",
+        "Synthetic count-energy oracle independent of adapter implementation"
+      ],
+      "acceptance_limit": "Software integration only; same-target physical timing and power qualification still open.",
+      "status": "BLOCKED_OWNER",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
+        "summary": "owner SST integration"
+      }
+    },
+    {
+      "id": "R00",
+      "title": "Qualify local deployed role separation",
+      "parent_tasks": [
+        "A-02",
+        "F-07",
+        "B-01"
+      ],
+      "requires_tasks": [
+        "B03",
+        "D01",
+        "S02"
+      ],
+      "input_assets": [
+        "isolation",
+        "attestation"
+      ],
+      "external_gates": [
+        "capable_isolation_host"
+      ],
+      "proposed_outputs": [
+        "Existing runner deployment profile, public canary stores and denial receipts"
+      ],
+      "implementation_steps": [
+        "Use separate actual principals, storage and credentials for preparer/predictor/scorer/validator",
+        "Test public canaries for sealed-label paths, scorer writes, device/network access and shared cache",
+        "Do not equate test function mocks or role labels with privileges",
+        "Record denied namespace capability in this sandbox; run on authorized capable local CI instead"
+      ],
+      "validation": [
+        "Actual OS denies all prohibited reads/writes/network/devices",
+        "Allowed inputs still available and successful immutable submission scores",
+        "No unrestricted-host fallback or shared writable cache"
+      ],
+      "acceptance_limit": "Pre-MI355 deployment gate; not scientific or GPU evidence.",
+      "status": "BLOCKED_OWNER",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
+        "summary": "capable isolation host"
+      }
+    },
+    {
+      "id": "R01",
+      "title": "Run local synthetic end-to-end software rehearsal",
+      "parent_tasks": [
+        "F-08",
+        "P-01",
+        "X-05",
+        "MIG-03"
+      ],
+      "requires_tasks": [
+        "B03",
+        "D01",
+        "D02",
+        "S02",
+        "S03",
+        "S04",
+        "S05",
+        "S06",
+        "R00"
+      ],
+      "input_assets": [
+        "bob",
+        "contracts",
+        "numerics"
+      ],
+      "external_gates": [
+        "selected_model"
+      ],
+      "proposed_outputs": [
+        "Public end-to-end software receipt, frozen submission and independent verifier results"
+      ],
+      "implementation_steps": [
+        "Run one finite downgraded-model public task through healthy Bob profile; no confidential data",
+        "Execute synthetic acquire/project/predict/freeze/score/report with real separate privileges",
+        "If S07 is ready, run separate native-provider variant; otherwise record native integration pending",
+        "Preserve failures/retries and every acceptance limitation"
+      ],
+      "validation": [
+        "Prediction unaffected by hidden-label canary; score changes as expected",
+        "Native result never substituted by fixture when claiming native mode",
+        "Independent rerun on same frozen inputs",
+        "No auto QUALIFIED status for software rehearsal"
+      ],
+      "acceptance_limit": "Useful pre-live software integration; cannot close F-08/P-01 scientific acceptance by itself.",
+      "status": "BLOCKED_OWNER",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
+        "summary": "funded model key"
+      }
+    },
+    {
+      "id": "R02",
+      "title": "Assemble and rehearse MI355 handoff",
+      "parent_tasks": [
+        "MIG-03",
+        "F-10"
+      ],
+      "requires_tasks": [
+        "D01",
+        "D02",
+        "D07",
+        "D10",
+        "R01"
+      ],
+      "input_assets": [
+        "bob",
+        "rocm-toolchain",
+        "vllm",
+        "workload-assets"
+      ],
+      "external_gates": [
+        "target_platform"
+      ],
+      "proposed_outputs": [
+        "Versioned portable source/dependency/image bundle and local verification report",
+        "Target capability probe, no-device smoke, rollback and remaining-live-test checklist"
+      ],
+      "implementation_steps": [
+        "Include selected sources/patches/recipes, complete dependencies/models and checksums with no absolute local venv links",
+        "Recover ignored artifacts on clean host; offline rebuild or prove exact image/platform compatibility",
+        "Run no-device public smoke and failure/rollback paths",
+        "List missing owner model/harness/native integration explicitly; selected D03-D09/S07 must pass before their capability is advertised"
+      ],
+      "validation": [
+        "Clean environment reconstructs selected software with network disabled",
+        "Missing wheel/gitlink/native library/model shard fails preflight",
+        "Known exclusions preserved; no hidden required GPU action in install",
+        "Secrets and sealed labels absent from developer bundle"
+      ],
+      "acceptance_limit": "Transfer software only after this gate; live capability/metrology/workload/calibration/D2a/D2b/transfer tests remain on target.",
+      "status": "BLOCKED_OWNER",
+      "dispatch_ready": false,
+      "build_before_mi355": true,
+      "model_id": null,
+      "max_cost_usd": null,
+      "budget_profile": "local_public_slice",
+      "input_class": "public_or_authorized_source_only_no_sealed_labels",
+      "integration_requires_tasks": [],
+      "execution": {
+        "actor": "direct_codex",
+        "claim": "public_local_only_not_independent_acceptance",
+        "receipt": "third_party/receipts/implementation-2026-09-22/owner-blocked/README.md",
+        "summary": "target platform and funded independently validated handoff"
+      }
+    }
+  ]
+}

@@ -104,6 +104,10 @@ def resolve_candidate_test_python() -> str | None:
 
 def validate_candidate_execution_policy(*, workspace: str | Path | None = None) -> None:
     """Validate hardened execution controls before any candidate work starts."""
+    from bob.public_execution import load_public_execution
+
+    if load_public_execution(workspace=workspace) is not None:
+        return
     hardened_members = {
         "BOB_EXTERNAL_VERIFIER_REQUIRED": external_verifier_required(),
         "BOB_INDEPENDENT_TEST_WRITER": os.environ.get(
@@ -178,12 +182,22 @@ def validate_candidate_execution_policy(*, workspace: str | Path | None = None) 
                     "hardened candidate execution requires a coherent policy: "
                     f"{name} is missing or incompatible"
                 )
-        model = os.environ.get("BOB_REQUIRED_MODEL", "").strip().lower()
-        if model != "claude-opus-4-8":
-            raise RuntimeError(
-                "hardened candidate execution requires "
-                "BOB_REQUIRED_MODEL=claude-opus-4-8"
-            )
+        from bob.finite_budget import load_finite_profile
+
+        finite = load_finite_profile()
+        if finite is not None:
+            finite.assert_outside(workspace)
+            if os.environ.get("BOB_REQUIRED_MODEL") != finite.model_id:
+                raise RuntimeError(
+                    "hardened finite execution requires its exact profile model"
+                )
+        else:
+            model = os.environ.get("BOB_REQUIRED_MODEL", "").strip().lower()
+            if model != "claude-opus-4-8":
+                raise RuntimeError(
+                    "hardened candidate execution requires "
+                    "BOB_REQUIRED_MODEL=claude-opus-4-8"
+                )
 
         if workspace is not None:
             candidate_root = Path(workspace).resolve(strict=True)
@@ -278,6 +292,13 @@ def candidate_argv(argv: Sequence[str]) -> list[str]:
     ):
         raise ValueError("candidate command must be a non-empty argv of safe strings")
     command = list(argv)
+    from bob.public_execution import load_public_execution
+
+    public = load_public_execution()
+    if public is not None:
+        if _looks_like_python_launcher(command[0]):
+            return [public["verification"]["python"], "-I", "-B", *command[1:]]
+        return command
     if _looks_like_python_launcher(command[0]):
         test_python = resolve_candidate_test_python()
         if test_python is not None:
