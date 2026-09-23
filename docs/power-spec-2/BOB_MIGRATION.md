@@ -288,3 +288,28 @@ command, an empty test set, an exit code alone or a passed mean on selected runs
 Every completion cites executed evidence at the appropriate level and all
 remaining limitations. The lower-cost implementer is not its own independent
 scientific validator, regardless of how many reviewer agents it spawns.
+
+## MIG-01 application compatibility correction — 2026-09-22
+
+The corrected application handoff reuses `bob.finite-execution-profile.v1` and
+binds raw profile bytes, a pinned installed resolver inventory, F-01/MIG-00 parents
+and explicit public artifacts. It never starts Bob, imports its executor into the
+application, modifies a database, inherits alias environment variables, grants
+model spend or treats legacy receipts as new acceptance. The earlier mapping-only
+helper remains explicitly weaker. Its `claude-sonnet-4-6` fixture is unsupported by
+the default installed resolver and now appears as a retained compatibility gap.
+
+The inventory roles are finite budget (`finite_budget.py`), model/executor
+(`orchestrator/claude_executor.py`), planner (`atomic_packet_planner.py`), admitted
+packet (`admitted_packet.py`), database (`db.py`), readiness (`readiness_gate.py`),
+verification (`enhanced_verification.py`), installed `spec.v1.json` and `schema.sql`.
+The native rehearsal captures exact installed bytes, origins, package version,
+interpreter and retained D01 wheel identities. This is an entrypoint inventory,
+not a claim to audit every transitive Bob module. No Git commands are used in the
+operator repositories; existing candidate regression tests use scratch repositories.
+
+See the [MIG-01 checklist](../../../application/docs/round3/MIG-01.md),
+[usage](../../../application/docs/round3/MIG-01-usage.md) and
+[corrected receipt](../../../third_party/receipts/application-build-round3-rework-2026-09-22/MIG-01/README.md).
+The native parser checks private profile custody only in a fresh scratch directory;
+actual campaign admission, funding and independent acceptance remain pending.
